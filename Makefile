@@ -26,8 +26,8 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o
-all: bin/aspflac bin/aspstore bin/test_store
+LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o
+all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -48,6 +48,12 @@ build/flacio.o: src/flacio.c include/flacio.h $(FLAC_DEP)
 build/sha256.o: src/sha256.c include/aspstore.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/asptank.o: src/asptank.c include/asptank.h include/plat.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/aspengine.o: src/aspengine.c include/aspengine.h include/aspstore.h include/asptank.h include/flacio.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/aspstore.o: src/aspstore.c include/aspstore.h include/flacio.h src/schema_sql.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -c -o $@ $<
@@ -62,8 +68,16 @@ bin/test_store: tests/test_store.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 
-test: bin/test_store
+bin/asptank: src/asptank_cli.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/test_tank: tests/test_tank.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+
+test: bin/test_store bin/test_tank
 	bin/test_store
+	bin/test_tank
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
 .PHONY: all test clean
