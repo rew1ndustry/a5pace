@@ -6,7 +6,8 @@ Design in progress; see `docs/`.
 - `docs/DATA.md`    data store: SQLite log + immutable FLAC takes + a derived loop cache
 - `docs/EDGE.md`    audio edge contract, latency calibration, safe mode
 - `docs/LESSONS.md` what asp4 taught us
-- `src/aspflac.c`   raw 32-bit PCM <-> FLAC with libFLAC only (`make`)
+- `include/aspstore.h`, `src/aspstore.c` the store library (C, sqlite + libFLAC); `src/aspstore_cli.c`
+- `src/aspflac.c`   raw 32-bit PCM <-> FLAC (`bin/aspflac`)
 - `tools/`          `import_asp4.py` (flat files -> session dir), `verify.py`
 
-Build: `make` (needs libFLAC; by default a source tree in `$FLACDIR`, built into `build/flac`).
+Build: `third_party/fetch.sh` (sqlite), then `make` and `make test`. libFLAC is built from `$FLACDIR` into `build/flac`.

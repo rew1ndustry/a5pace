@@ -1,4 +1,5 @@
 -- asp5 session.db, schema v1 (see docs/DATA.md)
+PRAGMA user_version=1;
 PRAGMA journal_mode=WAL;
 CREATE TABLE session(id TEXT PRIMARY KEY, descriptor_json TEXT NOT NULL,
   schema_version INTEGER NOT NULL, created REAL NOT NULL);
