@@ -12,8 +12,9 @@ int main( int argc, char **argv )
     {
     AspStore *s = asp_open( argv[2], 1, err );
     if( ! s ) { fprintf( stderr, "%s\n", err ); return 1; }
-    AspTank *t = asp_tank_create( argv[3], atoll( argv[4] ), err, sizeof err );
+    AspTank *t = asp_tank_create( argv[3], atoll( argv[4] ), 48000, err, sizeof err );
     if( ! t ) { fprintf( stderr, "%s\n", err ); return 1; }
+    asp_tank_bind( t, asp_session_id( s ) );
     int rc = asp_rebuild( t, s, argc > 5 ? atoll( argv[5] ) : -1 );
     asp_tank_close( t ); asp_close( s );
     return rc ? 1 : 0;

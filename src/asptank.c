@@ -3,27 +3,52 @@
 #include "asptank.h"
 #include "plat.h"
 
-#define HEAD 16
+#define HEAD 128
+#define OLDHEAD 16
 #define BLK  ASP_TICK
 
-struct AspTank { FILE *f; int64_t frames; uint64_t iter, peak; };
+struct AspTank
+  {
+  FILE *f; int64_t frames; int hdr; int rate;
+  uint64_t iter, peak, seq; uint32_t flags; unsigned char session[32];
+  };
 
 static void say( char *err, int n, const char *m, const char *path )
   { if( err ) snprintf( err, n, "%s: %s", m, path ); }
 
-AspTank *asp_tank_create( const char *path, int64_t frames, char *err, int errn )
+static int hexval( int c ) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+
+static int head_write( AspTank *t )
+  {
+  unsigned char h[HEAD];
+  memset( h, 0, sizeof h );
+  if( t->hdr == OLDHEAD ) { asp_st64( h, t->iter ); asp_st64( h + 8, t->peak ); }
+  else
+    {
+    memcpy( h, "ASP5TANK", 8 );
+    asp_st32( h + 8, 1 ); asp_st32( h + 12, HEAD );
+    asp_st64( h + 16, (uint64_t)t->frames ); asp_st32( h + 24, (uint32_t)t->rate ); asp_st32( h + 28, 2 );
+    asp_st64( h + 32, t->iter ); asp_st64( h + 40, t->peak ); asp_st64( h + 48, t->seq );
+    asp_st32( h + 56, t->flags );
+    memcpy( h + 64, t->session, 32 );
+    }
+  if( ASP_FSEEK( t->f, 0, SEEK_SET ) || fwrite( h, 1, (size_t)t->hdr, t->f ) != (size_t)t->hdr ) return -1;
+  return fflush( t->f ) ? -1 : 0;
+  }
+
+AspTank *asp_tank_create( const char *path, int64_t frames, int rate, char *err, int errn )
   {
   FILE *f = fopen( path, "w+b" );
   if( ! f ) { say( err, errn, "cannot create", path ); return NULL; }
-  unsigned char z[BLK * 16], h[HEAD];
-  memset( z, 0, sizeof z ); memset( h, 0, sizeof h );
-  fwrite( h, 1, HEAD, f );
+  AspTank *t = calloc( 1, sizeof *t );
+  t->f = f; t->frames = frames; t->hdr = HEAD; t->rate = rate;
+  unsigned char z[BLK * 16];
+  memset( z, 0, sizeof z );
+  if( head_write( t ) ) { fclose( f ); free( t ); say( err, errn, "write failed", path ); return NULL; }
   for( int64_t n = frames; n > 0; n -= BLK )
     if( fwrite( z, 16, n < BLK ? (size_t)n : BLK, f ) != ( n < BLK ? (size_t)n : BLK ) )
-      { fclose( f ); say( err, errn, "write failed", path ); return NULL; }
+      { fclose( f ); free( t ); say( err, errn, "write failed", path ); return NULL; }
   fflush( f );
-  AspTank *t = calloc( 1, sizeof *t );
-  t->f = f; t->frames = frames;
   return t;
   }
 
@@ -32,27 +57,58 @@ AspTank *asp_tank_open( const char *path, char *err, int errn )
   FILE *f = fopen( path, "r+b" );
   unsigned char h[HEAD];
   if( ! f ) { say( err, errn, "cannot open", path ); return NULL; }
-  if( fread( h, 1, HEAD, f ) != HEAD || ASP_FSEEK( f, 0, SEEK_END ) ) { fclose( f ); say( err, errn, "short file", path ); return NULL; }
+  size_t got = fread( h, 1, HEAD, f );
+  if( got < OLDHEAD || ASP_FSEEK( f, 0, SEEK_END ) ) { fclose( f ); say( err, errn, "short file", path ); return NULL; }
   int64_t size = ASP_FTELL( f );
-  if( size < HEAD || ( size - HEAD ) % 16 ) { fclose( f ); say( err, errn, "not a tank", path ); return NULL; }
   AspTank *t = calloc( 1, sizeof *t );
-  t->f = f; t->frames = ( size - HEAD ) / 16;
-  t->iter = asp_ld64( h ); t->peak = asp_ld64( h + 8 );
+  t->f = f;
+  if( got == HEAD && ! memcmp( h, "ASP5TANK", 8 ) )
+    {
+    if( asp_ld32( h + 8 ) != 1 || asp_ld32( h + 12 ) != HEAD ) { fclose( f ); free( t ); say( err, errn, "unknown tank version", path ); return NULL; }
+    t->hdr = HEAD; t->frames = (int64_t)asp_ld64( h + 16 ); t->rate = (int)asp_ld32( h + 24 );
+    t->iter = asp_ld64( h + 32 ); t->peak = asp_ld64( h + 40 ); t->seq = asp_ld64( h + 48 );
+    t->flags = asp_ld32( h + 56 ); memcpy( t->session, h + 64, 32 );
+    if( size != HEAD + t->frames * 16 ) { fclose( f ); free( t ); say( err, errn, "size does not match header", path ); return NULL; }
+    }
+  else
+    {
+    if( ( size - OLDHEAD ) % 16 ) { fclose( f ); free( t ); say( err, errn, "not a tank", path ); return NULL; }
+    t->hdr = OLDHEAD; t->frames = ( size - OLDHEAD ) / 16; t->rate = 48000;
+    t->iter = asp_ld64( h ); t->peak = asp_ld64( h + 8 );
+    }
   return t;
   }
 
-void asp_tank_close( AspTank *t ) { if( t ) { fclose( t->f ); free( t ); } }
+void asp_tank_close( AspTank *t )
+  { if( t ) { fclose( t->f ); free( t ); } }
 int64_t  asp_tank_frames( AspTank *t ) { return t->frames; }
 uint64_t asp_tank_iter( AspTank *t ) { return t->iter; }
 uint64_t asp_tank_peak( AspTank *t ) { return t->peak; }
+int      asp_tank_legacy( AspTank *t ) { return t->hdr == OLDHEAD; }
+int      asp_tank_rate( AspTank *t ) { return t->rate; }
+uint64_t asp_tank_seq( AspTank *t ) { return t->seq; }
+int      asp_tank_dirty( AspTank *t ) { return ( t->flags & 1 ) != 0; }
 
 int asp_tank_set_head( AspTank *t, uint64_t iter, uint64_t peak )
+  { t->iter = iter; t->peak = peak; return head_write( t ); }
+int asp_tank_set_seq( AspTank *t, uint64_t seq )
+  { if( t->hdr == OLDHEAD ) return -1; t->seq = seq; return head_write( t ); }
+int asp_tank_set_dirty( AspTank *t, int dirty )
+  { if( t->hdr == OLDHEAD ) return -1; t->flags = dirty ? t->flags | 1 : t->flags & ~1u; return head_write( t ); }
+int asp_tank_bind( AspTank *t, const char *hex )
   {
-  unsigned char h[HEAD];
-  asp_st64( h, iter ); asp_st64( h + 8, peak );
-  t->iter = iter; t->peak = peak;
-  if( ASP_FSEEK( t->f, 0, SEEK_SET ) || fwrite( h, 1, HEAD, t->f ) != HEAD ) return -1;
-  return fflush( t->f ) ? -1 : 0;
+  if( t->hdr == OLDHEAD || strlen( hex ) != 64 ) return -1;
+  for( int i = 0; i < 32; i++ )
+    { int a = hexval( hex[2*i] ), b = hexval( hex[2*i+1] ); if( a < 0 || b < 0 ) return -1; t->session[i] = (unsigned char)( a << 4 | b ); }
+  return head_write( t );
+  }
+int asp_tank_bound( AspTank *t, const char *hex )
+  {
+  unsigned char z[32] = { 0 }, want[32];
+  if( t->hdr == OLDHEAD || ! memcmp( t->session, z, 32 ) ) return 1;
+  if( strlen( hex ) != 64 ) return 0;
+  for( int i = 0; i < 32; i++ ) want[i] = (unsigned char)( hexval( hex[2*i] ) << 4 | hexval( hex[2*i+1] ) );
+  return ! memcmp( t->session, want, 32 );
   }
 
 /* [pos, pos+n) split at the end of the loop */
@@ -63,7 +119,7 @@ static int span( AspTank *t, int64_t pos, int64_t n, int put, unsigned char *buf
     {
     int64_t k = n < t->frames - pos ? n : t->frames - pos, i;
     if( k > BLK ) k = BLK;
-    if( ASP_FSEEK( t->f, HEAD + pos * 16, SEEK_SET ) ) return -1;
+    if( ASP_FSEEK( t->f, t->hdr + pos * 16, SEEK_SET ) ) return -1;
     if( put )
       {
       for( i = 0; i < 2 * k; i++ ) asp_st64( buf + 8 * i, (uint64_t)mix[i] );
