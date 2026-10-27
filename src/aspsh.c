@@ -2,7 +2,8 @@
      space  safe / live        r  sync again         l  learn the gate floor again
      g / G  gate more / less sensitive (3 dB)        a  next automix (off, fade, overlap, swap)
      + / -  automix amount up / down                 e  swap: also within an iteration
-     u      revert (asks for a log point; safe only) t  list takes
+     d / u  loop gain down / up 6 dB                  t  list takes
+     v      revert (asks for a log point; safe only)
      q      leave this shell   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
@@ -25,7 +26,7 @@ static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [u] revert  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [d/u] loop gain  [v] revert  [q] quit  [Q] stop\n\n" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -74,7 +75,9 @@ int main( int argc, char **argv )
           if( amode == 3 && each ) snprintf( c, sizeof c, "AUTOMIX SWAP each" );
           break;
         case 't': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
-        case 'u':
+        case 'd': strcpy( c, "DOWN 1" ); break;
+        case 'u': strcpy( c, "UP 1" ); break;
+        case 'v':
           {
           char l[40] = "";
           restore(); printf( "\nrevert to log point: " ); fflush( stdout );

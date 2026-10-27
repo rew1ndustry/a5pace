@@ -105,18 +105,18 @@ static void handle( void *u, int cl, const char *line )
     {
     ctl_say( c, cl, "{\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
-      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
+      "\"gain_steps\":%d,\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
       st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
-      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
+      st.gain_steps, mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0;
-    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  automix %s%s  gate %.0fdB%s  lat %.1fms",
+    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  gain %ddB  automix %s%s  gate %.0fdB%s  lat %.1fms",
       st.phase ? "PLAY" : "SYNC", st.tick / 5.0, pos / 48000.0, st.loop_frames / 48000.0, (unsigned long long)st.iter, st.loop_takes,
-      st.jobs ? " (moving)" : "", st.take_open ? "  REC" : "", st.live ? "live" : "SAFE", mode_name( st.automix.mode ),
+      st.jobs ? " (moving)" : "", st.take_open ? "  REC" : "", st.live ? "live" : "SAFE", -6 * st.gain_steps, mode_name( st.automix.mode ),
       st.automix.mode == ASP_AUTOMIX_FADE || st.automix.mode == ASP_AUTOMIX_OVERLAP ? " n" : "", st.gate_db, st.gate_learnt ? "" : " learning",
       st.latency * 1000.0 / 48000 );
     ctl_ok( c, cl );
@@ -133,15 +133,20 @@ static void handle( void *u, int cl, const char *line )
     for( char *q = w[1]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
     int m = ! strcmp( w[1], "FADE" ) ? ASP_AUTOMIX_FADE : ! strcmp( w[1], "OVERLAP" ) ? ASP_AUTOMIX_OVERLAP :
             ! strcmp( w[1], "SWAP" ) ? ASP_AUTOMIX_SWAP : ! strcmp( w[1], "OFF" ) ? ASP_AUTOMIX_OFF : -1;
-    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX OFF | FADE n | OVERLAP n | SWAP [EACH]" ); return; }
-    int arg = n > 2 ? atoi( w[2] ) : 0, each = n > 2 && ( w[2][0] == 'e' || w[2][0] == 'E' );
+    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX OFF | FADE n [RESTORE] | OVERLAP n | SWAP [EACH]" ); return; }
+    int arg = n > 2 ? atoi( w[2] ) : 0, bits = 0;
+    for( int k = 2; k < n; k++ )
+      { if( ! strncasecmp( w[k], "each", 4 ) ) bits |= 1; else if( ! strncasecmp( w[k], "restore", 4 ) ) bits |= 2; }
     if( m == ASP_AUTOMIX_SWAP ) arg = 0;
     if( ( m == ASP_AUTOMIX_FADE || m == ASP_AUTOMIX_OVERLAP ) && arg < 1 ) arg = m == ASP_AUTOMIX_FADE ? 1 : 4;
-    asp_core_automix( r->core, m, arg, each );
+    asp_core_automix( r->core, m, arg, bits );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "EDGE" ) && n > 2 )
     { asp_core_edge( r->core, ! strcasecmp( w[1], "starve" ), atoll( w[2] ) ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "GAIN" ) && n > 1 ) { asp_core_gain( r->core, atoi( w[1] ), 0 ); ctl_ok( c, cl ); }          /* absolute: steps of 6 dB down */
+  else if( ! strcmp( w[0], "DOWN" ) ) { asp_core_gain( r->core, n > 1 ? atoi( w[1] ) : 1, 1 ); ctl_ok( c, cl ); }   /* knock the loop down n * 6 dB */
+  else if( ! strcmp( w[0], "UP" ) ) { asp_core_gain( r->core, -( n > 1 ? atoi( w[1] ) : 1 ), 1 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {

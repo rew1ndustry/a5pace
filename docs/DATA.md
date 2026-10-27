@@ -44,8 +44,9 @@ readers, so new control ideas need no schema change.
 - **Time travel:** returning to an earlier state appends `revert{to: N}`. It never truncates,
   so "log everything" holds and a revert can itself be reverted. Optional `.d64` checkpoints
   every K events make a rebuild quick.
-- **Named mixes** are labels on log points. Per-track gain, pan and envelopes are events
-  (`env{track, points:[[tick,gain],...]}`); a later event for the same track supersedes.
+- **Named mixes** are labels on log points. The loop gain is a `take_state` of the pseudo take 0
+  (`{"gain_steps":n}`), so replay and revert restore it; there are no per-take levels. Envelopes and pans, when
+  they come, are events too.
 - One aspace per user: one writer, one tick order, no flock.
 
 ## Tables (v1 sketch)

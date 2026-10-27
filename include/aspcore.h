@@ -15,10 +15,10 @@ typedef struct AspCore AspCore;
 
 /* automix: what happens to takes as the loop runs. one at a time. */
 enum { ASP_AUTOMIX_OFF = 0,
-       ASP_AUTOMIX_FADE,       /* every take steps down n * 6 dB each loop, until it is at the noise floor, and stays */
-       ASP_AUTOMIX_OVERLAP,    /* a take fades as newer takes overlap it, and goes when n of them have */
+       ASP_AUTOMIX_FADE,       /* the loop gain steps down n * 6 dB each loop, until the loop is at the noise floor, and stays */
+       ASP_AUTOMIX_OVERLAP,    /* a take goes out of the loop when n newer takes have overlapped it */
        ASP_AUTOMIX_SWAP };     /* successive takes swap channels (mono takes: hard left, hard right) */
-typedef struct { int mode, n, each; } AspAutomix;   /* each: SWAP also within an iteration */
+typedef struct { int mode, n, each, restore; } AspAutomix;   /* each: SWAP also within an iteration; restore: FADE goes back to full gain when a take starts */
 
 typedef struct
   {
@@ -26,9 +26,7 @@ typedef struct
   double gate_db, ring_db;     /* gate margin, ring rule; 0 keeps the defaults (18, 7.5) */
   int    live;                 /* record takes (default 1); 0 starts safe */
   int    feed;                 /* put each take into the loop as it is recorded (default 1) */
-  int64_t gain;                /* output gain, asp4's my_gain (0) */
   int    mono_detect;          /* record a take from one channel (or two identical ones) as mono (default 1) */
-  int    mono_lev;             /* where a mono take sits: level shift on both channels, 1 = centre (default 1) */
   AspAutomix automix;
   } AspCoreCfg;
 
@@ -40,7 +38,7 @@ typedef struct
   int      live, take_open;
   int64_t  take_iter, take_off, take_frames;
   double   sync_level_db;
-  int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
+  int      loop_takes, jobs, gain_steps;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
   double   gate_db, ring_db; int gate_learnt;
   int64_t  log_seq, loop_frames, peak;
@@ -60,6 +58,9 @@ void     asp_core_gate( AspCore *c, double gate_db, double ring_db );
 /* go back to how things were at a log point: only while safe. appends a revert event, rebuilds the loop from the
    store (which takes a moment: an edge that is not read meanwhile will report a drop). returns the revert's seq */
 int64_t  asp_core_revert( AspCore *c, int64_t seq );
+/* the loop gain, in steps of 6 dB down (relative adds to where it is). whenever it changes, the next output tick
+   fades from the old gain to the new, so it never clicks. kept in the store, so a revert restores it */
+void     asp_core_gain( AspCore *c, int steps, int relative );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif

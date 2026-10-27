@@ -13,14 +13,13 @@
 #define LEVEL_CLIP  0x7FFFFF00LL
 #define HANG        10            /* ticks of silence a take keeps after the last sound */
 #define BUDGET      48000         /* frames of take a tick may spend on level moves */
-#define FLOOR_X     4.0           /* a take is "at the floor" when its peak is this many times the floor rms */
+#define FLOOR_X     4.0           /* the loop is "at the floor" when its peak is this many times the floor rms */
 
 typedef struct
   {
   int64_t id, iter, off, len, peak;
-  AspPlace now, base;             /* where it is (decided); where it was put when recorded */
+  AspPlace now;                   /* where it is (decided) */
   int in, mono, src, overlaps;
-  int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
 typedef struct { AspJob *job; int64_t start, span, waited; } Move;
@@ -57,6 +56,10 @@ struct AspCore
   int64_t  pass, outpos;
   int      swap_flip; int64_t swap_iter, swap_n;
 
+  /* the loop's gain: n steps of 6 dB down, applied on the way out, faded in over the next output tick */
+  int      gain_steps; double gain_now;
+  int64_t  pass_peak;               /* largest output sample this pass */
+
   /* level moves, run in order, a slice a tick */
   Move *mv; int nmv, capmv;
   };
@@ -80,14 +83,14 @@ static void gate_say( void *u, const char *line )
 
 /* --- the takes in the loop --- */
 
-static void lev_str( int lev, char *b ) { if( lev == ASP_LEV_OFF ) strcpy( b, "-" ); else sprintf( b, "%d", lev ); }
+static void out_str( AspPlace p, char *b ) { int n = 0; if( p.l ) b[n++] = 'l'; if( p.r ) b[n++] = 'r'; b[n] = 0; }
 
 static void state_json( const LoopTake *t, const char *status, char *buf, size_t n )
   {
-  char l[8], r[8];
-  lev_str( t->now.l, l ); lev_str( t->now.r, r );
-  snprintf( buf, n, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":%d,\"mono\":%d,\"src\":%d,\"len\":%lld,\"gone\":0,\"peak\":%lld}",
-            status, l, r, t->now.flip, t->mono, t->src, (long long)t->len, (long long)t->peak );
+  char o[4];
+  out_str( t->now, o );
+  snprintf( buf, n, "{\"status\":\"%s\",\"out\":\"%s\",\"flip\":%d,\"mono\":%d,\"src\":%d,\"len\":%lld,\"gone\":0,\"peak\":%lld}",
+            status, o, t->now.flip, t->mono, t->src, (long long)t->len, (long long)t->peak );
   }
 
 static LoopTake *lt_add( AspCore *c )
@@ -102,11 +105,18 @@ static void load_cb( int64_t id, const char *json, void *u )
   {
   AspCore *c = ( (Load *)u )->c;
   AspTakeState st; AspTake k;
+  if( id == 0 )                                            /* the loop gain lives here */
+    {
+    const char *g = strstr( json, "\"gain_steps\":" );
+    c->gain_steps = g ? atoi( g + 13 ) : 0;
+    c->gain_now = ldexp( 1.0, -c->gain_steps );
+    return;
+    }
   asp_parse_state( json, &st );
   if( asp_take_get( c->store, id, &k ) ) return;
   LoopTake *t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
-  t->now = t->base = (AspPlace){ st.l, st.r, st.flip };
+  t->now = (AspPlace){ st.l, st.r, st.flip };
   t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->peak = st.peak;
   if( t->in && t->peak < 0 && asp_take_peak( c->store, id, &t->peak ) ) t->peak = 0;
   }
@@ -115,7 +125,7 @@ void asp_core_defaults( AspCoreCfg *c )
   {
   memset( c, 0, sizeof *c );
   asp_sync_defaults( &c->sync );
-  c->live = 1; c->feed = 1; c->mono_detect = 1; c->mono_lev = 1;
+  c->live = 1; c->feed = 1; c->mono_detect = 1;
   }
 
 AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *err, int errn )
@@ -128,6 +138,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     { if( err ) snprintf( err, errn, "the loop is too short" ); return NULL; }
   AspCore *c = calloc( 1, sizeof *c );
   c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t );
+  c->gain_now = 1.0;
   c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 1;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
@@ -140,7 +151,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
-  logf_( c, "core_open", "{\"loop\":%lld,\"iter\":%llu,\"live\":%d,\"takes\":%d}", (long long)c->size, (unsigned long long)c->iter, c->live, c->nlt );
+  logf_( c, "core_open", "{\"loop\":%lld,\"iter\":%llu,\"live\":%d,\"takes\":%d,\"gain_steps\":%d}", (long long)c->size, (unsigned long long)c->iter, c->live, c->nlt, c->gain_steps );
   return c;
   }
 
@@ -191,9 +202,9 @@ static void queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int
   AspPlace f = in_from ? from : (AspPlace)ASP_PLACE_OFF, g = in_to ? to : (AspPlace)ASP_PLACE_OFF;
   if( f.l == g.l && f.r == g.r && f.flip == g.flip ) return;
   mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, g ) );
-}
+  }
 
-/* --- automix --- */
+/* --- automix and the loop gain --- */
 
 static void change( AspCore *c, LoopTake *t, AspPlace to, int in, const char *why )
   {
@@ -202,34 +213,33 @@ static void change( AspCore *c, LoopTake *t, AspPlace to, int in, const char *wh
   t->now = to; t->in = in;
   state_json( t, in ? "mix" : "off", st, sizeof st );
   asp_take_set_state( c->store, t->id, st, "aspace", c->tick );
-  logf_( c, "relevel", "{\"take\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d}", (long long)t->id, why,
-         to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in );
+  logf_( c, "relevel", "{\"take\":%lld,\"why\":\"%s\",\"in\":%d}", (long long)t->id, why, in );
   if( c->cfg.feed ) queue_move( c, t, from, to, was, in );
   }
 
-static int at_floor( AspCore *c, const LoopTake *t )
+/* knock the loop gain to n steps of 6 dB down (relative: from where it is). the output fades to it over the
+   next output tick, whenever it changes. the store keeps it as the state of take 0, so a revert restores it */
+void asp_core_gain( AspCore *c, int steps, int relative )
   {
-  double fl = asp_gate_floor( c->gate, 0 ), fr = asp_gate_floor( c->gate, 1 );
-  double floor = fl > fr ? fl : fr;
-  int sh = t->now.l < t->now.r ? t->now.l : t->now.r;
-  if( t->now.l == ASP_LEV_OFF ) sh = t->now.r; else if( t->now.r == ASP_LEV_OFF ) sh = t->now.l;
-  if( sh == ASP_LEV_OFF ) return 1;
-  return sh >= ASP_LEV_MAX || (double)( t->peak >> ( sh < 0 ? 0 : sh ) ) <= FLOOR_X * floor;
+  char st[80];
+  if( relative ) steps += c->gain_steps;
+  if( steps < 0 ) steps = 0;
+  if( steps > 40 ) steps = 40;
+  if( steps == c->gain_steps ) return;
+  c->gain_steps = steps;
+  snprintf( st, sizeof st, "{\"gain_steps\":%d}", steps );
+  asp_take_set_state( c->store, 0, st, "aspace", c->tick );
+  logf_( c, "gain", "{\"steps\":%d,\"db\":%d}", steps, -6 * steps );
   }
 
+/* fade: at the top of each pass the loop steps down n * 6 dB, until what it plays is at the noise floor, and stays */
 static void automix_pass( AspCore *c )
   {
+  int64_t pk = c->pass_peak;
+  c->pass_peak = 0;
   if( c->cfg.automix.mode != ASP_AUTOMIX_FADE || ! asp_gate_learnt( c->gate ) ) return;
-  int n = c->cfg.automix.n < 1 ? 1 : c->cfg.automix.n;
-  for( int i = 0; i < c->nlt; i++ )
-    {
-    LoopTake *t = c->lt + i;
-    if( ! t->in || t->ready_pass > c->pass || at_floor( c, t ) ) continue;
-    AspPlace to = t->now;
-    if( to.l != ASP_LEV_OFF ) { to.l += n; if( to.l > ASP_LEV_MAX ) to.l = ASP_LEV_MAX; }
-    if( to.r != ASP_LEV_OFF ) { to.r += n; if( to.r > ASP_LEV_MAX ) to.r = ASP_LEV_MAX; }
-    change( c, t, to, 1, "fade" );
-    }
+  double fl = asp_gate_floor( c->gate, 0 ), fr = asp_gate_floor( c->gate, 1 ), floor = fl > fr ? fl : fr;
+  if( pk > 0 && (double)pk > FLOOR_X * floor ) asp_core_gain( c, c->cfg.automix.n < 1 ? 1 : c->cfg.automix.n, 1 );
   }
 
 static int overlaps( AspCore *c, const LoopTake *a, const LoopTake *b )
@@ -239,6 +249,7 @@ static int overlaps( AspCore *c, const LoopTake *a, const LoopTake *b )
   return ( ( bs - as + sz ) % sz ) < a->len || ( ( as - bs + sz ) % sz ) < b->len;
   }
 
+/* overlap: a take goes out of the loop when n newer takes have overlapped it */
 static void automix_new( AspCore *c, LoopTake *nt )
   {
   if( c->cfg.automix.mode != ASP_AUTOMIX_OVERLAP ) return;
@@ -247,28 +258,21 @@ static void automix_new( AspCore *c, LoopTake *nt )
     {
     LoopTake *t = c->lt + i;
     if( t == nt || ! t->in || ! overlaps( c, t, nt ) ) continue;
-    t->overlaps++;
-    if( t->overlaps >= n ) { change( c, t, t->now, 0, "overlap-gone" ); continue; }
-    int add = (int)( 8.0 * t->overlaps / n + 0.5 );
-    AspPlace to = t->base;
-    if( to.l != ASP_LEV_OFF ) to.l += add;
-    if( to.r != ASP_LEV_OFF ) to.r += add;
-    change( c, t, to, 1, "overlap" );
+    if( ++t->overlaps >= n ) change( c, t, t->now, 0, "overlap" );
     }
   }
 
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {
-  c->cfg.automix.mode = mode; c->cfg.automix.n = n; c->cfg.automix.each = each;
-  logf_( c, "automix", "{\"mode\":%d,\"n\":%d,\"each\":%d}", mode, n, each );
+  c->cfg.automix.mode = mode; c->cfg.automix.n = n; c->cfg.automix.each = each & 1; c->cfg.automix.restore = ( each & 2 ) != 0;
+  logf_( c, "automix", "{\"mode\":%d,\"n\":%d,\"each\":%d,\"restore\":%d}", mode, n, each & 1, ( each & 2 ) != 0 );
   }
 
 /* --- takes --- */
 
 static void take_feed( AspCore *c, const int32_t *pcm, int64_t n )
   {
-  if( c->cfg.feed && n > 0 )
-    asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, 0, 0 );
+  if( c->cfg.feed && n > 0 ) asp_tank_add( c->tank, c->t_sec * RATE + c->t_frames, pcm, n );
   }
 
 /* frames of a take, from its start, counted so that frame 0 is the start of its second of the loop */
@@ -319,15 +323,15 @@ static void take_end( AspCore *c, const int32_t *last )
   if( swap && c->swap_n++ && ( c->cfg.automix.each || (int64_t)c->t_iter != c->swap_iter ) ) c->swap_flip = ! c->swap_flip;   /* the first take goes left / unflipped */
   c->swap_iter = c->t_iter;
 
-  AspPlace live = { 0, 0, 0 }, fin = { 0, 0, 0 };
-  if( mono ) { if( swap ) fin = c->swap_flip ? (AspPlace){ ASP_LEV_OFF, 0, 0 } : (AspPlace){ 0, ASP_LEV_OFF, 0 };
-               else fin = (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 }; }
+  AspPlace live = ASP_PLACE_STEREO, fin = ASP_PLACE_STEREO;
+  if( mono ) { if( swap ) fin = c->swap_flip ? (AspPlace){ 0, 1, 0 } : (AspPlace){ 1, 0, 0 };   /* hard right / hard left */
+               else fin = ASP_PLACE_STEREO; }                                                      /* in the middle: both outputs */
   else if( swap ) fin.flip = c->swap_flip;
 
   LoopTake lt = { 0 };
   lt.iter = c->t_iter; lt.off = c->t_off; lt.len = c->t_frames; lt.mono = mono; lt.src = src;
   lt.peak = c->t_peak[0] > c->t_peak[1] ? c->t_peak[0] : c->t_peak[1];
-  lt.now = lt.base = fin; lt.in = c->cfg.feed;
+  lt.now = fin; lt.in = c->cfg.feed;
   char st[300];
   state_json( &lt, lt.in ? "mix" : "off", st, sizeof st );
 
@@ -345,7 +349,7 @@ static void take_end( AspCore *c, const int32_t *last )
       if( e && asp_flac_enc_close( e ) ) part2[0] = 0;
       }
     else part2[0] = 0;
-    if( ! part2[0] ) { mono = 0; lt.mono = 0; fin = live; lt.now = lt.base = fin; state_json( &lt, lt.in ? "mix" : "off", st, sizeof st ); free( stereo ); stereo = NULL; }
+    if( ! part2[0] ) { mono = 0; lt.mono = 0; fin = live; lt.now = fin; state_json( &lt, lt.in ? "mix" : "off", st, sizeof st ); free( stereo ); stereo = NULL; }
     }
 
   const char *use = mono && part2[0] ? part2 : c->part;
@@ -361,7 +365,6 @@ static void take_end( AspCore *c, const int32_t *last )
     lt.id = tk.id;
     LoopTake *t = lt_add( c );
     *t = lt;
-    t->ready_pass = c->pass + 1;
     if( c->cfg.feed )
       {
       if( mono && stereo )                                  /* the live feed was stereo: swap it for the mono at its place */
@@ -414,6 +417,7 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   level_scan( c, c->cur + 2 * scan, ASP_TICK - scan );
   take_put( c, c->cur + 2 * scan, ASP_TICK - scan );
   c->born = c->tick;
+  if( c->cfg.automix.mode == ASP_AUTOMIX_FADE && c->cfg.automix.restore ) asp_core_gain( c, 0, 0 );
   logf_( c, "new", "{\"iter\":%lld,\"off\":%lld,\"wrapped\":%d}", (long long)c->t_iter, (long long)c->t_off, wrapped );
   return 0;
   }
@@ -509,7 +513,24 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     }
   mv_run( c );
   if( asp_tank_get( c->tank, outpos, ASP_TICK, mix ) ) memset( out, 0, sizeof( int32_t ) * 2 * ASP_TICK );
-  else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, c->cfg.gain );
+  else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix );
+  /* the loop gain: whenever it has changed, this tick fades from the old gain to the new one */
+  {
+  double g1 = ldexp( 1.0, -c->gain_steps ), g0 = c->gain_now;
+  for( int i = 0; i < ASP_TICK; i++ )
+    {
+    double g = g0 == g1 ? g1 : g0 + ( g1 - g0 ) * ( i + 1 ) / ASP_TICK;
+    for( int ch = 0; ch < 2; ch++ )
+      {
+      double v = out[2*i+ch] * g;
+      int32_t o = v >= 2147483647.0 ? 2147483647 : v <= -2147483648.0 ? (int32_t)-2147483647 - 1 : (int32_t)( v < 0 ? v - 0.5 : v + 0.5 );
+      out[2*i+ch] = o;
+      int64_t a = o < 0 ? -(int64_t)o : o;
+      if( a > c->pass_peak ) c->pass_peak = a;
+      }
+    }
+  c->gain_now = g1;
+  }
   }
   memcpy( c->prev, c->cur, sizeof c->prev );
   c->have_prev = 1;
@@ -567,6 +588,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
   st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
+  st->gain_steps = c->gain_steps;
   st->log_seq = asp_log_last( c->store ); st->loop_frames = c->size; st->peak = (int64_t)c->peak;
   }
 
@@ -579,7 +601,7 @@ int64_t asp_core_revert( AspCore *c, int64_t seq )
   int64_t r = asp_revert( c->store, seq, "aspace" );
   if( r < 0 ) return -1;
   if( asp_rebuild( c->tank, c->store, -1 ) ) { logf_( c, "error", "{\"what\":\"rebuild after revert failed\"}" ); return -1; }
-  c->nlt = 0;
+  c->nlt = 0; c->gain_steps = 0;
   Load ld = { c };
   asp_fold( c->store, -1, load_cb, &ld );
   logf_( c, "reverted", "{\"to\":%lld,\"seq\":%lld,\"takes\":%d}", (long long)seq, (long long)r, c->nlt );

@@ -25,7 +25,8 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `SAFE` / `LIVE` | stop / resume recording takes (the loop keeps playing) |
 | `SYNC` | hunt the round trip again |
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
-| `AUTOMIX OFF`, `FADE n`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
+| `GAIN n`, `DOWN [n]`, `UP [n]` | the loop gain, in steps of 6 dB down |
+| `AUTOMIX OFF`, `FADE n [restore]`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
 | `TAKES` | every take with its state |
 | `REVERT seq` | go back to a log point (only while SAFE); the loop is rebuilt from the store |
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
@@ -35,22 +36,29 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 A loop that was not closed cleanly (dirty flag in its header), is the wrong length, or is an asp4 file is
 rebuilt from the store on the next start.
 
-## Automix (one at a time)
-- **FADE n**: each take steps down n x 6 dB every loop, until it is at the learnt noise floor, and stays there.
-- **OVERLAP n**: when a newer take overlaps an older one, the older steps down; after n newer takes have
-  overlapped it, it is taken out of the loop (the take stays in the store; its state is `off`).
+## Loop gain, and the automixes (one at a time)
+There are no per-take levels. A take is in the loop or it is not, and the loop as a whole has one gain, in
+steps of 6 dB down. `GAIN n` sets it, `DOWN [n]` knocks it down n x 6 dB, `UP [n]` brings it back. **Whenever the
+gain changes, the next output tick fades from the old gain to the new one**, so it never clicks. The tank does not
+change (the gain is applied on the way out); the gain is kept in the store as the state of take 0, so a revert
+restores it.
+- **FADE n [restore]**: at the top of each pass the loop gain goes down n x 6 dB, until what the loop plays is at
+  the learnt noise floor, and stays there. A take recorded while the loop has faded plays at the faded gain;
+  `restore` goes back to full gain when a take starts.
+- **OVERLAP n**: a take goes out of the loop when n newer takes have overlapped it (it stays in the store; its
+  state is `off`, and a revert can bring it back).
 - **SWAP [each]**: successive takes swap channels. Mono takes go hard left, hard right, hard left; stereo
   takes alternate flipped and not. By default the swap happens between iterations; `each` also swaps between
   takes of the same iteration.
-Level moves are made by a job a slice at a time (a fifth of a second of work a tick), started when the playhead
-is not in the take and will not reach it before the move is done, so a change is not heard half made. A take that
-fills the loop waits one pass and goes anyway (that one may click).
+A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
+(a fifth of a second of work a tick), started when the playhead is not in the take and will not reach it before
+the move is done. A take that fills the loop waits one pass and goes anyway (that one may click).
 
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
-stored as one channel and placed in the middle (a level shift of 1, 6 dB down, on both outputs); with SWAP
+stored as one channel and placed in the middle (fed to both outputs); with SWAP
 it goes hard left / right instead. While it is being recorded it is heard as stereo, and is replaced by the mono
-placement when it ends. `mono_detect` and `mono_lev` are in the core's config.
+placement when it ends. `mono_detect` is in the core's config.
 
 ## What was not carried over from aspace.sh
 It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind on purpose:

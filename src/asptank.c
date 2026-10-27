@@ -140,37 +140,21 @@ int asp_tank_get( AspTank *t, int64_t pos, int64_t n, int64_t *mix )
 int asp_tank_put( AspTank *t, int64_t pos, int64_t n, const int64_t *mix )
   { unsigned char b[BLK * 16]; int rc = span( t, pos, n, 1, b, (int64_t *)mix ); fflush( t->f ); return rc; }
 
-int64_t asp_level( int64_t x, int lev )
-  {
-  if( lev == ASP_LEV_OFF ) return 0;
-  if( lev >= 0 ) return x >> lev;                 /* arithmetic shift, as on every target we build for */
-  return x * ( (int64_t)1 << -lev );
-  }
-
-void asp_mix_level( const int32_t *pcm, int64_t n, int64_t *mix, int ol, int orr, int nl, int nr )
-  {
-  for( int64_t i = 0; i < n; i++ )
-    {
-    *mix++ += asp_level( pcm[2*i],   nl ) - asp_level( pcm[2*i],   ol );
-    *mix++ += asp_level( pcm[2*i+1], nr ) - asp_level( pcm[2*i+1], orr );
-    }
-  }
-
-int asp_tank_level( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n, int ol, int orr, int nl, int nr )
+int asp_tank_add( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n )
   {
   int64_t mix[BLK * 2];
   while( n > 0 )
     {
     int64_t k = n < BLK ? n : BLK;
     if( asp_tank_get( t, pos, k, mix ) ) return -1;
-    asp_mix_level( pcm, k, mix, ol, orr, nl, nr );
+    for( int64_t i = 0; i < 2 * k; i++ ) mix[i] += pcm[i];
     if( asp_tank_put( t, pos, k, mix ) ) return -1;
     pcm += 2 * k; pos += k; n -= k;
     }
   return 0;
   }
 
-uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int64_t gain )
+uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix )
   {
   int64_t min = mix[0], max = mix[0];
   int msb = 0;
@@ -179,7 +163,6 @@ uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix
   for( int64_t i = 0; i < 2 * n; i++ )
     {
     int64_t sam = mix[i];
-    if( gain ) sam += ( sam * gain ) >> 31;
     if( msb > 30 ) sam >>= ( msb - 30 );
     pcm[i] = (int32_t)sam;
     if( sam < min ) min = sam; else if( sam > max ) max = sam;
