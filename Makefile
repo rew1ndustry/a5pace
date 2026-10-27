@@ -26,8 +26,8 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o
-all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank
+LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o
+all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -51,6 +51,9 @@ build/sha256.o: src/sha256.c include/aspstore.h
 build/gate.o: src/gate.c include/gate.h include/asptank.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/sync.o: src/sync.c include/sync.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -Wno-misleading-indentation -Wno-sign-compare $(INC) -c -o $@ $<
 build/asptank.o: src/asptank.c include/asptank.h include/plat.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
@@ -78,9 +81,14 @@ bin/test_tank: tests/test_tank.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 
-test: bin/test_store bin/test_tank
+bin/test_sync: tests/test_sync.c build/sync.o
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ $< build/sync.o -lm
+
+test: bin/test_store bin/test_tank bin/test_sync
 	bin/test_store
 	bin/test_tank
+	bin/test_sync
 gate-diff:
 	tests/gate_diff.sh $(FILES)
 clean:
