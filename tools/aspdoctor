@@ -1,0 +1,110 @@
+#!/bin/bash
+# aspdoctor [-o FILE] [--test] [--anon] [DIR]
+# gathers what is needed to work out why aspace is not working on a machine, into one file to send:
+# the system, the build, the sound cards and who holds them, and (given a session DIR) the session's settings,
+# its log, its loop header and a check of its files. NO audio and nothing from outside these places goes in.
+# --test also runs the test suite and includes the output; --anon blanks the user and host names.
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+OUT=""; TEST=0; ANON=0; DIR=""
+while [ $# -gt 0 ]; do
+  case $1 in -o) OUT=$2; shift ;; --test) TEST=1 ;; --anon) ANON=1 ;; -h|--help) sed -n 2,7p "$0"; exit 0 ;; *) DIR=$1 ;; esac
+  shift
+done
+W=$(mktemp -d); B=$W/aspdoctor-$(date +%y%m%d-%H%M%S); mkdir -p $B
+OUT=${OUT:-$PWD/$(basename $B).tar.gz}
+run() { local f=$1; shift; { echo "\$ $*"; "$@" 2>&1; echo "[exit $?]"; } >> "$B/$f.txt"; }
+sh_() { local f=$1; shift; { echo "\$ $*"; bash -c "$*" 2>&1; echo "[exit $?]"; } >> "$B/$f.txt"; }
+
+cat > $B/README.txt <<'R'
+aspdoctor bundle. Everything in here is plain text. Read it before you send it.
+  system.txt   the machine (kernel, distribution, cpu, memory, limits, your groups)
+  build.txt    which aspace this is and how it was built (git revision, compiler, libraries it links)
+  audio.txt    sound cards, who has them open, pipewire state, the alsa status files of any running stream
+  session.txt  (if a session was named) its descriptor, counts, the loop file's header, a check of its files
+  log.txt      the last 300 events of the session log (no audio; take ids and sizes only)
+  latency.tsv  measured round trips against the driver's, from aspcard
+  tests.txt    (with --test) the test suite output
+Not included: any audio, any file outside the aspace directory and the session you named.
+R
+
+# --- system
+run system uname -a
+sh_ system 'cat /etc/os-release 2>/dev/null | head -6'
+sh_ system 'lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|Architecture|Byte Order"'
+sh_ system 'free -m 2>/dev/null | head -3'
+sh_ system 'ulimit -a | grep -E "real-time|memlock|open files"'
+sh_ system 'id -Gn'
+sh_ system 'date; uptime'
+
+# --- build
+sh_ build "cd '$HERE' && git log --oneline -3 2>/dev/null; git status --short 2>/dev/null | head -20"
+run build cc --version
+sh_ build "ls -la '$HERE/bin' 2>/dev/null"
+sh_ build "ldd '$HERE/bin/aspace' 2>&1 | head -20"
+sh_ build "cd '$HERE' && grep -m1 -E 'SQLITE_VERSION ' third_party/sqlite/sqlite3.h 2>/dev/null; ls build/flac/src/libFLAC/libFLAC.a 2>&1"
+sh_ build "cd '$HERE' && ls third_party 2>&1; echo FLACDIR=\${FLACDIR:-(default)}"
+
+# --- audio
+run audio cat /proc/asound/cards
+run audio aplay -l
+run audio arecord -l
+sh_ audio 'fuser -v /dev/snd/* 2>&1 | grep -v "^ *$"'
+sh_ audio 'for f in /proc/asound/card*/pcm*/sub*/hw_params /proc/asound/card*/pcm*/sub*/status; do echo "== $f"; cat $f; done 2>&1 | head -80'
+sh_ audio 'command -v pw-cli >/dev/null && pw-cli info 0 2>&1 | head -8; command -v wpctl >/dev/null && wpctl status 2>&1 | head -30'
+sh_ audio 'command -v ur22c >/dev/null && echo "ur22c loopback: $(ur22c get loopback 2>&1)"'
+sh_ audio 'ps -eo pid,user,args | grep -E "arecord|aplay|aspace|pipewire|jackd|pulse" | grep -v grep'
+
+# --- session
+if [ -n "$DIR" ]; then
+  if [ ! -d "$DIR" ]; then echo "no such session: $DIR" >> $B/session.txt
+  else
+    S=$B/session
+    sh_ session "ls -la '$DIR' '$DIR/cache' 2>&1; du -sh '$DIR' 2>&1; df -h '$DIR' 2>&1 | tail -2"
+    [ -x "$HERE/bin/aspstore" ] && run session "$HERE/bin/aspstore" "$DIR" info
+    sh_ session "cat '$DIR/ctl' 2>&1"
+    [ -x "$HERE/bin/aspctl" ] && { run session "$HERE/bin/aspctl" "$DIR" STATE; run session "$HERE/bin/aspctl" "$DIR" LINE; run session "$HERE/bin/aspctl" "$DIR" TAKES; }
+    sh_ session "head -c 128 '$DIR/cache/loop.d64' 2>/dev/null | xxd | head -9"
+    if command -v python3 >/dev/null; then
+      python3 -I - "$DIR" >> $B/session.txt 2>&1 <<'PY'
+import sqlite3, sys, os, json
+d = sys.argv[1]
+print("--- python check of", d)
+try:
+    db = sqlite3.connect("file:%s/session.db?mode=ro" % d, uri=True)
+    print("user_version", db.execute("pragma user_version").fetchone()[0])
+    print("descriptor", db.execute("select descriptor_json from session").fetchone()[0])
+    print("takes", db.execute("select count(*) from takes").fetchone()[0], " log events", db.execute("select count(*) from log").fetchone()[0])
+    print("event types:", dict(db.execute("select type,count(*) from log group by 1 order by 2 desc limit 25").fetchall()))
+    missing = bad = 0
+    for sha, frames in db.execute("select blob_sha, frames from takes"):
+        p = "%s/blobs/%s/%s.flac" % (d, sha[:2], sha)
+        if not os.path.exists(p): missing += 1
+    print("takes whose blob file is missing:", missing)
+    tmp = "%s/blobs/tmp" % d
+    if os.path.isdir(tmp): print("unfinished takes in blobs/tmp:", len(os.listdir(tmp)))
+except Exception as e:
+    print("could not read the session database:", e)
+PY
+      python3 -I - "$DIR" > $B/log.txt 2>&1 <<'PY'
+import sqlite3, sys
+db = sqlite3.connect("file:%s/session.db?mode=ro" % sys.argv[1], uri=True)
+rows = db.execute("select seq,tick,actor,type,substr(args_json,1,300) from log where type!='take_state' order by seq desc limit 300").fetchall()
+for r in reversed(rows): print(*r, sep="\t")
+PY
+    else echo "python3 not found: no session log in this bundle" >> $B/session.txt; fi
+    cp "$DIR/cache/latency.tsv" $B/latency.tsv 2>/dev/null
+  fi
+fi
+
+# --- tests
+if [ $TEST = 1 ]; then ( cd "$HERE" && make test > "$B/tests.txt" 2>&1; echo "[exit $?]" >> "$B/tests.txt" ); fi
+
+# --- anonymise
+if [ $ANON = 1 ]; then
+  for f in $B/*.txt $B/*.tsv; do [ -f "$f" ] && sed -i "s/$(hostname)/HOST/g; s/$USER/USER/g; s#/home/$USER#/home/USER#g" "$f"; done
+fi
+
+( cd $W && tar czf "$OUT" "$(basename $B)" )
+echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); look inside before sending: tar tzf $OUT; the README in it says what is and is not there"
+rm -rf $W
