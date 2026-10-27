@@ -73,6 +73,7 @@ typedef struct Gate
   int64_t seen;				/* samples fed since reset */
   char ready, learnt;
   double gate, ring;			/* dB: the margin; a block that rings, over the floor */
+  int    chmask;			/* which input channels the gate listens to: bit 0 left, bit 1 right (3 = both, as asp4) */
   double lowcut;			/* Hz: nothing below the instrument's lowest note may open the gate */
   double lob[4][5];			/* the high pass for that, per gate */
   int    firstband;			/* the first band that may count */
@@ -296,6 +297,7 @@ static void gateSwitchImpl( Gate *g, int32_t *pcm, int32_t *prev, int count, int
   for( ch = 0; ch < 2; ++ch )
     {
     GateChan *c = g->chan + ch;
+    if( ! ( g->chmask & ( 1 << ch ) ) ) continue;
     for( n = 0; n < count; ++n )
       {
       double x = pcm[n*2+ch], dc = gateFilter( gateDcB, c->dc, x );
@@ -351,6 +353,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
   for( ch = 0; ch < 2; ++ch )
     {
     GateChan *c = g->chan + ch;
+    if( ! ( g->chmask & ( 1 << ch ) ) ) continue;                 /* a channel that is not used does not open the gate */
     for( n = 0; n < count; ++n )
       {
       double x = pcm[n*2+ch], y = x, h;
@@ -427,7 +430,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
   g->seen += count;
 
   /* once both channels have learnt, say what floor they heard */
-  if( ! g->learnt && g->chan[0].frames >= GATE_INIT && g->chan[1].frames >= GATE_INIT )
+  if( ! g->learnt && asp_gate_learnt( g ) )
     {
     double f[2];
     for( ch = 0; ch < 2; ++ch )
@@ -458,14 +461,14 @@ AspGate *asp_gate_new( void (*say)( void *, const char * ), void *user )
   {
   Gate *g = calloc( 1, sizeof *g );
   gateReset( g );
-  g->gate = 18.0; g->ring = 7.5; g->say = say; g->user = user;
+  g->gate = 18.0; g->ring = 7.5; g->say = say; g->user = user; g->chmask = 3;
   asp_gate_set_lowcut( g, 30 );
   return g;
   }
 void asp_gate_free( AspGate *g ) { free( g ); }
 void asp_gate_reset( AspGate *g )
-  { double a = g->gate, b = g->ring, l = g->lowcut; int st = g->strict; void (*s)( void *, const char * ) = g->say; void *u = g->user;
-    gateReset( g ); g->gate = a; g->ring = b; g->say = s; g->user = u; g->strict = st; asp_gate_set_lowcut( g, l ); }
+  { double a = g->gate, b = g->ring, l = g->lowcut; int st = g->strict, cm = g->chmask; void (*s)( void *, const char * ) = g->say; void *u = g->user;
+    gateReset( g ); g->gate = a; g->ring = b; g->say = s; g->user = u; g->strict = st; g->chmask = cm; asp_gate_set_lowcut( g, l ); }
 void asp_gate_set( AspGate *g, double gate_db, double ring_db )
   {
   if( gate_db > 0 ) g->gate = gate_db < 1 ? 1 : ( gate_db > 60 ? 60 : gate_db );
@@ -478,7 +481,8 @@ void asp_gate_switch( AspGate *g, int32_t *pcm, int32_t *prev, int count, int ar
   { gateSwitchImpl( g, pcm, prev, count, armed ); }
 
 int asp_gate_active( AspGate *g, int ch ) { return g->chan[ch].hang > 0; }
-int asp_gate_learnt( AspGate *g ) { return g->chan[0].frames >= GATE_INIT && g->chan[1].frames >= GATE_INIT; }
+int asp_gate_learnt( AspGate *g )
+  { return ( ! ( g->chmask & 1 ) || g->chan[0].frames >= GATE_INIT ) && ( ! ( g->chmask & 2 ) || g->chan[1].frames >= GATE_INIT ); }
 /* the learnt floor as an amplitude (rms of the signal above 30 Hz); 0 until learnt */
 double asp_gate_floor( AspGate *g, int ch )
   { return g->chan[ch].frames >= GATE_INIT ? sqrt( g->chan[ch].ybg ) : 0; }
@@ -515,3 +519,7 @@ double asp_gate_event_share( AspGate *g, int reset )
   return tot > 0 ? in / tot : 1.0;
   }
 double asp_gate_dominance( AspGate *g ) { return g->dom; }
+
+/* the input channels the gate listens to (bit 0 left, bit 1 right). the other channel never opens it and is not learnt */
+void asp_gate_set_channels( AspGate *g, int mask ) { if( mask < 1 || mask > 3 ) mask = 3; if( mask != g->chmask ) { g->chmask = mask; g->learnt = 0; } }
+int asp_gate_channels( AspGate *g ) { return g->chmask; }

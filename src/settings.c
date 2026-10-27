@@ -106,6 +106,8 @@ void asp_settings_cfg( AspCoreCfg *c, const char *t )
   if( ! asp_settings_get( t, "lowcut", v, sizeof v ) ) c->lowcut = atof( v );
   if( ! asp_settings_get( t, "strict", v, sizeof v ) ) c->strict = atoi( v );
   if( ! asp_settings_get( t, "mono", v, sizeof v ) ) c->mono_detect = atoi( v );
+  if( ! asp_settings_get( t, "input", v, sizeof v ) ) c->input = ! strcmp( v, "left" ) ? 1 : ! strcmp( v, "right" ) ? 2 : ! strcmp( v, "stereo" ) ? 3 : 0;
+  if( ! asp_settings_get( t, "minpeak", v, sizeof v ) ) c->minpeak = atof( v );
   if( ! asp_settings_get( t, "sync_max", v, sizeof v ) ) c->sync.max_db = atof( v );
   if( ! asp_settings_get( t, "sync_start", v, sizeof v ) ) c->sync.start_db = atof( v );
   if( ! asp_settings_get( t, "sync_target", v, sizeof v ) ) c->sync.target_db = atof( v );

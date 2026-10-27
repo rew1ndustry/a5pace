@@ -26,4 +26,6 @@ void asp_gate_set_strict( AspGate *g, int on );     /* 1: a single band over its
 int asp_gate_strict( AspGate *g );
 double asp_gate_event_share( AspGate *g, int reset );   /* share of the open-gate power above the lowcut; reset starts a new count */
 double asp_gate_dominance( AspGate *g );               /* the share below which an event is a bump (0.15) */
+void asp_gate_set_channels( AspGate *g, int mask );   /* which input channels it listens to: 1 left, 2 right, 3 both (the default) */
+int  asp_gate_channels( AspGate *g );
 #endif

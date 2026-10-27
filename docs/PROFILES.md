@@ -19,6 +19,7 @@ that exists, or by hand) and the loop shell only picks one from a list.
 | `strict` | 1: one band alone, twice running, does not open the gate |
 | `mono` | 1: a take from one channel (or two identical ones) is stored as mono (default 1) |
 | `sync_max`, `sync_start`, `sync_target` | the sync tone: ceiling and first level in dB re asp4's, and the wanted input peak in dBFS |
+| `input` | `auto` (default), `left`, `right` or `stereo`. A fixed side records that channel only, as mono centred from the first tick (no later conversion) and the gate ignores the other channel; `stereo` never goes mono |
 | `automix` | `off`, `overlap N`, `swap`, `swap each` |
 
 Precedence, lowest first: built-in, `defaults`, the session's own stored settings, a profile chosen with `--profile` or

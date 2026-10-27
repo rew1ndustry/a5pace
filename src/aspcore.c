@@ -57,6 +57,7 @@ struct AspCore
   int64_t  pass, outpos;
   int      swap_flip; int64_t swap_iter, swap_n;
   int      t_feed;                  /* the take in progress is being put into the loop as it comes */
+  int      t_fix, t_in;             /* its input: the one channel it is recorded from (mono from the start), or -1; and the input setting then */
   char     profile[64], settings[1100];
   int      started;
   int      out_shift;               /* how far the last output tick was brought down to fit */
@@ -110,6 +111,11 @@ static void apply_text( AspCore *c, const char *text )
   if( ! asp_settings_get( text, "lowcut", v, sizeof v ) ) asp_gate_set_lowcut( c->gate, atof( v ) );
   if( ! asp_settings_get( text, "strict", v, sizeof v ) ) asp_gate_set_strict( c->gate, atoi( v ) );
   if( ! asp_settings_get( text, "mono", v, sizeof v ) ) c->cfg.mono_detect = atoi( v );
+  if( ! asp_settings_get( text, "input", v, sizeof v ) )
+    {
+    c->cfg.input = ! strcmp( v, "left" ) ? 1 : ! strcmp( v, "right" ) ? 2 : ! strcmp( v, "stereo" ) ? 3 : 0;
+    asp_gate_set_channels( c->gate, c->cfg.input == 1 ? 1 : c->cfg.input == 2 ? 2 : 3 );
+    }
   if( ! asp_settings_get( text, "minpeak", v, sizeof v ) ) c->cfg.minpeak = atof( v );
   if( ! asp_settings_get( text, "automix", v, sizeof v ) )
     {
@@ -159,6 +165,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
   if( cfg->lowcut > 0 ) asp_gate_set_lowcut( c->gate, cfg->lowcut );
+  asp_gate_set_channels( c->gate, cfg->input == 1 ? 1 : cfg->input == 2 ? 2 : 3 );
   asp_gate_set_strict( c->gate, cfg->strict );
   c->sync = asp_sync_new( &cfg->sync );
   c->phase = 0;
@@ -298,23 +305,36 @@ void asp_core_automix( AspCore *c, int mode, int n, int each )
 
 /* --- takes --- */
 
-static void take_feed( AspCore *c, const int32_t *pcm, int64_t n )
+static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
   {
   if( c->t_feed && n > 0 )
-    asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, 0, 0 );
+    asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, lev, lev );
   }
 
 /* frames of a take, from its start, counted so that frame 0 is the start of its second of the loop */
 static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
   {
   int rc = 0;
+  if( c->t_fix >= 0 )                              /* one channel, recorded as mono and put in the middle as it comes: no stereo, no conversion */
+    {
+    int32_t m[4096], d[2 * 4096];
+    for( int64_t i = 0; i < n; i += 4096 )
+      {
+      int64_t k = n - i < 4096 ? n - i : 4096;
+      for( int64_t j = 0; j < k; j++ ) d[2*j] = d[2*j+1] = m[j] = pcm[2 * ( i + j ) + c->t_fix];
+      rc |= asp_flac_enc_write( c->enc, m, (unsigned)k );
+      if( c->t_feed ) asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames + i, d, k, ASP_LEV_OFF, ASP_LEV_OFF, c->cfg.mono_lev, c->cfg.mono_lev );
+      }
+    c->t_frames += n;
+    return rc;
+    }
   for( int64_t i = 0; i < n; i += 4096 )
     {
     int64_t k = n - i < 4096 ? n - i : 4096;
     rc |= asp_flac_enc_write( c->enc, pcm + 2 * i, (unsigned)k );
     }
   for( int64_t i = 0; i < n && c->t_ident; i++ ) if( pcm[2*i] != pcm[2*i+1] ) c->t_ident = 0;
-  take_feed( c, pcm, n );
+  take_feed( c, pcm, n, 0 );
   c->t_frames += n;
   return rc;
   }
@@ -348,8 +368,8 @@ static void take_end( AspCore *c, const int32_t *last )
   if( ! bad && ( is_bump || is_quiet ) )
     {
     int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
-    if( c->t_feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == 2 )   /* it was fed into the loop as it came: take it out again */
-      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, 2, (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, 2, ASP_PLACE_OFF ) );   /* fed at level 0 0 */
+    if( c->t_feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == ( c->t_fix >= 0 ? 1 : 2 ) )   /* it was fed into the loop as it came: take it out again */
+      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, ch2, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, ch2, ASP_PLACE_OFF ) );
     else free( sp );
     unlink( c->part );
     logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
@@ -360,7 +380,9 @@ static void take_end( AspCore *c, const int32_t *last )
 
   /* mono: one channel never rang, or both are the same */
   int mono = 0, src = 0;
-  if( c->cfg.mono_detect && ! c->t_damaged )
+  if( c->t_fix >= 0 ) { mono = 1; src = c->t_fix; }          /* told which channel: mono from the start */
+  else if( c->t_in == 3 ) mono = 0;                          /* told it is stereo */
+  else if( c->cfg.mono_detect && ! c->t_damaged )
     {
     int64_t a = c->t_act[0], b = c->t_act[1];
     if( c->t_ident ) { mono = 1; src = 0; }
@@ -371,7 +393,7 @@ static void take_end( AspCore *c, const int32_t *last )
   if( swap && c->swap_n++ && ( c->cfg.automix.each || (int64_t)c->t_iter != c->swap_iter ) ) c->swap_flip = ! c->swap_flip;   /* the first take goes left / unflipped */
   c->swap_iter = c->t_iter;
 
-  AspPlace live = { 0, 0, 0 }, fin = { 0, 0, 0 };
+  AspPlace live = c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, fin = { 0, 0, 0 };
   if( mono ) { if( swap ) fin = c->swap_flip ? (AspPlace){ ASP_LEV_OFF, 0, 0 } : (AspPlace){ 0, ASP_LEV_OFF, 0 };
                else fin = (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 }; }
   else if( swap ) fin.flip = c->swap_flip;
@@ -385,7 +407,7 @@ static void take_end( AspCore *c, const int32_t *last )
 
   int32_t *stereo = NULL; int64_t sn = 0; int sch = 0;
   char part2[1200]; part2[0] = 0;
-  if( ! bad && mono )                                       /* keep the stereo for the move, store one channel */
+  if( ! bad && mono && c->t_fix < 0 )                       /* keep the stereo for the move, store one channel */
     {
     if( asp_pcm_load( c->part, &stereo, &sn, &sch ) == 0 && sch == 2 && ! asp_tmp_path( c->store, part2, sizeof part2 ) )
       {
@@ -447,7 +469,9 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
     asp_tank_set_head( c->tank, c->iter, c->peak );
     }
   if( asp_tmp_path( c->store, c->part, sizeof c->part ) ) return -1;
-  c->enc = asp_flac_enc_open( c->part, 2, RATE );
+  c->t_in = c->cfg.input;
+  c->t_fix = c->t_in == 1 ? 0 : c->t_in == 2 ? 1 : -1;
+  c->enc = asp_flac_enc_open( c->part, c->t_fix >= 0 ? 1 : 2, RATE );
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
   c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0; c->t_ident = 1;
@@ -625,7 +649,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
-  st->lowcut = asp_gate_lowcut( c->gate ); st->strict = asp_gate_strict( c->gate ); st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
+  st->input = c->cfg.input; st->lowcut = asp_gate_lowcut( c->gate ); st->strict = asp_gate_strict( c->gate ); st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
   st->log_seq = asp_log_last( c->store ); st->loop_frames = c->size; st->peak = (int64_t)c->peak;
   }
 

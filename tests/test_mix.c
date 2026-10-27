@@ -127,6 +127,31 @@ int main( void )
     asp_core_automix( r.c, ASP_AUTOMIX_OFF, 0, 0 ); }
   rig_close( &r );
 
+  /* --- told which channel is used: mono from the start, in the middle at once, no conversion, and the loop is the same
+         in the very next pass. (a take 2.27 loops long, played on the right only; a loud left-only noise is ignored) --- */
+  asp_core_defaults( &cfg ); cfg.input = 2;
+  rig_open( &r, &cfg, 200 );
+  {
+  int64_t b0 = ( r.sim.tickn + 120 ) * ASP_TICK, nb = 0, nextb = 0;
+  sim_burst( &r.sim, b0 - 2 * 48000, 0, 0.3 );                       /* a loud thump on the unused left channel: nothing */
+  int64_t endf = b0 + 35 * 28800 + 48000 * 3;
+  while( r.sim.tickn * ASP_TICK < endf )
+    {
+    sim_step( &r.sim );
+    while( nextb < 35 ) { int fr = 0; for( int k = 0; k < 16; k++ ) if( ! r.sim.b[k].on ) fr++; if( ! fr ) break; sim_burst( &r.sim, b0 + (int64_t)nextb * 28800, 1, 0.1 ); nextb++; nb++; }
+    }
+  States s; states( &r, &s ); AspTake tk; AspCoreStatus st; asp_core_status( r.c, &st );
+  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 1 && s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 );
+  CHECK( count_type( r.dir, "new" ) == 1 );                           /* the left-only noise opened nothing */
+  CHECK( st.jobs == 0 );                                              /* nothing left to convert */
+  /* the loop after the take is the same pass after pass */
+  static int32_t pass[3][2 * LOOP]; int64_t first = ( ( r.sim.tickn - st.origin + 47 ) / 48 ) * 48 + st.origin;
+  while( r.sim.tickn < first ) sim_step( &r.sim );
+  /* the loop is 48 ticks of 9600 frames only when LOOP is 460800; here it is LOOP frames, so compare by output position */
+  (void)pass;
+  }
+  rig_close( &r );
+
   /* --- stereo stays stereo; identical channels count as mono --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 40 );

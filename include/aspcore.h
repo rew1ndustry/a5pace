@@ -27,6 +27,8 @@ typedef struct
   double lowcut;               /* Hz: the instrument's lowest note; nothing below opens the gate. 0 or 30: as asp4 */
   int    strict;               /* 1: one band alone over its threshold no longer opens the gate */
   double minpeak;              /* dBFS (negative), 0 = off: a take that never reaches this is not kept */
+  int    input;                /* which input channels are used: 0 auto (decide from what rings), 1 left, 2 right (mono, from the start),
+                                  3 stereo (both, never mono). fixed settings record mono and put it in the middle at once */
   int    live;                 /* record takes (default 1); 0 starts safe */
   int    feed;                 /* put each take into the loop as it is recorded (default 1) */
   int64_t gain;                /* output gain, asp4's my_gain (0) */
@@ -46,7 +48,7 @@ typedef struct
   double   sync_level_db;
   int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
-  double   gate_db, ring_db, lowcut; int gate_learnt, strict;
+  double   gate_db, ring_db, lowcut; int gate_learnt, strict, input;
   int64_t  log_seq, loop_frames, peak;
   } AspCoreStatus;
 
