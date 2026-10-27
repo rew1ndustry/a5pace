@@ -1,0 +1,5 @@
+# the gate as it was in asp4; sync tone capped for headphones
+lowcut 30
+gate 18
+ring 7.5
+sync_max -36

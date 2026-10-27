@@ -48,6 +48,31 @@ pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "declared latency plays at once" "$c STATE | grep -q '\"phase\":\"play\".*\"latency\":4321'"
 $c QUIT > /dev/null; wait $pid || true
+# profiles: made outside a session, listed, chosen
+export ASPACE_CONFIG=$t/cfg
+$here/bin/aspace profiles install > /dev/null
+chk "the shipped profiles are listed" "$here/bin/aspace profiles | grep -q '^violin-line .*G3'"
+printf 'sync_max -40\n' > $t/cfg/defaults
+d2=$t/s2; $here/bin/aspace new $d2 prof 6.25 --profile violin-line > /dev/null
+$here/bin/aspace run -q -S 7001 --fast $d2 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+c2="$here/bin/aspctl $d2"
+chk "a new session carries the defaults and the chosen profile" "$c2 SETTINGS | grep -q 'sync_max=-40' && $c2 SETTINGS | grep -q 'lowcut=190' && $c2 STATE | grep -q '\"profile\":\"violin-line\"'"
+chk "the profile is in force" "$c2 STATE | grep -q '\"lowcut\":190,\"strict\":1'"
+chk "the loop shell can list them" "$c2 PROFILES | grep -q 'bass-line'"
+$c2 PROFILE bass-line > /dev/null
+chk "and choose another" "$c2 STATE | grep -q '\"lowcut\":35' && $c2 STATE | grep -q '\"profile\":\"bass-line\"'"
+chk "an unknown profile is refused" "! $c2 PROFILE nonesuch > /dev/null"
+chk "tick times are measured" "$c2 STATE | grep -q 'tick_ms_max'"
+$c2 SAFE > /dev/null; $c2 REVERT 3 > /dev/null
+chk "a revert brings back the settings of that time" "$c2 STATE | grep -q '\"profile\":\"violin-line\"'"
+$c2 QUIT > /dev/null; wait $pid || true
+$here/bin/aspace run -q -S 7001 --fast --profile knocks-and-clicks $d2 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+chk "a profile given at run is used and remembered" "$c2 STATE | grep -q '\"profile\":\"knocks-and-clicks\"' && $c2 STATE | grep -q '\"lowcut\":30'"
+$c2 QUIT > /dev/null; wait $pid || true
 rm -rf $t
 [ $fail = 0 ] && echo "all runner tests passed"
 exit $fail

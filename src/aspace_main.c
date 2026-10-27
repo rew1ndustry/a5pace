@@ -7,6 +7,8 @@
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --safe  start with recording off
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
+            --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
+            --profile NAME  a named gate/sync setup from the list (aspace profiles)
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
@@ -24,6 +26,7 @@
 #include "aspengine.h"
 #include "ctlsrv.h"
 #include "plat.h"
+#include "settings.h"
 #include "simedge.h"
 
 static volatile sig_atomic_t quit;
@@ -33,6 +36,7 @@ typedef struct
   {
   AspStore *store; AspTank *tank; AspCore *core; CtlSrv *ctl;
   Sim sim; int simmode, step, step_cl; int64_t steps; int run;
+  double tick_ms_max, tick_ms_sum; int64_t ticks_timed, slow_ticks;   /* how long the core takes per tick: the cubieboard question */
   } Run;
 
 static int64_t json_num( const char *j, const char *key, int64_t d )
@@ -42,16 +46,71 @@ static int64_t json_num( const char *j, const char *key, int64_t d )
   return p ? atoll( p + strlen( k ) ) : d;
   }
 
+static void addflag( char *text, const char *k, const char *v )
+  {
+  char one[300]; snprintf( one, sizeof one, "%s=%s", k, v );
+  asp_settings_merge( text, 600, one );
+  }
+
+typedef struct { char settings[1100], profile[64]; } Stored;
+static void stored_cb( int64_t id, const char *json, void *u )
+  {
+  Stored *st = u;
+  if( id != 0 ) return;
+  const char *s = strstr( json, "\"settings\":\"" ), *p = strstr( json, "\"profile\":\"" );
+  if( p ) { p += 11; size_t l = strcspn( p, "\"" ); if( l > 63 ) l = 63; memcpy( st->profile, p, l ); st->profile[l] = 0; }
+  if( s ) { s += 12; size_t l = strcspn( s, "\"" ); if( l > 1099 ) l = 1099; memcpy( st->settings, s, l ); st->settings[l] = 0; }
+  }
+
+/* defaults, then a named profile over them */
+static int build_settings( const char *profile, char *out, size_t n )
+  {
+  char d[900], f[1000], t[1100];
+  out[0] = 0;
+  if( ! asp_config_dir( d, sizeof d ) ) { snprintf( f, sizeof f, "%s/defaults", d ); if( ! asp_settings_file( f, t, sizeof t ) ) asp_settings_merge( out, n, t ); }
+  if( profile && *profile )
+    {
+    if( asp_profile_path( profile, f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "aspace: no profile \"%s\" (aspace profiles lists them)\n", profile ); return -1; }
+    asp_settings_merge( out, n, t );
+    }
+  return 0;
+  }
+
+static void list_cb( const char *name, const char *note, void *u ) { (void)u; printf( "%-22s %s\n", name, note ); }
+
+static int cmd_profiles( int argc, char **argv )
+  {
+  char d[900], f[1000], t[1100];
+  if( asp_config_dir( d, sizeof d ) ) { fprintf( stderr, "no config directory (set ASPACE_CONFIG)\n" ); return 1; }
+  if( argc >= 4 && ! strcmp( argv[2], "show" ) )
+    {
+    if( asp_profile_path( argv[3], f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "no profile %s\n", argv[3] ); return 1; }
+    printf( "%s\n", t ); return 0;
+    }
+  if( argc >= 3 && ! strcmp( argv[2], "install" ) )   /* the examples that ship with aspace, from profiles/ beside bin/ */
+    {
+    char self[1100], cmd[2300]; snprintf( self, sizeof self, "%s", argv[0] );
+    char *sl = strrchr( self, '/' ); if( sl ) *sl = 0; else strcpy( self, "." );
+    snprintf( cmd, sizeof cmd, "mkdir -p '%s/profiles' && for f in '%s'/../profiles/*; do [ -e '%s/profiles/'\"$(basename \"$f\")\" ] || cp \"$f\" '%s/profiles/'; done && echo installed into %s/profiles", d, self, d, d, d );
+    return system( cmd ) ? 1 : 0;
+    }
+  if( ! asp_profile_list( list_cb, NULL ) ) printf( "no profiles in %s/profiles (aspace profiles install copies the examples)\n", d );
+  return 0;
+  }
+
 static int usage( void )
   {
-  fprintf( stderr, "usage: aspace new DIR NAME SECONDS\n       aspace run [-S LAT [--fast|--step]] [-C PORT] [--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
+  fprintf( stderr, "usage: aspace new DIR NAME SECONDS [--profile NAME]\n       aspace profiles | profiles show NAME | profiles install\n       aspace run [-S LAT [--fast|--step]] [-C PORT] [--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
   return 2;
   }
 
 static int cmd_new( int argc, char **argv )
   {
-  if( argc != 5 ) return usage();
-  char err[ASP_ERR], desc[400], tp[1100];
+  if( argc != 5 && argc != 7 ) return usage();
+  char err[ASP_ERR], desc[400], tp[1100], settings[1100];
+  const char *profile = argc == 7 && ! strcmp( argv[5], "--profile" ) ? argv[6] : NULL;
+  if( argc == 7 && ! profile ) return usage();
+  if( build_settings( profile, settings, sizeof settings ) ) return 1;
   double secs = atof( argv[4] );
   int64_t frames = (int64_t)( secs * 48000 + 0.5 );
   if( frames < 4 * ASP_TICK ) { fprintf( stderr, "a loop needs at least %d frames\n", 4 * ASP_TICK ); return 1; }
@@ -62,6 +121,7 @@ static int cmd_new( int argc, char **argv )
   AspTank *t = asp_tank_create( tp, frames, 48000, err, sizeof err );
   if( ! t ) { fprintf( stderr, "%s\n", err ); return 1; }
   asp_tank_bind( t, asp_session_id( s ) );
+  { char st[1300]; snprintf( st, sizeof st, "{\"profile\":\"%s\",\"settings\":\"%s\"}", profile ? profile : "", settings ); asp_take_set_state( s, 0, st, "aspace", 0 ); asp_log( s, "aspace", "settings", st, 0 ); }
   asp_tank_close( t ); asp_close( s );
   printf( "%s: %lld frames (%.3f s)\n", argv[2], (long long)frames, frames / 48000.0 );
   return 0;
@@ -84,6 +144,9 @@ static void fold_cb( int64_t id, const char *st, void *u )
   }
 
 static const char *mode_name( int m ) { return m == ASP_AUTOMIX_OVERLAP ? "overlap" : m == ASP_AUTOMIX_SWAP ? "swap" : "off"; }
+
+static void prof_say( const char *name, const char *note, void *u )
+  { Run *r = u; ctl_say( r->ctl, r->run, "%s\t%s", name, note ); }
 
 static void handle( void *u, int cl, const char *line )
   {
@@ -108,26 +171,37 @@ static void handle( void *u, int cl, const char *line )
     {
     ctl_say( c, cl, "{\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
-      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
+      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"tick_ms_avg\":%.2f,\"tick_ms_max\":%.2f,\"slow_ticks\":%lld,\"profile\":\"%s\",\"session\":\"%.12s\"}",
       st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
-      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
+      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0;
-    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  automix %s%s  gate %.0fdB%s  lat %.1fms",
+    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  automix %s%s  gate %.0fdB%s  lat %.1fms%s%s",
       st.phase ? "PLAY" : "SYNC", st.tick / 5.0, pos / 48000.0, st.loop_frames / 48000.0, (unsigned long long)st.iter, st.loop_takes,
       st.jobs ? " (moving)" : "", st.take_open ? "  REC" : "", st.live ? "live" : "SAFE", mode_name( st.automix.mode ),
       st.automix.mode == ASP_AUTOMIX_OVERLAP ? " n" : "", st.gate_db, st.gate_learnt ? "" : " learning",
-      st.latency * 1000.0 / 48000 );
+      st.latency * 1000.0 / 48000, asp_core_profile( r->core )[0] ? "  profile " : "", asp_core_profile( r->core ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "SAFE" ) ) { asp_core_safe( r->core, 1 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LIVE" ) ) { asp_core_safe( r->core, 0 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "SYNC" ) ) { asp_core_resync( r->core ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "RELEARN" ) ) { asp_core_gate_relearn( r->core ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "PROFILES" ) ) { asp_profile_list( prof_say, r ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "SETTINGS" ) ) { ctl_say( c, cl, "profile %s", asp_core_profile( r->core ) ); ctl_say( c, cl, "%s", asp_core_settings_text( r->core ) ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "PROFILE" ) && n > 1 )
+    {
+    char pt[1100], cur[1100];
+    if( build_settings( w[1], pt, sizeof pt ) ) { ctl_err( c, cl, "no profile %s", w[1] ); return; }
+    snprintf( cur, sizeof cur, "%s", asp_core_settings_text( r->core ) );
+    asp_settings_merge( cur, sizeof cur, pt );
+    asp_core_settings( r->core, w[1], cur );      /* the sync keys wait for the next start; the rest is in force now */
+    ctl_ok( c, cl );
+    }
   else if( ! strcmp( w[0], "GATE" ) && n > 1 )
     { double v = atof( w[1] ); if( w[1][0] == '+' || w[1][0] == '-' ) v += st.gate_db; asp_core_gate( r->core, v, 0 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LOWCUT" ) && n > 1 ) { asp_core_gate_options( r->core, atof( w[1] ), -1 ); ctl_ok( c, cl ); }   /* nothing below this opens the gate */
@@ -174,6 +248,20 @@ static void handle( void *u, int cl, const char *line )
   else ctl_err( c, cl, "unknown or incomplete: %s", line );
   }
 
+/* a tick is 200 ms of audio. the edge's buffers ride out a slow one, but a stall of a few hundred ms (an sd card
+   syncing) is a dropout; so every tick is timed and the slow ones are logged (rate limited). */
+static void timed( Run *r, double ms )
+  {
+  r->tick_ms_sum += ms; r->ticks_timed++;
+  if( ms > r->tick_ms_max ) r->tick_ms_max = ms;
+  if( ms > 100 )
+    {
+    r->slow_ticks++;
+    if( r->slow_ticks <= 20 || ( r->slow_ticks % 100 ) == 0 )
+      { char b[120]; snprintf( b, sizeof b, "{\"ms\":%.0f,\"count\":%lld}", ms, (long long)r->slow_ticks ); asp_log( r->store, "edge", "shell_slow_tick", b, -1 ); }
+    }
+  }
+
 static int read_tick( int32_t *in )
   {
   unsigned char b[ASP_TICK * 8];
@@ -209,7 +297,8 @@ static int cmd_run( int argc, char **argv )
   Run r; memset( &r, 0, sizeof r ); r.step_cl = -1;
   AspCoreCfg cfg; asp_core_defaults( &cfg );
   int port = 0, fast = 0, quiet = 0; int64_t lat = 0;
-  const char *dir = NULL;
+  const char *dir = NULL, *profile = NULL, *tankpath = NULL;
+  char flagtext[600] = "", settings[1100] = "", stored[1100] = "", pname[64] = "";
   for( int i = 2; i < argc; i++ )
     {
     if( ! strcmp( argv[i], "-S" ) && i + 1 < argc ) { lat = atoll( argv[++i] ); r.simmode = 1; }
@@ -219,24 +308,18 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
     else if( ! strcmp( argv[i], "--nofeed" ) ) cfg.feed = 0;       /* takes are stored but not put into the loop (alignment tests) */
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
-    else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) cfg.sync.max_db = atof( argv[++i] );      /* never louder than this, dB re asp4's sync */
-    else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) cfg.sync.start_db = atof( argv[++i] );
+    else if( ! strcmp( argv[i], "--tank" ) && i + 1 < argc ) tankpath = argv[++i];                   /* where the loop file lives (it is a cache: /dev/shm on a board with an sd card) */
+    else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (aspace profiles) */
+    else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) addflag( flagtext, "sync_max", argv[++i] );   /* never louder than this, dB re asp4's sync */
+    else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) addflag( flagtext, "sync_start", argv[++i] );
     else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */
     else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */
-    else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) cfg.sync.target_db = atof( argv[++i] );
-    else if( ! strcmp( argv[i], "-g" ) && i + 1 < argc ) cfg.gate_db = atof( argv[++i] );
-    else if( ! strcmp( argv[i], "-r" ) && i + 1 < argc ) cfg.ring_db = atof( argv[++i] );
-    else if( ! strcmp( argv[i], "--lowcut" ) && i + 1 < argc ) cfg.lowcut = atof( argv[++i] );    /* the instrument's lowest note, Hz */
-    else if( ! strcmp( argv[i], "--strict" ) ) cfg.strict = 1;
-    else if( ! strcmp( argv[i], "--automix" ) && i + 1 < argc )
-      {
-      const char *s = argv[++i];
-      cfg.automix.mode = ! strncmp( s, "overlap", 7 ) ? ASP_AUTOMIX_OVERLAP :
-                         ! strncmp( s, "swap", 4 ) ? ASP_AUTOMIX_SWAP : ASP_AUTOMIX_OFF;
-      const char *sp = strchr( s, ' ' );
-      cfg.automix.n = sp ? atoi( sp + 1 ) : 4;
-      cfg.automix.each = sp && strstr( sp, "each" ) != NULL;
-      }
+    else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) addflag( flagtext, "sync_target", argv[++i] );
+    else if( ! strcmp( argv[i], "-g" ) && i + 1 < argc ) addflag( flagtext, "gate", argv[++i] );
+    else if( ! strcmp( argv[i], "-r" ) && i + 1 < argc ) addflag( flagtext, "ring", argv[++i] );
+    else if( ! strcmp( argv[i], "--lowcut" ) && i + 1 < argc ) addflag( flagtext, "lowcut", argv[++i] );    /* the instrument's lowest note, Hz */
+    else if( ! strcmp( argv[i], "--strict" ) ) addflag( flagtext, "strict", "1" );
+    else if( ! strcmp( argv[i], "--automix" ) && i + 1 < argc ) addflag( flagtext, "automix", argv[++i] );
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
     else return usage();
     }
@@ -244,8 +327,21 @@ static int cmd_run( int argc, char **argv )
   char err[ASP_ERR], tp[1100], ctlp[1100];
   r.store = asp_open( dir, 0, err );
   if( ! r.store ) { fprintf( stderr, "%s\n", err ); return 1; }
+  { /* the session's settings, then a chosen profile, then what was said on the command line */
+    Stored sv; memset( &sv, 0, sizeof sv ); asp_fold( r.store, -1, stored_cb, &sv );
+    snprintf( stored, sizeof stored, "%s", sv.settings ); snprintf( pname, sizeof pname, "%s", sv.profile );
+    if( ! stored[0] && build_settings( NULL, settings, sizeof settings ) ) return 1;
+    if( stored[0] ) snprintf( settings, sizeof settings, "%s", stored );
+    if( profile )
+      {
+      char pt[1100]; if( build_settings( profile, pt, sizeof pt ) ) return 1;
+      asp_settings_merge( settings, sizeof settings, pt ); snprintf( pname, sizeof pname, "%s", profile );
+      }
+    asp_settings_merge( settings, sizeof settings, flagtext );
+    asp_settings_cfg( &cfg, settings );
+  }
   int64_t frames = json_num( asp_descriptor( r.store ), "loop", 0 );
-  snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
+  if( tankpath ) snprintf( tp, sizeof tp, "%s", tankpath ); else snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
   r.tank = frames ? asp_tank_open( tp, err, sizeof err ) : NULL;
   int rebuild = 0;
   if( r.tank && ( asp_tank_dirty( r.tank ) || asp_tank_frames( r.tank ) != frames || asp_tank_legacy( r.tank ) ) ) { rebuild = 1; asp_tank_close( r.tank ); r.tank = NULL; }
@@ -260,6 +356,8 @@ static int cmd_run( int argc, char **argv )
     }
   r.core = asp_core_open( r.store, r.tank, &cfg, err, sizeof err );
   if( ! r.core ) { fprintf( stderr, "%s\n", err ); return 1; }
+  if( profile || flagtext[0] || ! stored[0] ) asp_core_settings( r.core, pname, settings );   /* what is in force is in the log
+  */
   int chosen = 0;
   r.ctl = ctl_open( port, &chosen );
   if( ! r.ctl ) { fprintf( stderr, "aspace: no control port\n" ); return 1; }
@@ -286,13 +384,13 @@ static int cmd_run( int argc, char **argv )
         if( now < due ) { nap( (long)( ( due - now ) * 1000 ) + 1 ); continue; }
         }
       started++;
-      sim_step( &r.sim );
+      { struct timespec a, b; clock_gettime( CLOCK_MONOTONIC, &a ); sim_step( &r.sim ); clock_gettime( CLOCK_MONOTONIC, &b ); timed( &r, ( b.tv_sec - a.tv_sec ) * 1e3 + ( b.tv_nsec - a.tv_nsec ) / 1e6 ); }
       if( r.step && r.steps <= 0 && r.step_cl >= 0 ) { last = asp_log_since( r.store, last, ev_cb, &r ); ctl_ok( r.ctl, r.step_cl ); r.step_cl = -1; }
       }
     else
       {
       if( read_tick( in ) ) break;                        /* the edge closed */
-      asp_core_tick( r.core, in, out );
+      { struct timespec a, b; clock_gettime( CLOCK_MONOTONIC, &a ); asp_core_tick( r.core, in, out ); clock_gettime( CLOCK_MONOTONIC, &b ); timed( &r, ( b.tv_sec - a.tv_sec ) * 1e3 + ( b.tv_nsec - a.tv_nsec ) / 1e6 ); }
       if( write_tick( out ) ) break;
       }
     if( ctl_watchers( r.ctl ) || ( r.sim.tickn % 25 ) == 0 )
@@ -309,6 +407,7 @@ static int cmd_run( int argc, char **argv )
 int main( int argc, char **argv )
   {
   if( argc >= 2 && ! strcmp( argv[1], "new" ) ) return cmd_new( argc, argv );
+  if( argc >= 2 && ! strcmp( argv[1], "profiles" ) ) return cmd_profiles( argc, argv );
   if( argc >= 2 && ! strcmp( argv[1], "run" ) ) return cmd_run( argc, argv );
   return usage();
   }

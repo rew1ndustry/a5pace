@@ -1,0 +1,3 @@
+# bass on a line input; the lowest string is about 41 Hz, so only the sub-bass rumble is ignored
+lowcut 35
+gate 18

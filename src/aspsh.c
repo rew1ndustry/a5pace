@@ -3,7 +3,7 @@
      g / G  gate more / less sensitive (3 dB)        a  next automix (off, overlap, swap)
      + / -  automix amount up / down                 e  swap: also within an iteration
      u      revert (asks for a log point; safe only) t  list takes
-     q      leave this shell   Q  stop aspace
+     p      choose a gate profile from the list    q  leave this shell   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include "ctlclient.h"
 
 static struct termios saved;
@@ -25,7 +26,7 @@ static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [u] revert  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [u] revert  [q] quit  [Q] stop\n\n" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -80,6 +81,20 @@ int main( int argc, char **argv )
           restore(); printf( "\nrevert to log point: " ); fflush( stdout );
           if( fgets( l, sizeof l, stdin ) && atoll( l ) > 0 ) snprintf( c, sizeof c, "REVERT %lld", atoll( l ) );
           tcsetattr( 0, TCSANOW, &raw );
+          break;
+          }
+        case 'p':
+          {
+          /* the profiles are made elsewhere (calibration); here one is picked from the list */
+          char names[20][80]; int np = 0;
+          printf( "\033[H\033[J profiles:\n\n" );
+          { int fd = cmd; char b[300]; snprintf( b, sizeof b, "PROFILES\n" ); if( send( fd, b, strlen( b ), 0 ) > 0 )
+              { int r; while( ( r = ctlc_readline( fd, b, sizeof b, 3000 ) ) > 0 && strcmp( b, "OK" ) && strncmp( b, "ERR", 3 ) )
+                  { if( np < 20 ) { snprintf( names[np], 80, "%.79s", b ); names[np][strcspn( names[np], "\t" )] = 0; printf( "  %d  %s\n", ++np, b ); } } } }
+          if( ! np ) printf( "  (none; aspace profiles install)\n" );
+          printf( "\n number to choose, anything else to cancel: " ); fflush( stdout );
+          { char d; int w = 0; while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
+            if( d >= '1' && d < '1' + np ) snprintf( c, sizeof c, "PROFILE %s", names[d - '1'] ); }
           break;
           }
         case 'Q': ctlc_cmd( cmd, "QUIT", NULL, NULL ); return 0;

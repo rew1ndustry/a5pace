@@ -1,0 +1,4 @@
+# violin on a line input; nothing below G3 (196 Hz) may open the gate, bumps are not notes
+lowcut 190
+strict 1
+gate 18

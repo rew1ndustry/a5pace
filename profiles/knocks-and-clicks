@@ -1,0 +1,5 @@
+# percussive sounds, knocks and ring: as asp4's gate, everything may open it
+lowcut 30
+strict 0
+gate 18
+ring 7.5

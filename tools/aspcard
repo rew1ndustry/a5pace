@@ -6,6 +6,8 @@
 #
 #   ASPCARD_DEV     the alsa device          (default hw:UR22C)
 #   ASPCARD_SYNCMAX highest sync tone, dB re asp4's, kept low for headphones (default -36)
+#   ASPCARD_BUFFER_MS  alsa buffer for both directions (default: alsa's 500). stability comes before latency: under
+#                   about 600 ms (three ticks) a stall of the storage can become a dropout; a warning says so
 #   ASPCARD_DRY=1   check everything, start nothing
 #   ASPCARD_RELEASE=1  when only pipewire/wireplumber hold the card, switch its profile to "off" for the run and
 #                      put it back afterwards (nothing is killed)
@@ -17,6 +19,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$HERE/bin
 DEV=${ASPCARD_DEV:-hw:UR22C}
 SYNCMAX=${ASPCARD_SYNCMAX:--36}
+BUF=""; if [ -n "${ASPCARD_BUFFER_MS:-}" ]; then BUF="--buffer-time=$((ASPCARD_BUFFER_MS*1000))"; [ "$ASPCARD_BUFFER_MS" -lt 600 ] && echo "aspcard: buffer $ASPCARD_BUFFER_MS ms is under three ticks: a slow write on the storage may drop samples" >&2; fi
 FMT="-q -D $DEV -f S32_LE -c 2 -r 48000 -t raw"
 CARD=${DEV#hw:}; CARD=${CARD%%,*}
 
@@ -136,9 +139,9 @@ latency_report() {   # measured frames
 
 mixer on
 # the pipeline; the first stage's stderr goes to the drop monitor, the last to the starve monitor
-( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw 2> >(xrun drop) \
+( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun drop) \
   | "$BIN/aspace" run -C 0 --sync-max "$SYNCMAX" "$@" "$DIR" \
-  | "$(command -v aplay)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw 2> >(xrun starve) ) &
+  | "$(command -v aplay)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun starve) ) &
 pipe=$!; pids="$pipe"
 
 # --- follow the log: loopback off when the round trip is found, on again if the hunt restarts ---

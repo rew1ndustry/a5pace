@@ -39,3 +39,10 @@ Smaller arecord / aplay buffers to shrink the 0.63 s round trip (the loop stays 
 - Windows shim (plat.h), JACK and PipeWire shells.
 - GitHub: copyright holder's name in LICENSE, install notes per platform, `aspdoctor` in the issue template.
 - Publisher and hub (later, as planned).
+
+## Stability on a cubieboard with an SD card (user: stability is everything)
+- Soak test with injected storage stalls (a slow write of 200-500 ms) and see what the edge's buffers do.
+- Take commit does fsync + a sqlite commit on the tick thread: measure on the board; options are `synchronous=NORMAL`,
+  doing the commit on an idle tick, or a writer thread in the runner (the core stays single-threaded).
+- The loop file on tmpfs (`--tank`) is in place; measure the rebuild time after a reboot on the board.
+- Keep the default buffers; shrinking them is opt-in (`ASPCARD_BUFFER_MS`) and only after the soak test.

@@ -191,7 +191,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
   for( int i = 0; ! rc && i < l.n; i++ )
     {
     AspTakeState *st = &l.e[i].st;
-    if( ! strcmp( st->status, "off" ) ) continue;               /* not in the loop */
+    if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* take 0 holds settings, not a take; or not in the loop */
     rc = asp_move_take( t, s, l.e[i].id, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip } );
     }
   free( l.e );

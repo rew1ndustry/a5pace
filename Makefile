@@ -26,7 +26,7 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o build/aspcore.o
+LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o build/settings.o build/aspcore.o
 all: bin/gateprobe bin/aspace bin/aspctl bin/aspsh bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
 
 $(FLACLIB):
@@ -51,7 +51,10 @@ build/sha256.o: src/sha256.c include/aspstore.h
 build/gate.o: src/gate.c include/gate.h include/asptank.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
-build/aspcore.o: src/aspcore.c include/aspcore.h include/aspstore.h include/asptank.h include/sync.h include/gate.h include/flacio.h
+build/settings.o: src/settings.c include/settings.h include/aspcore.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/aspcore.o: src/aspcore.c include/settings.h include/aspcore.h include/aspstore.h include/asptank.h include/sync.h include/gate.h include/flacio.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/sync.o: src/sync.c include/sync.h

@@ -62,6 +62,11 @@ void     asp_core_gate( AspCore *c, double gate_db, double ring_db );
 /* go back to how things were at a log point: only while safe. appends a revert event, rebuilds the loop from the
    store (which takes a moment: an edge that is not read meanwhile will report a drop). returns the revert's seq */
 int64_t  asp_core_revert( AspCore *c, int64_t seq );
+/* a setup: the gate, ring, lowcut, strict, mono and automix keys of a settings text (settings.h), applied now and kept in
+   the store as the state of take 0 (so a revert restores them). profile is the name it came from, for the list */
+void     asp_core_settings( AspCore *c, const char *profile, const char *text );
+const char *asp_core_profile( const AspCore *c );
+const char *asp_core_settings_text( const AspCore *c );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lowcut < 0 keeps it; strict < 0 keeps it */
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */

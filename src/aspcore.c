@@ -8,6 +8,7 @@
 #include "aspengine.h"
 #include "gate.h"
 #include "flacio.h"
+#include "settings.h"
 
 #define RATE        48000
 #define LEVEL_CLIP  0x7FFFFF00LL
@@ -55,6 +56,8 @@ struct AspCore
   LoopTake *lt; int nlt, caplt;
   int64_t  pass, outpos;
   int      swap_flip; int64_t swap_iter, swap_n;
+  char     profile[64], settings[1100];
+  int      started;
   int      out_shift;               /* how far the last output tick was brought down to fit */
 
   /* level moves, run in order, a slice a tick */
@@ -98,10 +101,32 @@ static LoopTake *lt_add( AspCore *c )
   }
 
 typedef struct { AspCore *c; } Load;
+static void apply_text( AspCore *c, const char *text )
+  {
+  char v[100];
+  if( ! asp_settings_get( text, "gate", v, sizeof v ) ) asp_gate_set( c->gate, atof( v ), 0 );
+  if( ! asp_settings_get( text, "ring", v, sizeof v ) ) asp_gate_set( c->gate, 0, atof( v ) );
+  if( ! asp_settings_get( text, "lowcut", v, sizeof v ) ) asp_gate_set_lowcut( c->gate, atof( v ) );
+  if( ! asp_settings_get( text, "strict", v, sizeof v ) ) asp_gate_set_strict( c->gate, atoi( v ) );
+  if( ! asp_settings_get( text, "mono", v, sizeof v ) ) c->cfg.mono_detect = atoi( v );
+  if( ! asp_settings_get( text, "automix", v, sizeof v ) )
+    {
+    AspCoreCfg t = c->cfg; asp_settings_cfg( &t, text );
+    c->cfg.automix = t.automix;
+    }
+  }
+
 static void load_cb( int64_t id, const char *json, void *u )
   {
   AspCore *c = ( (Load *)u )->c;
   AspTakeState st; AspTake k;
+  if( id == 0 )                                            /* the settings live here (they are not a take) */
+    {
+    const char *s = strstr( json, "\"settings\":\"" ), *p = strstr( json, "\"profile\":\"" );
+    if( p ) { p += 11; size_t l = strcspn( p, "\"" ); if( l > 63 ) l = 63; memcpy( c->profile, p, l ); c->profile[l] = 0; }
+    if( s ) { s += 12; size_t l = strcspn( s, "\"" ); if( l > 1099 ) l = 1099; memcpy( c->settings, s, l ); c->settings[l] = 0; if( c->started ) apply_text( c, c->settings ); }
+    return;
+    }
   asp_parse_state( json, &st );
   if( asp_take_get( c->store, id, &k ) ) return;
   LoopTake *t = lt_add( c );
@@ -148,6 +173,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     logf_( c, "sync_declared", "{\"frames\":%lld}", (long long)c->latency );
     }
   else logf_( c, "sync_start", "{\"level_db\":%.1f}", asp_sync_level( c->sync ) );
+  c->started = 1;
   logf_( c, "core_open", "{\"loop\":%lld,\"iter\":%llu,\"live\":%d,\"takes\":%d}", (long long)c->size, (unsigned long long)c->iter, c->live, c->nlt );
   return c;
   }
@@ -234,6 +260,19 @@ static void automix_new( AspCore *c, LoopTake *nt )
     if( ++t->overlaps >= n ) change( c, t, t->now, 0, "overlap" );
     }
   }
+
+void asp_core_settings( AspCore *c, const char *profile, const char *text )
+  {
+  char st[1300];
+  snprintf( c->profile, sizeof c->profile, "%s", profile ? profile : "" );
+  snprintf( c->settings, sizeof c->settings, "%s", text ? text : "" );
+  apply_text( c, c->settings );
+  snprintf( st, sizeof st, "{\"profile\":\"%s\",\"settings\":\"%s\"}", c->profile, c->settings );
+  asp_take_set_state( c->store, 0, st, "aspace", c->tick );
+  logf_( c, "settings", "{\"profile\":\"%s\",\"settings\":\"%s\"}", c->profile, c->settings );
+  }
+const char *asp_core_profile( const AspCore *c ) { return c->profile; }
+const char *asp_core_settings_text( const AspCore *c ) { return c->settings; }
 
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {
