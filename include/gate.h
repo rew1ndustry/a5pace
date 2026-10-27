@@ -15,4 +15,8 @@ double asp_gate_ring( AspGate *g );
 int64_t asp_gate_scan( AspGate *g, int32_t *pcm, int count );
 /* dc-step muting; prev is the previous tick or NULL; armed while the gate waits */
 void asp_gate_switch( AspGate *g, int32_t *pcm, int32_t *prev, int count, int armed );
+/* per channel: is it ringing/held open now; has the floor been learnt; the floor as an rms amplitude */
+int asp_gate_active( AspGate *g, int ch );
+int asp_gate_learnt( AspGate *g );
+double asp_gate_floor( AspGate *g, int ch );
 #endif

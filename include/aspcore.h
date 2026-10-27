@@ -13,6 +13,13 @@
 
 typedef struct AspCore AspCore;
 
+/* automix: what happens to takes as the loop runs. one at a time. */
+enum { ASP_AUTOMIX_OFF = 0,
+       ASP_AUTOMIX_FADE,       /* every take steps down n * 6 dB each loop, until it is at the noise floor, and stays */
+       ASP_AUTOMIX_OVERLAP,    /* a take fades as newer takes overlap it, and goes when n of them have */
+       ASP_AUTOMIX_SWAP };     /* successive takes swap channels (mono takes: hard left, hard right) */
+typedef struct { int mode, n, each; } AspAutomix;   /* each: SWAP also within an iteration */
+
 typedef struct
   {
   AspSyncCfg sync;
@@ -20,6 +27,9 @@ typedef struct
   int    live;                 /* record takes (default 1); 0 starts safe */
   int    feed;                 /* put each take into the loop as it is recorded (default 1) */
   int64_t gain;                /* output gain, asp4's my_gain (0) */
+  int    mono_detect;          /* record a take from one channel (or two identical ones) as mono (default 1) */
+  int    mono_lev;             /* where a mono take sits: level shift on both channels, 1 = centre (default 1) */
+  AspAutomix automix;
   } AspCoreCfg;
 
 typedef struct
@@ -30,6 +40,8 @@ typedef struct
   int      live, take_open;
   int64_t  take_iter, take_off, take_frames;
   double   sync_level_db;
+  int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
+  AspAutomix automix;
   } AspCoreStatus;
 
 void     asp_core_defaults( AspCoreCfg *c );
@@ -43,5 +55,6 @@ void     asp_core_safe( AspCore *c, int on );      /* SAFE: no takes are recorde
 void     asp_core_resync( AspCore *c );            /* SYNC: hunt the round trip again */
 void     asp_core_edge( AspCore *c, int starve, int64_t frames );   /* the edge dropped or starved samples */
 void     asp_core_gate( AspCore *c, double gate_db, double ring_db );
+void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif

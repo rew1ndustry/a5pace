@@ -456,3 +456,9 @@ double asp_gate_ring( AspGate *g ) { return g->ring; }
 int64_t asp_gate_scan( AspGate *g, int32_t *pcm, int count ) { return gateScanImpl( g, pcm, count ); }
 void asp_gate_switch( AspGate *g, int32_t *pcm, int32_t *prev, int count, int armed )
   { gateSwitchImpl( g, pcm, prev, count, armed ); }
+
+int asp_gate_active( AspGate *g, int ch ) { return g->chan[ch].hang > 0; }
+int asp_gate_learnt( AspGate *g ) { return g->chan[0].frames >= GATE_INIT && g->chan[1].frames >= GATE_INIT; }
+/* the learnt floor as an amplitude (rms of the signal above 30 Hz); 0 until learnt */
+double asp_gate_floor( AspGate *g, int ch )
+  { return g->chan[ch].frames >= GATE_INIT ? sqrt( g->chan[ch].ybg ) : 0; }
