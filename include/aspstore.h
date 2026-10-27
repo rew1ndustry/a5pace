@@ -31,6 +31,9 @@ const char *asp_dir( AspStore *s );
 /* the log: every action is an event. returns seq, or -1. */
 int64_t asp_log( AspStore *s, const char *actor, const char *type, const char *args_json, int64_t tick );
 int64_t asp_log_last( AspStore *s );
+typedef void (*AspLogCb)( int64_t seq, int64_t tick, const char *actor, const char *type, const char *args_json, void *user );
+int64_t asp_log_since( AspStore *s, int64_t after, AspLogCb cb, void *user );   /* calls cb for each newer event, returns the last seq */
+const char *asp_descriptor( AspStore *s );                                       /* the session's descriptor json (static buffer) */
 
 /* takes. add encodes pcm to flac (.part, fsync, rename) then commits the row and its
    take_added / take_state events in one transaction. a half-written take never has a row. */

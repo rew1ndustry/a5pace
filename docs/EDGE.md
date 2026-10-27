@@ -60,6 +60,7 @@ ready in keep mode).
   second of the loop, so it can be replayed into a rebuilt tank sample for sample.
 - **Events logged:** sync_start, sync_found/failed, gate, new, end, top, wrap, safe_on/off, edge_drop/starve,
   resync, tank_dirty, error. Control calls: safe, resync, edge, gate, gate_relearn.
+- **Automix, mono, level moves:** see docs/SHELL.md.
 - **SAFE:** no takes are recorded (an open one is ended); the loop keeps playing and the gate keeps
   learning. Nothing new reaches the store, so nothing can be published.
 - **Edge drop/starve:** logged; a take in progress is ended and marked `damaged`; the hunt starts again,

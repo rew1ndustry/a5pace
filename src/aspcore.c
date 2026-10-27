@@ -566,6 +566,24 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
+  st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
+  st->log_seq = asp_log_last( c->store ); st->loop_frames = c->size; st->peak = (int64_t)c->peak;
+  }
+
+int64_t asp_core_revert( AspCore *c, int64_t seq )
+  {
+  if( c->live ) return -1;
+  if( c->enc ) take_end( c, NULL );
+  for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );
+  c->nmv = 0;
+  int64_t r = asp_revert( c->store, seq, "aspace" );
+  if( r < 0 ) return -1;
+  if( asp_rebuild( c->tank, c->store, -1 ) ) { logf_( c, "error", "{\"what\":\"rebuild after revert failed\"}" ); return -1; }
+  c->nlt = 0;
+  Load ld = { c };
+  asp_fold( c->store, -1, load_cb, &ld );
+  logf_( c, "reverted", "{\"to\":%lld,\"seq\":%lld,\"takes\":%d}", (long long)seq, (long long)r, c->nlt );
+  return r;
   }
 
 int asp_core_close( AspCore *c )

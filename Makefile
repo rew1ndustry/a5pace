@@ -27,7 +27,7 @@ SQL_LIBS   = -lsqlite3
 endif
 
 LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o build/aspcore.o
-all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix
+all: bin/aspace bin/aspctl bin/aspsh bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -96,13 +96,24 @@ bin/test_job: tests/test_job.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 
-bin/test_mix: tests/test_mix.c tests/simedge.h $(LIBOBJ) $(SQL_OBJ)
+bin/test_mix: tests/test_mix.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-parentheses $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 
-test: bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job
+bin/aspace: src/aspace_main.c src/ctlsrv.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -Wno-unused-function $(INC) $(SQL_CFLAGS) -o $@ src/aspace_main.c src/ctlsrv.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/aspctl: src/aspctl.c src/ctlclient.c
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ src/aspctl.c src/ctlclient.c
+bin/aspsh: src/aspsh.c src/ctlclient.c
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ src/aspsh.c src/ctlclient.c
+
+test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job
 	bin/test_job
 	bin/test_mix
+	tests/test_runner.sh
 	bin/test_store
 	bin/test_tank
 	bin/test_sync

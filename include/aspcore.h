@@ -42,6 +42,8 @@ typedef struct
   double   sync_level_db;
   int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
+  double   gate_db, ring_db; int gate_learnt;
+  int64_t  log_seq, loop_frames, peak;
   } AspCoreStatus;
 
 void     asp_core_defaults( AspCoreCfg *c );
@@ -55,6 +57,9 @@ void     asp_core_safe( AspCore *c, int on );      /* SAFE: no takes are recorde
 void     asp_core_resync( AspCore *c );            /* SYNC: hunt the round trip again */
 void     asp_core_edge( AspCore *c, int starve, int64_t frames );   /* the edge dropped or starved samples */
 void     asp_core_gate( AspCore *c, double gate_db, double ring_db );
+/* go back to how things were at a log point: only while safe. appends a revert event, rebuilds the loop from the
+   store (which takes a moment: an edge that is not read meanwhile will report a drop). returns the revert's seq */
+int64_t  asp_core_revert( AspCore *c, int64_t seq );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif

@@ -361,3 +361,31 @@ int64_t asp_revert( AspStore *s, int64_t to_seq, const char *actor )
   snprintf( args, sizeof args, "{\"to\":%lld}", (long long)to_seq );
   return asp_log( s, actor, "revert", args, -1 );
   }
+
+const char *asp_descriptor( AspStore *s )
+  {
+  static char buf[2048];
+  sqlite3_stmt *q;
+  buf[0] = 0;
+  sqlite3_prepare_v2( s->db, "select descriptor_json from session limit 1", -1, &q, NULL );
+  if( sqlite3_step( q ) == SQLITE_ROW ) snprintf( buf, sizeof buf, "%s", (const char *)sqlite3_column_text( q, 0 ) );
+  sqlite3_finalize( q );
+  return buf;
+  }
+
+int64_t asp_log_since( AspStore *s, int64_t after, AspLogCb cb, void *user )
+  {
+  sqlite3_stmt *q;
+  int64_t last = after;
+  if( sqlite3_prepare_v2( s->db, "select seq,coalesce(tick,-1),wall,actor,type,args_json from log where seq>? order by seq", -1, &q, NULL ) )
+    return after;
+  sqlite3_bind_int64( q, 1, after );
+  while( sqlite3_step( q ) == SQLITE_ROW )
+    {
+    last = sqlite3_column_int64( q, 0 );
+    cb( last, sqlite3_column_int64( q, 1 ), (const char *)sqlite3_column_text( q, 3 ), (const char *)sqlite3_column_text( q, 4 ),
+        (const char *)sqlite3_column_text( q, 5 ), user );
+    }
+  sqlite3_finalize( q );
+  return last;
+  }
