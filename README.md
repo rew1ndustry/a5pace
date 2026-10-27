@@ -19,7 +19,7 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 ## Build
 Needs a C compiler, make, cmake (for libFLAC), curl and unzip.
 ```
-git clone git@github.com:rewindustry/aspace.git && cd aspace
+git clone https://github.com/rew1ndustry/a5pace.git aspace && cd aspace
 third_party/fetch.sh             # the SQLite amalgamation (or install libsqlite3-dev)
 make FLACDIR=/path/to/flac       # a libFLAC source tree; it is built into build/flac (or FLACDIR= with libflac-dev)
 make test
