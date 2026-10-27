@@ -214,6 +214,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--step" ) ) r.step = 1;
     else if( ! strcmp( argv[i], "-C" ) && i + 1 < argc ) port = atoi( argv[++i] );
     else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
+    else if( ! strcmp( argv[i], "--nofeed" ) ) cfg.feed = 0;       /* takes are stored but not put into the loop (alignment tests) */
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
     else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) cfg.sync.max_db = atof( argv[++i] );      /* never louder than this, dB re asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) cfg.sync.start_db = atof( argv[++i] );
