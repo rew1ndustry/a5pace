@@ -247,14 +247,11 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
 int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,
                       int channels, int rate, const char *status, int64_t tick, AspTake *out )
   {
-  char part[1200], dir[1200];
-  static int serial;
+  char part[1200];
   AspTake dummy;
   if( s->readonly ) return -1;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;
-  snprintf( dir, sizeof dir, "%s/blobs/tmp", s->dir );
-  mkdir_p( dir );
-  snprintf( part, sizeof part, "%s/%d_%d.part", dir, (int)getpid(), serial++ );
+  if( asp_tmp_path( s, part, sizeof part ) ) return -1;          /* one counter for every temporary name, so it can never be the input's */
   if( asp_flac_encode_file( d32_path, part, channels, rate ) ) { unlink( part ); return -1; }
   if( asp_take_adopt( s, iter, off, part, status, NULL, tick, out ) ) { unlink( part ); return -1; }
   return 0;

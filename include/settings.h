@@ -16,6 +16,7 @@ int  asp_settings_file( const char *path, char *out, size_t n );         /* a fi
 void asp_settings_merge( char *base, size_t n, const char *over );       /* over wins, key by key */
 int  asp_settings_get( const char *text, const char *key, char *val, size_t n );
 void asp_settings_cfg( AspCoreCfg *cfg, const char *text );              /* the open-time keys into a core config */
+int  asp_build_settings( const char *profile, char *out, size_t n );     /* defaults, then the named profile over them */
 typedef void (*AspProfileCb)( const char *name, const char *note, void *user );
 int  asp_profile_list( AspProfileCb cb, void *user );                    /* number of profiles */
 #endif

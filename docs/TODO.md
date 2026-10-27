@@ -24,7 +24,7 @@ Session-stored settings, new sessions inheriting a defaults set: stored as event
 restores them), the defaults file copied in by `a5pace new`. Profiles for gate and sync per setup.
 
 ## Create tool
-Build a space from bpm, time signature and bar count, with an automatic metronome track made from samples.
+Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Still open: click for a space that is running (a control command); resampling other rates on import; mp3 and other formats; swing and odd groupings (7/8 as 2+2+3); a count-in; a click that follows a tempo map.
 
 ## Envelopes (to map out with the user)
 A take's gain and pan are one constant value across the whole take for now (`lev`). Envelopes replace it: points over

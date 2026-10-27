@@ -144,3 +144,17 @@ int asp_profile_list( AspProfileCb cb, void *user )
     }
   return n;
   }
+
+/* defaults, then a named profile over them; -1 (and a word on stderr) if the profile is not there */
+int asp_build_settings( const char *profile, char *out, size_t n )
+  {
+  char d[900], f[1000], t[1100];
+  out[0] = 0;
+  if( ! asp_config_dir( d, sizeof d ) ) { snprintf( f, sizeof f, "%s/defaults", d ); if( ! asp_settings_file( f, t, sizeof t ) ) asp_settings_merge( out, n, t ); }
+  if( profile && *profile )
+    {
+    if( asp_profile_path( profile, f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "no profile \"%s\" (a5pace profiles lists them)\n", profile ); return -1; }
+    asp_settings_merge( out, n, t );
+    }
+  return 0;
+  }

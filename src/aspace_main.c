@@ -62,20 +62,6 @@ static void stored_cb( int64_t id, const char *json, void *u )
   if( s ) { s += 12; size_t l = strcspn( s, "\"" ); if( l > 1099 ) l = 1099; memcpy( st->settings, s, l ); st->settings[l] = 0; }
   }
 
-/* defaults, then a named profile over them */
-static int build_settings( const char *profile, char *out, size_t n )
-  {
-  char d[900], f[1000], t[1100];
-  out[0] = 0;
-  if( ! asp_config_dir( d, sizeof d ) ) { snprintf( f, sizeof f, "%s/defaults", d ); if( ! asp_settings_file( f, t, sizeof t ) ) asp_settings_merge( out, n, t ); }
-  if( profile && *profile )
-    {
-    if( asp_profile_path( profile, f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "aspace: no profile \"%s\" (a5pace profiles lists them)\n", profile ); return -1; }
-    asp_settings_merge( out, n, t );
-    }
-  return 0;
-  }
-
 static void list_cb( const char *name, const char *note, void *u ) { (void)u; printf( "%-22s %s\n", name, note ); }
 
 static int cmd_profiles( int argc, char **argv )
@@ -110,7 +96,7 @@ static int cmd_new( int argc, char **argv )
   char err[ASP_ERR], desc[400], tp[1100], settings[1100];
   const char *profile = argc == 7 && ! strcmp( argv[5], "--profile" ) ? argv[6] : NULL;
   if( argc == 7 && ! profile ) return usage();
-  if( build_settings( profile, settings, sizeof settings ) ) return 1;
+  if( asp_build_settings( profile, settings, sizeof settings ) ) return 1;
   double secs = atof( argv[4] );
   int64_t frames = (int64_t)( secs * 48000 + 0.5 );
   if( frames < 4 * ASP_TICK ) { fprintf( stderr, "a loop needs at least %d frames\n", 4 * ASP_TICK ); return 1; }
@@ -196,7 +182,7 @@ static void handle( void *u, int cl, const char *line )
   else if( ! strcmp( w[0], "PROFILE" ) && n > 1 )
     {
     char pt[1100], cur[1100];
-    if( build_settings( w[1], pt, sizeof pt ) ) { ctl_err( c, cl, "no profile %s", w[1] ); return; }
+    if( asp_build_settings( w[1], pt, sizeof pt ) ) { ctl_err( c, cl, "no profile %s", w[1] ); return; }
     snprintf( cur, sizeof cur, "%s", asp_core_settings_text( r->core ) );
     asp_settings_merge( cur, sizeof cur, pt );
     asp_core_settings( r->core, w[1], cur );      /* the sync keys wait for the next start; the rest is in force now */
@@ -330,11 +316,11 @@ static int cmd_run( int argc, char **argv )
   { /* the session's settings, then a chosen profile, then what was said on the command line */
     Stored sv; memset( &sv, 0, sizeof sv ); asp_fold( r.store, -1, stored_cb, &sv );
     snprintf( stored, sizeof stored, "%s", sv.settings ); snprintf( pname, sizeof pname, "%s", sv.profile );
-    if( ! stored[0] && build_settings( NULL, settings, sizeof settings ) ) return 1;
+    if( ! stored[0] && asp_build_settings( NULL, settings, sizeof settings ) ) return 1;
     if( stored[0] ) snprintf( settings, sizeof settings, "%s", stored );
     if( profile )
       {
-      char pt[1100]; if( build_settings( profile, pt, sizeof pt ) ) return 1;
+      char pt[1100]; if( asp_build_settings( profile, pt, sizeof pt ) ) return 1;
       asp_settings_merge( settings, sizeof settings, pt ); snprintf( pname, sizeof pname, "%s", profile );
       }
     asp_settings_merge( settings, sizeof settings, flagtext );
