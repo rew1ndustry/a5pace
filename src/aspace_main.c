@@ -129,14 +129,23 @@ static void fold_cb( int64_t id, const char *st, void *u )
   ctl_say( r->ctl, r->run, "take %lld iter %lld off %lld frames %lld ch %d %s", (long long)id, (long long)k.iter, (long long)k.off, (long long)k.frames, k.channels, st );
   }
 
+static const char *space_name( Run *r )
+  {
+  static char nm[100];
+  const char *d = asp_descriptor( r->store ), *p = strstr( d, "\"name\":\"" );
+  nm[0] = 0;
+  if( p ) { p += 8; size_t l = strcspn( p, "\"" ); if( l > 99 ) l = 99; memcpy( nm, p, l ); nm[l] = 0; }
+  return nm;
+  }
 static const char *automix_text( const AspCoreStatus *st, char *b, size_t n )
   {
   if( st->automix.mode == ASP_AUTOMIX_OVERLAP ) snprintf( b, n, "overlap %d", st->automix.n );
   else if( st->automix.mode == ASP_AUTOMIX_SWAP ) snprintf( b, n, "swap%s", st->automix.each ? " each" : "" );
-  else snprintf( b, n, "off" );
+  else if( st->automix.mode == ASP_AUTOMIX_KEEP ) snprintf( b, n, "keep" );
+  else snprintf( b, n, "loop" );
   return b;
   }
-static const char *mode_name( int m ) { return m == ASP_AUTOMIX_OVERLAP ? "overlap" : m == ASP_AUTOMIX_SWAP ? "swap" : "off"; }
+static const char *mode_name( int m ) { return m == ASP_AUTOMIX_OVERLAP ? "overlap" : m == ASP_AUTOMIX_SWAP ? "swap" : m == ASP_AUTOMIX_KEEP ? "keep" : "loop"; }
 
 /* --- a plain account of the log: the moments the loop changed, newest first, each one a place to return to ----------- */
 typedef struct { int64_t seq, iter, off; double wall; char text[200]; int removed; } HRow;
@@ -156,8 +165,8 @@ static void hist_cb( int64_t seq, int64_t tick, double wall, const char *actor, 
     r = h->row + h->n++; memset( r, 0, sizeof *r );
     r->seq = seq; r->wall = wall; r->iter = (int64_t)jnum( args, "iter", 0 ); r->off = (int64_t)jnum( args, "off", 0 );
     const char *pk = strstr( args, "\"peak_db\":[" ); double a = pk ? atof( pk + 11 ) : 0, b = pk && strchr( pk + 11, ',' ) ? atof( strchr( pk + 11, ',' ) + 1 ) : a;
-    snprintf( r->text, sizeof r->text, "take, iteration %lld at %llds: %.1f s, peak %.0f dB%s", (long long)r->iter, (long long)r->off,
-              jnum( args, "len", 0 ) / 48000.0, a > b ? a : b, jnum( args, "mono", 0 ) > 0 ? ", mono" : "" );
+    snprintf( r->text, sizeof r->text, "take, iteration %lld at %llds: %.1f s, peak %.0f dB%s%s", (long long)r->iter, (long long)r->off,
+              jnum( args, "len", 0 ) / 48000.0, a > b ? a : b, jnum( args, "mono", 0 ) > 0 ? ", mono" : "", jnum( args, "in", 1 ) == 0 ? ", kept (not in the loop)" : "" );
     if( h->want_iter >= 0 && r->iter == h->want_iter && r->off == h->want_off ) h->want_seq = seq;
     return;
     }
@@ -223,10 +232,10 @@ static void handle( void *u, int cl, const char *line )
 
   if( ! strcmp( w[0], "STATE" ) )
     {
-    ctl_say( c, cl, "{\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
+    ctl_say( c, cl, "{\"name\":\"%s\",\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
       "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"tick_ms_avg\":%.2f,\"tick_ms_max\":%.2f,\"slow_ticks\":%lld,\"profile\":\"%s\",\"session\":\"%.12s\"}",
-      st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
+      space_name( r ), st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
       mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
@@ -264,9 +273,9 @@ static void handle( void *u, int cl, const char *line )
   else if( ! strcmp( w[0], "AUTOMIX" ) && n > 1 )
     {
     for( char *q = w[1]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
-    int m = ! strcmp( w[1], "OVERLAP" ) ? ASP_AUTOMIX_OVERLAP :
-            ! strcmp( w[1], "SWAP" ) ? ASP_AUTOMIX_SWAP : ! strcmp( w[1], "OFF" ) ? ASP_AUTOMIX_OFF : -1;
-    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX OFF | OVERLAP n | SWAP [EACH]" ); return; }
+    int m = ! strcmp( w[1], "OVERLAP" ) ? ASP_AUTOMIX_OVERLAP : ! strcmp( w[1], "KEEP" ) ? ASP_AUTOMIX_KEEP :
+            ! strcmp( w[1], "SWAP" ) ? ASP_AUTOMIX_SWAP : ( ! strcmp( w[1], "LOOP" ) || ! strcmp( w[1], "OFF" ) ) ? ASP_AUTOMIX_OFF : -1;
+    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]" ); return; }
     int arg = n > 2 ? atoi( w[2] ) : 0, each = n > 2 && ( w[2][0] == 'e' || w[2][0] == 'E' );
     if( m == ASP_AUTOMIX_SWAP ) arg = 0;
     if( m == ASP_AUTOMIX_OVERLAP && arg < 1 ) arg = 4;
@@ -275,6 +284,26 @@ static void handle( void *u, int cl, const char *line )
     }
   else if( ! strcmp( w[0], "EDGE" ) && n > 2 )
     { asp_core_edge( r->core, ! strcasecmp( w[1], "starve" ), atoll( w[2] ) ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "HELP" ) || ! strcmp( w[0], "?" ) )
+    {
+    static const char *h[] = {
+      "STATE | LINE                         the state as json / as one line",
+      "SAFE | LIVE                          stop / resume recording takes (the loop keeps playing)",
+      "SYNC                                 measure the round trip again",
+      "AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]   one mode at a time. LOOP: takes go into the loop. KEEP: recorded, not put in.",
+      "WIPE [ALL]                           take the recorded takes (ALL: generated ones too) out of the loop",
+      "HISTORY [n]                          the moments the loop changed, newest first",
+      "REVERT seq | REVERT TAKE iter off    go back to a log point / to just after a take (needs SAFE)",
+      "TAKES                                every take and its state",
+      "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
+      "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
+      "EDGE drop|starve frames              the audio edge reports lost samples",
+      "WATCH                                stream the log as it happens",
+      "SIM BURST ch amp [ticks] | SIM DUP 0|1 | STEP n    simulated card only",
+      "QUIT                                 close cleanly", NULL };
+    for( int i = 0; h[i]; i++ ) ctl_say( c, cl, "%s", h[i] );
+    ctl_ok( c, cl );
+    }
   else if( ! strcmp( w[0], "WIPE" ) )
     { int all = n > 1 && ! strcasecmp( w[1], "ALL" ); int k = asp_core_wipe( r->core, all ); ctl_say( c, cl, "%d take(s) taken out of the loop", k ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "HISTORY" ) ) { history( r, cl, n > 1 ? atoi( w[1] ) : 30 ); ctl_ok( c, cl ); }

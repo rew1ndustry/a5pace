@@ -56,6 +56,7 @@ struct AspCore
   LoopTake *lt; int nlt, caplt;
   int64_t  pass, outpos;
   int      swap_flip; int64_t swap_iter, swap_n;
+  int      t_feed;                  /* the take in progress is being put into the loop as it comes */
   char     profile[64], settings[1100];
   int      started;
   int      out_shift;               /* how far the last output tick was brought down to fit */
@@ -299,7 +300,7 @@ void asp_core_automix( AspCore *c, int mode, int n, int each )
 
 static void take_feed( AspCore *c, const int32_t *pcm, int64_t n )
   {
-  if( c->cfg.feed && n > 0 )
+  if( c->t_feed && n > 0 )
     asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, 0, 0 );
   }
 
@@ -347,7 +348,7 @@ static void take_end( AspCore *c, const int32_t *last )
   if( ! bad && ( is_bump || is_quiet ) )
     {
     int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
-    if( c->cfg.feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == 2 )   /* it was fed into the loop as it came: take it out again */
+    if( c->t_feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == 2 )   /* it was fed into the loop as it came: take it out again */
       mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, 2, (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, 2, ASP_PLACE_OFF ) );   /* fed at level 0 0 */
     else free( sp );
     unlink( c->part );
@@ -378,7 +379,7 @@ static void take_end( AspCore *c, const int32_t *last )
   LoopTake lt = { 0 };
   lt.iter = c->t_iter; lt.off = c->t_off; lt.len = c->t_frames; lt.mono = mono; lt.src = src;
   lt.peak = c->t_peak[0] > c->t_peak[1] ? c->t_peak[0] : c->t_peak[1];
-  lt.now = lt.base = fin; lt.in = c->cfg.feed;
+  lt.now = lt.base = fin; lt.in = c->t_feed;
   char st[300];
   state_json( &lt, lt.in ? "mix" : "off", st, sizeof st );
 
@@ -413,7 +414,7 @@ static void take_end( AspCore *c, const int32_t *last )
     LoopTake *t = lt_add( c );
     *t = lt;
     t->ready_pass = c->pass + 1;
-    if( c->cfg.feed )
+    if( c->t_feed )
       {
       if( mono && stereo )                                  /* the live feed was stereo: swap it for the mono at its place */
         {
@@ -426,10 +427,10 @@ static void take_end( AspCore *c, const int32_t *last )
         mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, fin ) );
       }
     free( stereo );
-    logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d}",
+    logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
            (long long)tk.id, (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames,
            level_db( c->t_peak[0] ), level_db( c->t_peak[1] ), (long long)c->t_clips[0], (long long)c->t_clips[1],
-           c->t_damaged, mono, src, fin.flip );
+           c->t_damaged, mono, src, fin.flip, c->t_feed );
     automix_new( c, t );
     }
   c->gone = c->tick;
@@ -450,6 +451,7 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
   c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0; c->t_ident = 1;
+  c->t_feed = c->cfg.feed && c->cfg.automix.mode != ASP_AUTOMIX_KEEP;     /* keep: stored, not put into the loop */
   memset( c->t_peak, 0, sizeof c->t_peak ); memset( c->t_clips, 0, sizeof c->t_clips ); memset( c->t_act, 0, sizeof c->t_act );
   {
   int32_t z[2 * 4096] = { 0 };                           /* frame 0 of a take is the start of its second */

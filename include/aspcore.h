@@ -14,9 +14,10 @@
 typedef struct AspCore AspCore;
 
 /* automix: what happens to takes as the loop runs. one at a time. */
-enum { ASP_AUTOMIX_OFF = 0,
+enum { ASP_AUTOMIX_OFF = 0,        /* plain loop: every take goes into the loop (the default) */
        ASP_AUTOMIX_OVERLAP,    /* a take goes out of the loop when n newer takes have overlapped it */
-       ASP_AUTOMIX_SWAP };     /* successive takes swap channels (mono takes: hard left, hard right) */
+       ASP_AUTOMIX_SWAP,       /* successive takes swap channels (mono takes: hard left, hard right) */
+       ASP_AUTOMIX_KEEP };     /* record and store the takes, but do not put them into the loop */
 typedef struct { int mode, n, each; } AspAutomix;   /* each: SWAP also within an iteration */
 
 typedef struct

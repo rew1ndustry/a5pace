@@ -94,6 +94,20 @@ $c3 SAFE > /dev/null
 chk "going back to a take by iteration and offset" "$c3 REVERT TAKE $first > /dev/null && $c3 STATE | grep -q '\"loop_takes\":1'"
 chk "an unknown iteration is refused" "! $c3 REVERT TAKE 99 99 > /dev/null"
 chk "the line shows the automix amount" "$c3 AUTOMIX OVERLAP 3 > /dev/null && $c3 LINE | grep -q 'automix overlap 3'"
+# keep: recorded and stored, not put into the loop; help; the space's name
+chk "the state names the space" "$c3 STATE | grep -q '\"name\":\"hist\"'"
+chk "help lists the commands" "$c3 HELP | grep -q 'WIPE' && $c3 HELP | grep -q 'AUTOMIX LOOP | KEEP'"
+$c3 SAFE > /dev/null; $c3 REVERT 3 > /dev/null; $c3 LIVE > /dev/null
+$c3 AUTOMIX KEEP > /dev/null
+chk "the line says keep" "$c3 LINE | grep -q 'automix keep'"
+before=$($c3 STATE | sed 's/.*"loop_takes":\([0-9]*\).*/\1/')
+$c3 SIM BURST 2 0.1 5 > /dev/null
+wait_for "$c3 TAKES | grep -q '\"status\":\"off\"'"
+wait_for "$c3 STATE | grep -q '\"take_open\":0'"
+chk "a kept take is stored but not in the loop" "$c3 TAKES | grep -q '\"status\":\"off\"' && [ $($c3 STATE | sed 's/.*\"loop_takes\":\([0-9]*\).*/\1/') = $before ]"
+chk "and the history says so" "$c3 HISTORY | head -1 | grep -q 'kept (not in the loop)'"
+$c3 AUTOMIX LOOP > /dev/null
+chk "back to the plain loop" "$c3 LINE | grep -q 'automix loop'"
 $c3 QUIT > /dev/null; wait $pid || true
 rm -rf $t
 [ $fail = 0 ] && echo "all runner tests passed"

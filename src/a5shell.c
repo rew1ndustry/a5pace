@@ -1,10 +1,7 @@
-/* a5shell DIR: a terminal shell for a running aspace. a status line, the recent events, and a few keys:
-     space  safe / live        r  sync again         l  learn the gate floor again
-     g / G  gate more / less sensitive (3 dB)        a  next automix (off, overlap, swap)
-     + / -  automix amount up / down                 e  swap: also within an iteration
-     u      revert (asks for a log point; safe only) t  list takes
-     w      wipe the recorded takes out of the loop (asks)    h  the history: places to return to, and restore one
-     p      choose a gate profile from the list    q  leave this shell   Q  stop aspace
+/* a5shell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
+   press ? for all of them.
+     space  safe / live     h  history: places to return to     w  wipe the loop     a  choose the mode
+     r  sync again   l  relearn the floor   g/G  gate   p  profile   t  takes   ?  help   q  leave   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -19,7 +16,8 @@
 static struct termios saved;
 static void restore( void ) { tcsetattr( 0, TCSANOW, &saved ); }
 
-static char status[400], events[8][220]; static int nev;
+static char status[400], events[8][220], space[100]; static int nev;
+static void keep_state( const char *l, void *u ) { snprintf( (char *)u, 1500, "%s", l ); }
 static void keep( const char *l, void *u ) { (void)u; snprintf( status, sizeof status, "%s", l ); }
 static void show( const char *l, void *u ) { (void)u; printf( "\r\033[K%s\n", l ); }
 static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 3 ) ) snprintf( events[nev++ % 8], 220, "%.200s", l ); }
@@ -44,7 +42,7 @@ static int pretty( const char *line, char *out, size_t n )
   else if( ! strcmp( t, "safe_on" ) ) snprintf( out, n, "safe: nothing is being recorded" );
   else if( ! strcmp( t, "safe_off" ) ) snprintf( out, n, "live: recording" );
   else if( ! strcmp( t, "settings" ) ) { const char *pf = strstr( json, "\"profile\":\"" ); snprintf( out, n, "profile %.*s", pf ? (int)strcspn( pf + 11, "\"" ) : 0, pf ? pf + 11 : "" ); }
-  else if( ! strcmp( t, "automix" ) ) snprintf( out, n, "automix %s", jfld( json, "mode", 0 ) == 1 ? "overlap" : jfld( json, "mode", 0 ) == 2 ? "swap" : "off" );
+  else if( ! strcmp( t, "automix" ) ) snprintf( out, n, "mode: %s", jfld( json, "mode", 0 ) == 1 ? "overlap" : jfld( json, "mode", 0 ) == 2 ? "swap" : jfld( json, "mode", 0 ) == 3 ? "keep (recorded, not put into the loop)" : "loop" );
   else if( ! strcmp( t, "gate" ) ) { if( strstr( json, "learnt" ) ) snprintf( out, n, "the gate has learnt the noise floor" ); else return 0; }
   else if( ! strcmp( t, "edge_drop" ) || ! strcmp( t, "edge_starve" ) ) snprintf( out, n, "the sound card dropped samples: syncing again" );
   else if( ! strcmp( t, "error" ) ) snprintf( out, n, "error: %.200s", json );
@@ -56,9 +54,39 @@ static int pretty( const char *line, char *out, size_t n )
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J a5shell   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [w] wipe  [h] history  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [w] wipe  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
+  fflush( stdout );
+  }
+
+static void help( void )
+  {
+  printf( "\033[H\033[J"
+" a5shell: keys                                                  (any key to return)\n\n"
+" recording\n"
+"   space   safe / live    safe: nothing is recorded, the loop keeps playing\n"
+"   r       sync again     play the sync tones again and re-measure the round trip\n"
+"   l       relearn        listen to the quiet again and learn the noise floor\n"
+"                          (do it when nothing is playing)\n"
+"   g / G   gate           more / less sensitive, 3 dB a press\n"
+"   p       profile        choose a gate profile made with a5cal\n\n"
+" the loop\n"
+"   w       wipe           y = the recorded takes out of the loop, c = everything\n"
+"                          including clicks. nothing is deleted\n"
+"   h       history        the moments the loop changed, newest first. go back to a\n"
+"                          row, or to a take by iteration.offset such as 7.3\n"
+"   t       takes          every take and its state\n\n"
+" mode (one at a time; a opens the choice)\n"
+"   loop      every take goes into the loop (the usual)\n"
+"   keep      takes are recorded and kept, but not put into the loop\n"
+"   overlap n a take leaves the loop when n newer takes have overlapped it\n"
+"   swap      successive takes swap channels (each = on every take, not only\n"
+"             between iterations)\n\n"
+" q  leave this shell, aspace carries on       Q  stop aspace\n\n"
+" the status line: PLAY or SYNC, time, place in the loop, iteration, takes in the\n"
+" loop ((moving) while it adjusts them), REC while a take is open, live/SAFE, mode,\n"
+" gate, round trip, profile. above it, in words, what has just happened.\n" );
   fflush( stdout );
   }
 
@@ -68,15 +96,16 @@ int main( int argc, char **argv )
   int cmd = ctlc_connect( argv[1] ), ev = ctlc_connect( argv[1] );
   if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
+  { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }
   struct termios raw;
   if( isatty( 0 ) ) { tcgetattr( 0, &saved ); raw = saved; raw.c_lflag &= ~(tcflag_t)( ICANON | ECHO ); raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; tcsetattr( 0, TCSANOW, &raw ); atexit( restore ); }
-  int amode = 0, amount = 4, each = 0, live = 1;
+  int amode = 0, amount = 4, each = 0, live = 1; (void)each;
   for( ;; )
     {
     ctlc_cmd( cmd, "LINE", keep, NULL );
     live = strstr( status, "SAFE" ) == NULL;
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
-      if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 1; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 2; each = strncmp( a + 4, " each", 5 ) == 0; } else amode = 0; } }
+      if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
     draw();
     struct pollfd p[2] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 } };
     if( poll( p, 2, 250 ) <= 0 ) continue;
@@ -98,14 +127,35 @@ int main( int argc, char **argv )
         case 'l': strcpy( c, "RELEARN" ); break;
         case 'g': strcpy( c, "GATE -3" ); break;                    /* a lower margin hears more */
         case 'G': strcpy( c, "GATE +3" ); break;
-        case 'a': case '+': case '-': case 'e':
-          if( k == 'a' ) amode = ( amode + 1 ) % 3;
-          if( k == '+' ) amount++;
-          if( k == '-' && amount > 1 ) amount--;
-          if( k == 'e' ) each = ! each;
-          snprintf( c, sizeof c, "AUTOMIX %s %d%s", amode == 1 ? "OVERLAP" : amode == 2 ? "SWAP" : "OFF", amount, amode == 2 && each ? " each" : "" );
-          if( amode == 2 && each ) snprintf( c, sizeof c, "AUTOMIX SWAP each" );
+        case '?': help(); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
+        case 'a':
+          {
+          /* one mode at a time, chosen from a short list; overlap and swap ask their one question */
+          const char *nm[4] = { "loop", "keep", "overlap", "swap" };
+          char l[40] = "";
+          printf( "\033[H\033[J mode (one at a time).  now: %s\n\n   1  loop     every take goes into the loop\n   2  keep     takes are recorded and kept, but not put into the loop\n   3  overlap  a take leaves the loop when n newer takes have overlapped it\n   4  swap     successive takes swap channels\n", nm[amode] );
+          restore(); printf( "\n choose 1-4 (enter cancels): " ); fflush( stdout );
+          if( fgets( l, sizeof l, stdin ) )
+            {
+            int ch = atoi( l );
+            if( ch == 1 ) strcpy( c, "AUTOMIX LOOP" );
+            else if( ch == 2 ) strcpy( c, "AUTOMIX KEEP" );
+            else if( ch == 3 )
+              {
+              printf( " overlap: how many newer takes before an older one leaves the loop (now %d, enter keeps it): ", amount > 0 ? amount : 4 ); fflush( stdout );
+              if( fgets( l, sizeof l, stdin ) && atoi( l ) > 0 ) amount = atoi( l );
+              snprintf( c, sizeof c, "AUTOMIX OVERLAP %d", amount > 0 ? amount : 4 );
+              }
+            else if( ch == 4 )
+              {
+              printf( " swap on every take, not only between iterations? [y/N]: " ); fflush( stdout );
+              strcpy( c, "AUTOMIX SWAP" );
+              if( fgets( l, sizeof l, stdin ) && ( l[0] == 'y' || l[0] == 'Y' ) ) strcpy( c, "AUTOMIX SWAP each" );
+              }
+            }
+          tcsetattr( 0, TCSANOW, &raw );
           break;
+          }
         case 't': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
         case 'u':
           {

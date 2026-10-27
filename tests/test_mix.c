@@ -115,6 +115,18 @@ int main( void )
     CHECK( matches( &r ) ); }
   rig_close( &r );
 
+  /* --- keep: a take is recorded and stored, and the loop stays empty --- */
+  asp_core_defaults( &cfg ); cfg.automix.mode = ASP_AUTOMIX_KEEP;
+  rig_open( &r, &cfg, 40 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  sim_burst( &r.sim, base, 2, 0.1 );
+  sim_until( &r.sim, base + LOOP + 48000 * 3 );
+  { States s; states( &r, &s ); AspCoreStatus st; asp_core_status( r.c, &st );
+    CHECK( s.n == 1 && ! strcmp( s.st[0].status, "off" ) && st.loop_takes == 0 );
+    CHECK( matches( &r ) );                                        /* and the loop file is empty, as a rebuild says */
+    asp_core_automix( r.c, ASP_AUTOMIX_OFF, 0, 0 ); }
+  rig_close( &r );
+
   /* --- stereo stays stereo; identical channels count as mono --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 40 );

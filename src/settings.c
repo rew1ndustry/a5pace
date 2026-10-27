@@ -111,7 +111,7 @@ void asp_settings_cfg( AspCoreCfg *c, const char *t )
   if( ! asp_settings_get( t, "sync_target", v, sizeof v ) ) c->sync.target_db = atof( v );
   if( ! asp_settings_get( t, "automix", v, sizeof v ) )
     {
-    c->automix.mode = ! strncmp( v, "overlap", 7 ) ? ASP_AUTOMIX_OVERLAP : ! strncmp( v, "swap", 4 ) ? ASP_AUTOMIX_SWAP : ASP_AUTOMIX_OFF;
+    c->automix.mode = ! strncmp( v, "overlap", 7 ) ? ASP_AUTOMIX_OVERLAP : ! strncmp( v, "swap", 4 ) ? ASP_AUTOMIX_SWAP : ! strncmp( v, "keep", 4 ) ? ASP_AUTOMIX_KEEP : ASP_AUTOMIX_OFF;
     const char *sp = strchr( v, ' ' );
     c->automix.n = sp ? atoi( sp + 1 ) : 4;
     c->automix.each = sp && strstr( sp, "each" ) != NULL;

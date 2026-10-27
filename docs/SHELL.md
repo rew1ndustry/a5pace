@@ -25,7 +25,7 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `SAFE` / `LIVE` | stop / resume recording takes (the loop keeps playing) |
 | `SYNC` | hunt the round trip again |
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
-| `AUTOMIX OFF`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
+| `AUTOMIX LOOP`, `KEEP`, `OVERLAP n`, `SWAP [each]` | the mode, one at a time, see below |
 | `TAKES` | every take with its state |
 | `WIPE [ALL]` | take the recorded takes out of the loop (`ALL`: the generated ones too, clicks and an imported file); they stay in the store |
 | `HISTORY [n]` | the moments the loop changed, newest first: each a place to return to, with how many takes were in the loop after it |
@@ -34,18 +34,22 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
 | `EVENT edge_x {json}` | an edge or shell tells the log something (a latency report) |
 | `SIM BURST ch amp [ticks]`, `SIM DUP 0\|1`, `STEP n` | simulated card only: play a tone burst in (ch 0 left, 1 right, 2 both), identical noise on both channels, step n ticks and reply when done |
+| `HELP` | this list of commands |
 | `QUIT` | close cleanly |
 
 A loop that was not closed cleanly (dirty flag in its header), is the wrong length, or is an asp4 file is
 rebuilt from the store on the next start.
 
-## Automix (one at a time)
-- **OVERLAP n**: a take goes out of the loop when n newer takes have overlapped it (it stays in the store; its
-  state is `off`, and a revert can bring it back).
-- **SWAP [each]**: successive takes swap channels. Mono takes go hard left, hard right, hard left; stereo
-  takes alternate flipped and not. By default the swap happens between iterations; `each` also swaps between
-  takes of the same iteration.
-Fading is not an automix yet. A take's gain and pan are, for now, one constant setting across the whole take
+## Modes (one at a time)
+- **loop**: the usual. Every take goes into the loop as it is recorded. This is the default.
+- **keep**: takes are recorded and stored, but not put into the loop (their state is `off`, the history marks them "kept").
+- **overlap n**: a take goes out of the loop when n newer takes have overlapped it (it stays in the store, and a revert
+  can bring it back).
+- **swap [each]**: successive takes swap channels. Mono takes go hard left, hard right, hard left; stereo takes alternate
+  flipped and not. By default the swap happens between iterations; `each` also swaps between takes of the same iteration.
+Set from the control port with `AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]`, from `a5shell` with `a` (a short list, then
+the one question that mode asks), or from a profile (`automix loop`, `automix keep`, `automix overlap 4`, `automix swap each`).
+Fading is not a mode yet. A take's gain and pan are, for now, one constant setting across the whole take
 (`lev`: a right shift per output channel, 6 dB a step, or off); fades will be envelopes on a take (a perceived
 linear drop over the whole take) once envelopes are mapped out.
 A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
@@ -57,11 +61,12 @@ The loop is the sum of the takes in 64 bits. On the way out it is brought down b
 bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
 the change is a ramp and not a step.
 
-### The shell's keys (`a5shell DIR`)
-`space` safe/live, `r` sync again, `l` relearn the gate floor, `g`/`G` gate more/less sensitive, `a` next automix (off, overlap, swap),
-`+`/`-` the automix number, `e` swap each take, `t` list takes, `p` choose a profile, `w` wipe the loop (asks), `h` history: the
-places to return to, pick a row or type an iteration and offset such as `7.3`; it goes safe first and asks you to press space
-when you want to go live, `q` leave, `Q` stop aspace. The status line shows the automix as `overlap 4` or `swap each`.
+### The shell's keys (`a5shell DIR`; press `?` in it)
+The top line names the space. `space` safe/live, `h` history (places to return to; pick a row or type an iteration and
+offset such as `7.3`: it goes safe first and asks you to press space when you want to be live again), `w` wipe (asks),
+`a` the mode (a short list; overlap asks how many, swap asks about each), `r` sync again, `l` relearn the gate floor,
+`g`/`G` gate more/less sensitive, `p` choose a profile, `t` list takes, `?` help, `q` leave (aspace carries on), `Q` stop
+aspace. Under it, in words, what has just happened; the status line shows the mode as `loop`, `keep`, `overlap 4` or `swap each`.
 
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
