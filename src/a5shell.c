@@ -24,6 +24,35 @@ static void keep( const char *l, void *u ) { (void)u; snprintf( status, sizeof s
 static void show( const char *l, void *u ) { (void)u; printf( "\r\033[K%s\n", l ); }
 static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 3 ) ) snprintf( events[nev++ % 8], 220, "%.200s", l ); }
 
+/* the middle of the screen: the log as it happens, in words, and only what matters */
+static double jfld( const char *j, const char *key, double d ) { char q[48]; snprintf( q, sizeof q, "\"%s\":", key ); const char *p = strstr( j, q ); return p ? atof( p + strlen( q ) ) : d; }
+static int pretty( const char *line, char *out, size_t n )
+  {
+  const char *p = line, *type, *json; char t[40];
+  if( *p != '@' ) { snprintf( out, n, "%s", line ); return 1; }
+  p = strchr( p, ' ' ); if( ! p ) return 0; type = ++p;
+  json = strchr( type, ' ' ); if( ! json ) json = ""; 
+  snprintf( t, sizeof t, "%.*s", (int)( json - type > 39 ? 39 : json - type ), type );
+  if( ! strcmp( t, "end" ) ) { const char *pk = strstr( json, "\"peak_db\":[" ); double a = pk ? atof( pk + 11 ) : 0, b = pk && strchr( pk + 11, ',' ) ? atof( strchr( pk + 11, ',' ) + 1 ) : a;
+    snprintf( out, n, "recorded: iteration %d at %ds, %.1f s long, peak %.0f dB%s", (int)jfld( json, "iter", 0 ), (int)jfld( json, "off", 0 ), jfld( json, "len", 0 ) / 48000.0, a > b ? a : b, jfld( json, "mono", 0 ) > 0 ? ", mono" : "" ); }
+  else if( ! strcmp( t, "discarded" ) ) snprintf( out, n, "ignored a %s (%.1f s)", strstr( json, "\"bump\"" ) ? "bump" : "sound too quiet to keep", jfld( json, "len", 0 ) / 48000.0 );
+  else if( ! strcmp( t, "wipe" ) ) snprintf( out, n, "wiped %d take(s) out of the loop", (int)jfld( json, "takes", 0 ) );
+  else if( ! strcmp( t, "reverted" ) ) snprintf( out, n, "went back to log point %d: %d take(s) in the loop", (int)jfld( json, "to", 0 ), (int)jfld( json, "takes", 0 ) );
+  else if( ! strcmp( t, "sync_found" ) ) snprintf( out, n, "synced: round trip %.0f ms", jfld( json, "frames", 0 ) / 48.0 );
+  else if( ! strcmp( t, "sync_start" ) || ! strcmp( t, "resync" ) ) snprintf( out, n, "syncing..." );
+  else if( ! strcmp( t, "sync_failed" ) ) snprintf( out, n, "could not sync: check the loopback and the levels" );
+  else if( ! strcmp( t, "safe_on" ) ) snprintf( out, n, "safe: nothing is being recorded" );
+  else if( ! strcmp( t, "safe_off" ) ) snprintf( out, n, "live: recording" );
+  else if( ! strcmp( t, "settings" ) ) { const char *pf = strstr( json, "\"profile\":\"" ); snprintf( out, n, "profile %.*s", pf ? (int)strcspn( pf + 11, "\"" ) : 0, pf ? pf + 11 : "" ); }
+  else if( ! strcmp( t, "automix" ) ) snprintf( out, n, "automix %s", jfld( json, "mode", 0 ) == 1 ? "overlap" : jfld( json, "mode", 0 ) == 2 ? "swap" : "off" );
+  else if( ! strcmp( t, "gate" ) ) { if( strstr( json, "learnt" ) ) snprintf( out, n, "the gate has learnt the noise floor" ); else return 0; }
+  else if( ! strcmp( t, "edge_drop" ) || ! strcmp( t, "edge_starve" ) ) snprintf( out, n, "the sound card dropped samples: syncing again" );
+  else if( ! strcmp( t, "error" ) ) snprintf( out, n, "error: %.200s", json );
+  else if( ! strcmp( t, "click_added" ) ) snprintf( out, n, "click track added" );
+  else return 0;                                                  /* wrap, top, new, relevel ...: not for this screen */
+  return 1;
+  }
+
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
@@ -55,7 +84,7 @@ int main( int argc, char **argv )
       {
       char b[1200];
       if( ctlc_readline( ev, b, sizeof b, 10 ) < 0 ) break;
-      snprintf( events[nev++ % 8], 220, "%.200s", b );
+      { char pr[240]; if( pretty( b, pr, sizeof pr ) ) snprintf( events[nev++ % 8], 220, "%.200s", pr ); }
       }
     if( p[0].revents & POLLIN )
       {
