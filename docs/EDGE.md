@@ -47,3 +47,21 @@ ready in keep mode).
 - A round trip of 0 frames is asp4's "not found" and cannot be reported.
 - **Loop origin:** the loop will start at its top when sync is found (not at the elapsed offset); that is
   done in the tick loop, which sets the origin tick, not here.
+
+## The core loop (`include/aspcore.h`)
+`asp_core_tick(core, in, out)`: one tick (9600 stereo int32 frames) in, one out, no clocks or threads.
+- **SYNC phase:** plays the sync tone, collects each returning second, runs the hunt. When found, the
+  loop's **origin is the next tick**: the loop begins at its top then, and a tick's place in the loop is its
+  distance from the origin, not the elapsed time. Recording position = origin-relative; the loop goes
+  out ahead of it by the measured round trip so what is played against it lands back in place.
+- **PLAY phase:** gate (learning waits for the returning sync to pass), takes recorded as FLAC streamed to
+  `blobs/tmp`, each tick fed into the tank at its level as it is recorded, take committed to the store
+  at its end (one transaction: row, `take_added`, `take_state`). Frame 0 of a take is the start of its
+  second of the loop, so it can be replayed into a rebuilt tank sample for sample.
+- **Events logged:** sync_start, sync_found/failed, gate, new, end, top, wrap, safe_on/off, edge_drop/starve,
+  resync, tank_dirty, error. Control calls: safe, resync, edge, gate, gate_relearn.
+- **SAFE:** no takes are recorded (an open one is ended); the loop keeps playing and the gate keeps
+  learning. Nothing new reaches the store, so nothing can be published.
+- **Edge drop/starve:** logged; a take in progress is ended and marked `damaged`; the hunt starts again,
+  so the loop top moves to a fresh origin. The loopback is the shell's business: on while phase is SYNC,
+  off in PLAY (asp4's `mixer sync` / `mixer live`).

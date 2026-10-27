@@ -195,11 +195,10 @@ int64_t asp_take_set_state( AspStore *s, int64_t id, const char *state_json, con
   return seq;
   }
 
-int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,
-                      int channels, int rate, const char *status, int64_t tick, AspTake *out )
+int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, const char *status,
+                    const char *state_json, int64_t tick, AspTake *out )
   {
-  char part[1200], dst[1200], sha[65], dir[1200];
-  static int serial;
+  char dst[1200], sha[65], dir[1200];
   unsigned char md5[16];
   uint64_t frames;
   int ch, rt, bits;
@@ -207,21 +206,16 @@ int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_pa
   if( s->readonly ) return -1;
   if( ! out ) out = &dummy;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;           /* takes are never overwritten */
-  snprintf( dir, sizeof dir, "%s/blobs/tmp", s->dir );
-  mkdir_p( dir );
-  snprintf( part, sizeof part, "%s/%d_%d.part", dir, (int)getpid(), serial++ );
-  if( asp_flac_encode_file( d32_path, part, channels, rate ) ) { unlink( part ); return -1; }
   fsync_path( part );
-  if( asp_sha256_file( part, sha ) || asp_flac_info( part, md5, &frames, &ch, &rt, &bits ) )
-    { unlink( part ); return -1; }
+  if( asp_sha256_file( part, sha ) || asp_flac_info( part, md5, &frames, &ch, &rt, &bits ) ) return -1;
   snprintf( dir, sizeof dir, "%s/blobs/%.2s", s->dir, sha );
   mkdir_p( dir );
   snprintf( dst, sizeof dst, "%s/%s.flac", dir, sha );
   if( ! access( dst, F_OK ) ) unlink( part );                        /* identical blob already held */
-  else if( rename( part, dst ) ) { unlink( part ); return -1; }
+  else if( rename( part, dst ) ) return -1;
   fsync_path( dir );
 
-  char hex[33], args[160];
+  char hex[33], args[200], st[200];
   for( int i = 0; i < 16; i++ ) sprintf( hex + 2 * i, "%02x", md5[i] );
   if( run( s, "begin immediate" ) ) return -1;
   sqlite3_stmt *q;
@@ -244,10 +238,35 @@ int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_pa
   int64_t id = sqlite3_last_insert_rowid( s->db );
   snprintf( args, sizeof args, "{\"take\":%lld,\"iter\":%lld,\"off\":%lld}", (long long)id, (long long)iter, (long long)off );
   asp_log( s, "aspace", "take_added", args, tick );
-  snprintf( args, sizeof args, "{\"status\":\"%s\"}", status );
-  asp_take_set_state( s, id, args, "aspace", tick );
+  if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
+  asp_take_set_state( s, id, state_json, "aspace", tick );
   if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
   return asp_take_get( s, id, out );
+  }
+
+int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,
+                      int channels, int rate, const char *status, int64_t tick, AspTake *out )
+  {
+  char part[1200], dir[1200];
+  static int serial;
+  AspTake dummy;
+  if( s->readonly ) return -1;
+  if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;
+  snprintf( dir, sizeof dir, "%s/blobs/tmp", s->dir );
+  mkdir_p( dir );
+  snprintf( part, sizeof part, "%s/%d_%d.part", dir, (int)getpid(), serial++ );
+  if( asp_flac_encode_file( d32_path, part, channels, rate ) ) { unlink( part ); return -1; }
+  if( asp_take_adopt( s, iter, off, part, status, NULL, tick, out ) ) { unlink( part ); return -1; }
+  return 0;
+  }
+
+int asp_tmp_path( AspStore *s, char *buf, size_t n )
+  {
+  static int serial;
+  char dir[1200];
+  snprintf( dir, sizeof dir, "%s/blobs/tmp", s->dir );
+  mkdir_p( dir );
+  return snprintf( buf, n, "%s/%d_%d.part", dir, (int)getpid(), serial++ ) < (int)n ? 0 : -1;
   }
 
 int asp_mix_name( AspStore *s, const char *name, int64_t seq )

@@ -26,8 +26,8 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o
-all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync
+LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o build/aspcore.o
+all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -49,6 +49,9 @@ build/sha256.o: src/sha256.c include/aspstore.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/gate.o: src/gate.c include/gate.h include/asptank.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/aspcore.o: src/aspcore.c include/aspcore.h include/aspstore.h include/asptank.h include/sync.h include/gate.h include/flacio.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/sync.o: src/sync.c include/sync.h
@@ -85,10 +88,15 @@ bin/test_sync: tests/test_sync.c build/sync.o
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< build/sync.o -lm
 
-test: bin/test_store bin/test_tank bin/test_sync
+bin/test_core: tests/test_core.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+
+test: bin/test_store bin/test_tank bin/test_sync bin/test_core
 	bin/test_store
 	bin/test_tank
 	bin/test_sync
+	bin/test_core
 gate-diff:
 	tests/gate_diff.sh $(FILES)
 clean:

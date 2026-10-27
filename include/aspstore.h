@@ -36,6 +36,11 @@ int64_t asp_log_last( AspStore *s );
    take_added / take_state events in one transaction. a half-written take never has a row. */
 int  asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,
                        int channels, int rate, const char *status, int64_t tick, AspTake *out );
+/* a take already encoded to flac at part (see asp_tmp_path): fsync, name by hash, row and events in one
+   transaction. state_json NULL gives {"status":status}. on failure the part file is left alone. */
+int  asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, const char *status,
+                     const char *state_json, int64_t tick, AspTake *out );
+int  asp_tmp_path( AspStore *s, char *buf, size_t n );              /* a fresh name for a take in progress */
 int  asp_take_get( AspStore *s, int64_t id, AspTake *out );
 int  asp_take_find( AspStore *s, int64_t iter, int64_t off, AspTake *out );
 int  asp_take_path( AspStore *s, const AspTake *t, char *buf, size_t n );
