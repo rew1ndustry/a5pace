@@ -1,8 +1,8 @@
 aspace, version 5
 
-The idea, design and measured zero-latency looping method are by the project's
-originator (see LICENSE for the copyright holder). Implementation was written
-with Claude (Anthropic). Please keep this credit with copies and derivatives.
+The idea, design and measured zero-latency looping method are by James Knight
+(entomology). Implementation was written with Claude (Anthropic). Please keep
+this credit with copies and derivatives.
 
 Third party, with their own licences:
 - libFLAC (Xiph.Org, BSD-3-Clause)
