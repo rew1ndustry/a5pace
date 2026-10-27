@@ -1,29 +1,31 @@
 #!/bin/bash
-# aspcard DIR [aspace run options]
+# a5card DIR [a5pace run options]
 # aspace on a real sound card: arecord | aspace | aplay, the loopback switched on for the sync hunt and off for
 # playing, and the card's dropped / starved samples reported to aspace. this is a shell: the platform is here,
 # not in the core. alsa + the UR22C on this host; add a case to mixer() and DEV for another card.
 #
-#   ASPCARD_DEV     the alsa device          (default hw:UR22C)
-#   ASPCARD_SYNCMAX highest sync tone, dB re asp4's, kept low for headphones (default -36)
-#   ASPCARD_BUFFER_MS  alsa buffer for both directions (default: alsa's 500). stability comes before latency: under
+#   A5CARD_DEV     the alsa device          (default hw:UR22C)
+#   A5CARD_SYNCMAX highest sync tone, dB re asp4's, kept low for headphones (default -36)
+#   A5CARD_BUFFER_MS  alsa buffer for both directions (default: alsa's 500). stability comes before latency: under
 #                   about 600 ms (three ticks) a stall of the storage can become a dropout; a warning says so
-#   ASPCARD_DRY=1   check everything, start nothing
-#   ASPCARD_RELEASE=1  when only pipewire/wireplumber hold the card, switch its profile to "off" for the run and
+#   A5CARD_DRY=1   check everything, start nothing
+#   A5CARD_RELEASE=1  when only pipewire/wireplumber hold the card, switch its profile to "off" for the run and
 #                      put it back afterwards (nothing is killed)
 #
 # it never stops anything it did not start: if the card is in use it says who and leaves.
 set -u
-DIR=${1:?usage: aspcard DIR [aspace run options]}; shift
+DIR=${1:?usage: a5card DIR [a5pace run options]}; shift
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-BIN=$HERE/bin
-DEV=${ASPCARD_DEV:-hw:UR22C}
-SYNCMAX=${ASPCARD_SYNCMAX:--36}
-BUF=""; if [ -n "${ASPCARD_BUFFER_MS:-}" ]; then BUF="--buffer-time=$((ASPCARD_BUFFER_MS*1000))"; [ "$ASPCARD_BUFFER_MS" -lt 600 ] && echo "aspcard: buffer $ASPCARD_BUFFER_MS ms is under three ticks: a slow write on the storage may drop samples" >&2; fi
+# run from a checkout (bin/ beside tools/), or installed on the PATH under the a5 names
+if [ -f "$HERE/src/aspace_main.c" ]; then A5PACE="$HERE/bin/a5pace"; A5CONTROL="$HERE/bin/a5control"
+else A5PACE=$(command -v a5pace); A5CONTROL=$(command -v a5control); fi
+DEV=${A5CARD_DEV:-hw:UR22C}
+SYNCMAX=${A5CARD_SYNCMAX:--36}
+BUF=""; if [ -n "${A5CARD_BUFFER_MS:-}" ]; then BUF="--buffer-time=$((A5CARD_BUFFER_MS*1000))"; [ "$A5CARD_BUFFER_MS" -lt 600 ] && echo "a5card: buffer $A5CARD_BUFFER_MS ms is under three ticks: a slow write on the storage may drop samples" >&2; fi
 FMT="-q -D $DEV -f S32_LE -c 2 -r 48000 -t raw"
 CARD=${DEV#hw:}; CARD=${CARD%%,*}
 
-say_() { echo "aspcard: $*" >&2; }
+say_() { echo "a5card: $*" >&2; }
 
 # --- the card must be free, and we only look -------------------------------------------------
 holders() { fuser -v /dev/snd/pcmC${CARDNO}D* 2>&1 | grep -v "COMMAND\|^ *$" | grep -v "kernel"; }
@@ -53,18 +55,18 @@ for o in d:
 restore_pipewire() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && say_ "pipewire has the card back (profile $PWOLD)"; }
 
 busy=$(holders)
-if [ -n "$busy" ] && [ "${ASPCARD_RELEASE:-0}" = 1 ] && [ "${ASPCARD_DRY:-0}" != 1 ] \
+if [ -n "$busy" ] && [ "${A5CARD_RELEASE:-0}" = 1 ] && [ "${A5CARD_DRY:-0}" != 1 ] \
    && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
   release_pipewire; busy=$(holders)
 fi
 if [ -n "$busy" ]; then
   say_ "the sound card is in use, not starting:"; echo "$busy" >&2
-  say_ "(only pipewire? ASPCARD_RELEASE=1 lets go of it for the run and puts it back)"
+  say_ "(only pipewire? A5CARD_RELEASE=1 lets go of it for the run and puts it back)"
   restore_pipewire
   exit 1
 fi
-[ -d "$DIR" ] || { say_ "$DIR is not a session (aspace new DIR NAME SECONDS)"; exit 1; }
-[ -x "$BIN/aspace" ] || { say_ "build first: make"; exit 1; }
+[ -d "$DIR" ] || { say_ "$DIR is not a session (a5pace new DIR NAME SECONDS)"; exit 1; }
+[ -x "$A5PACE" ] && [ -x "$A5CONTROL" ] || { say_ "build first: make"; exit 1; }
 arecord -l 2>/dev/null | grep -q "$CARD" || { say_ "no capture device $DEV"; exit 1; }
 
 # --- the mixer: loopback on while syncing, off in play ----------------------------------------
@@ -77,16 +79,16 @@ mixer() {   # on | off
   else say_ "please undo the loop now: aspace must hear only your inputs"; fi
 }
 
-if [ "${ASPCARD_DRY:-0}" = 1 ]; then
+if [ "${A5CARD_DRY:-0}" = 1 ]; then
   say_ "dry run: card $DEV free, session $DIR, sync ceiling $SYNCMAX dB; would run:"
-  echo "  arecord $FMT | aspace run --sync-max $SYNCMAX $* $DIR | aplay $FMT" >&2
+  echo "  arecord $FMT | a5pace run --sync-max $SYNCMAX $* $DIR | aplay $FMT" >&2
   exit 0
 fi
 
 pids=""
 cleanup() {
   trap - EXIT INT TERM
-  "$BIN/aspctl" "$DIR" QUIT > /dev/null 2>&1; sleep 0.5       # aspace closes cleanly first
+  "$A5CONTROL" "$DIR" QUIT > /dev/null 2>&1; sleep 0.5       # aspace closes cleanly first
   for p in $pids; do pkill -P "$p" 2>/dev/null; done        # then only our own pipeline, children of the subshell
   [ -n "$pids" ] && kill $pids 2>/dev/null
   mixer off
@@ -102,7 +104,7 @@ xrun() {   # drop|starve
     echo "$line" >&2
     case $line in *[Oo]verrun*|*[Uu]nderrun*)
       ms=$(echo "$line" | sed -n 's/.*at least \([0-9.]*\) ms.*/\1/p'); ms=${ms:-0}
-      "$BIN/aspctl" "$DIR" EDGE "$1" "$(awk "BEGIN{printf \"%d\", $ms*48}")" > /dev/null 2>&1 ;;
+      "$A5CONTROL" "$DIR" EDGE "$1" "$(awk "BEGIN{printf \"%d\", $ms*48}")" > /dev/null 2>&1 ;;
     esac
   done
 }
@@ -131,23 +133,23 @@ latency_report() {   # measured frames
   if [ "$n" -ge 3 ]; then
     note=$(tail -8 "$hist" | awk -F'\t' '{g[NR]=$6; l[NR]=$2} END{mn=g[1];mx=g[1];lmn=l[1];lmx=l[1];for(i=2;i<=NR;i++){if(g[i]<mn)mn=g[i];if(g[i]>mx)mx=g[i];if(l[i]<lmn)lmn=l[i];if(l[i]>lmx)lmx=l[i]}
          printf "over the last %d runs the gap moved by %d frames and the measured round trip by %d frames", NR, mx-mn, lmx-lmn;
-         if (mx-mn<=24) printf " - steady enough to declare (aspcard DIR --latency <frames>)"; else printf " - not steady, keep the sync"}')
+         if (mx-mn<=24) printf " - steady enough to declare (a5card DIR --latency <frames>)"; else printf " - not steady, keep the sync"}')
   fi
   say_ "latency: sync measured $meas frames; driver says playback $pd + capture $cd = $sum (buffers $pb/$cb, periods $pp/$cp); gap $gap frames. $note"
-  "$BIN/aspctl" "$DIR" EVENT edge_latency "{\"measured\":$meas,\"driver\":$sum,\"playback\":$pd,\"capture\":$cd,\"gap\":$gap,\"buffer\":[${pb:-0},${cb:-0}],\"period\":[${pp:-0},${cp:-0}]}" > /dev/null 2>&1
+  "$A5CONTROL" "$DIR" EVENT edge_latency "{\"measured\":$meas,\"driver\":$sum,\"playback\":$pd,\"capture\":$cd,\"gap\":$gap,\"buffer\":[${pb:-0},${cb:-0}],\"period\":[${pp:-0},${cp:-0}]}" > /dev/null 2>&1
 }
 
 mixer on
 # the pipeline; the first stage's stderr goes to the drop monitor, the last to the starve monitor
 ( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun drop) \
-  | "$BIN/aspace" run -C 0 --sync-max "$SYNCMAX" "$@" "$DIR" \
+  | "$A5PACE" run -C 0 --sync-max "$SYNCMAX" "$@" "$DIR" \
   | "$(command -v aplay)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun starve) ) &
 pipe=$!; pids="$pipe"
 
 # --- follow the log: loopback off when the round trip is found, on again if the hunt restarts ---
 n=0; while [ ! -s "$DIR/ctl" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
 [ -s "$DIR/ctl" ] || { say_ "aspace did not start"; exit 1; }
-( "$BIN/aspctl" "$DIR" WATCH | while IFS= read -r ev; do
+( "$A5CONTROL" "$DIR" WATCH | while IFS= read -r ev; do
     case $ev in
       *" sync_found "*) mixer off; say_ "synced: $ev"
                        fr=$(echo "$ev" | sed -n 's/.*"frames":\([0-9]*\).*/\1/p'); latency_report "$fr" & ;;
@@ -156,5 +158,5 @@ n=0; while [ ! -s "$DIR/ctl" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
     esac
   done ) &
 pids="$pids $!"
-say_ "running on $DEV; watch it with: aspsh $DIR"
+say_ "running on $DEV; watch it with: a5shell $DIR"
 wait $pipe

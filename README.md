@@ -10,10 +10,10 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 
 ## Parts
 - `aspace` the runner: a pipe (raw s32 stereo 48 kHz on stdin/stdout) or a simulated card, and a control port
-- `aspsh` a terminal shell: status line, events and a few keys (safe/live, profile, automix, revert)
-- `aspctl` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
-- `aspcard` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
-- `aspdoctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
+- `a5shell` a terminal shell: status line, events and a few keys (safe/live, profile, automix, revert)
+- `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
+- `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
+- `a5doctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
 - a session is a directory: `session.db` (SQLite: the log and the facts), `blobs/` (the takes as FLAC), `cache/` (the loop)
 
 ## Build
@@ -26,11 +26,11 @@ make test
 ```
 ## Try it with no sound card
 ```
-bin/aspace new /tmp/demo demo 8
-bin/aspace run -S 7001 /tmp/demo &      # a simulated card, 7001 frames of round trip
-bin/aspctl /tmp/demo SIM BURST 2 0.1    # a tone burst in
-bin/aspctl /tmp/demo TAKES
-bin/aspsh /tmp/demo
+bin/a5pace new /tmp/demo demo 8
+bin/a5pace run -S 7001 /tmp/demo &      # a simulated card, 7001 frames of round trip
+bin/a5control /tmp/demo SIM BURST 2 0.1    # a tone burst in
+bin/a5control /tmp/demo TAKES
+bin/a5shell /tmp/demo
 ```
 ## Read next
 `docs/SHELL.md` (running it), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` (the store),

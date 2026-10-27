@@ -20,7 +20,7 @@ of its power is below the lowcut, and `gateprobe` replays stored takes through a
 
 ## Defaults and profiles
 Session-stored settings, new sessions inheriting a defaults set: stored as events in the session log (so a revert
-restores them), the defaults file copied in by `aspace new`. Profiles for gate and sync per setup.
+restores them), the defaults file copied in by `a5pace new`. Profiles for gate and sync per setup.
 
 ## Create tool
 Build a space from bpm, time signature and bar count, with an automatic metronome track made from samples.
@@ -35,9 +35,9 @@ Smaller arecord / aplay buffers to shrink the 0.63 s round trip (the loop stays 
 
 ## Soon after
 - Take length and a "close this take" control in the status line; input-level warning near clipping.
-- Stage 2: example graphic control; a lighter backend for Claude (`aspctl` exists).
+- Stage 2: example graphic control; a lighter backend for Claude (`a5control` exists).
 - Windows shim (plat.h), JACK and PipeWire shells.
-- GitHub: copyright holder's name in LICENSE, install notes per platform, `aspdoctor` in the issue template.
+- GitHub: copyright holder's name in LICENSE, install notes per platform, `a5doctor` in the issue template.
 - Publisher and hub (later, as planned).
 
 ## Stability on a cubieboard with an SD card (user: stability is everything)
@@ -45,4 +45,4 @@ Smaller arecord / aplay buffers to shrink the 0.63 s round trip (the loop stays 
 - Take commit does fsync + a sqlite commit on the tick thread: measure on the board; options are `synchronous=NORMAL`,
   doing the commit on an idle tick, or a writer thread in the runner (the core stays single-threaded).
 - The loop file on tmpfs (`--tank`) is in place; measure the rebuild time after a reboot on the board.
-- Keep the default buffers; shrinking them is opt-in (`ASPCARD_BUFFER_MS`) and only after the soak test.
+- Keep the default buffers; shrinking them is opt-in (`A5CARD_BUFFER_MS`) and only after the soak test.

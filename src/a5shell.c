@@ -1,4 +1,4 @@
-/* aspsh DIR: a terminal shell for a running aspace. a status line, the recent events, and a few keys:
+/* a5shell DIR: a terminal shell for a running aspace. a status line, the recent events, and a few keys:
      space  safe / live        r  sync again         l  learn the gate floor again
      g / G  gate more / less sensitive (3 dB)        a  next automix (off, overlap, swap)
      + / -  automix amount up / down                 e  swap: also within an iteration
@@ -26,7 +26,7 @@ static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [u] revert  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J a5shell   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [u] revert  [q] quit  [Q] stop\n\n" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -34,9 +34,9 @@ static void draw( void )
 
 int main( int argc, char **argv )
   {
-  if( argc != 2 ) { fprintf( stderr, "usage: aspsh DIR\n" ); return 2; }
+  if( argc != 2 ) { fprintf( stderr, "usage: a5shell DIR\n" ); return 2; }
   int cmd = ctlc_connect( argv[1] ), ev = ctlc_connect( argv[1] );
-  if( cmd < 0 || ev < 0 ) { fprintf( stderr, "aspsh: %s is not running\n", argv[1] ); return 1; }
+  if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
   struct termios raw;
   if( isatty( 0 ) ) { tcgetattr( 0, &saved ); raw = saved; raw.c_lflag &= ~(tcflag_t)( ICANON | ECHO ); raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; tcsetattr( 0, TCSANOW, &raw ); atexit( restore ); }
@@ -91,7 +91,7 @@ int main( int argc, char **argv )
           { int fd = cmd; char b[300]; snprintf( b, sizeof b, "PROFILES\n" ); if( send( fd, b, strlen( b ), 0 ) > 0 )
               { int r; while( ( r = ctlc_readline( fd, b, sizeof b, 3000 ) ) > 0 && strcmp( b, "OK" ) && strncmp( b, "ERR", 3 ) )
                   { if( np < 20 ) { snprintf( names[np], 80, "%.79s", b ); names[np][strcspn( names[np], "\t" )] = 0; printf( "  %d  %s\n", ++np, b ); } } } }
-          if( ! np ) printf( "  (none; aspace profiles install)\n" );
+          if( ! np ) printf( "  (none; a5pace profiles install)\n" );
           printf( "\n number to choose, anything else to cancel: " ); fflush( stdout );
           { char d; int w = 0; while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
             if( d >= '1' && d < '1' + np ) snprintf( c, sizeof c, "PROFILE %s", names[d - '1'] ); }

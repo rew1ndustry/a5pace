@@ -1,14 +1,14 @@
 /* aspace: the runner. hosts the core on a pipe (or a simulated card) and serves the control port.
-     aspace new DIR NAME SECONDS            make a session with a loop of that many seconds
-     aspace run [options] DIR               run it
+     a5pace new DIR NAME SECONDS            make a session with a loop of that many seconds
+     a5pace run [options] DIR               run it
    pipe mode (default): raw little endian s32 stereo 48 kHz on stdin, ticks of 9600 frames, the loop on stdout:
-     arecord ... | aspace run DIR | aplay ...      (the edge does the device, and the loopback, see docs/EDGE.md)
+     arecord ... | a5pace run DIR | aplay ...      (the edge does the device, and the loopback, see docs/EDGE.md)
    options: -S LAT  simulated card with LAT frames of round trip (no pipe), paced in real time
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --safe  start with recording off
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
-            --profile NAME  a named gate/sync setup from the list (aspace profiles)
+            --profile NAME  a named gate/sync setup from the list (a5pace profiles)
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
@@ -70,7 +70,7 @@ static int build_settings( const char *profile, char *out, size_t n )
   if( ! asp_config_dir( d, sizeof d ) ) { snprintf( f, sizeof f, "%s/defaults", d ); if( ! asp_settings_file( f, t, sizeof t ) ) asp_settings_merge( out, n, t ); }
   if( profile && *profile )
     {
-    if( asp_profile_path( profile, f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "aspace: no profile \"%s\" (aspace profiles lists them)\n", profile ); return -1; }
+    if( asp_profile_path( profile, f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "aspace: no profile \"%s\" (a5pace profiles lists them)\n", profile ); return -1; }
     asp_settings_merge( out, n, t );
     }
   return 0;
@@ -81,7 +81,7 @@ static void list_cb( const char *name, const char *note, void *u ) { (void)u; pr
 static int cmd_profiles( int argc, char **argv )
   {
   char d[900], f[1000], t[1100];
-  if( asp_config_dir( d, sizeof d ) ) { fprintf( stderr, "no config directory (set ASPACE_CONFIG)\n" ); return 1; }
+  if( asp_config_dir( d, sizeof d ) ) { fprintf( stderr, "no config directory (set A5PACE_CONFIG)\n" ); return 1; }
   if( argc >= 4 && ! strcmp( argv[2], "show" ) )
     {
     if( asp_profile_path( argv[3], f, sizeof f ) || asp_settings_file( f, t, sizeof t ) ) { fprintf( stderr, "no profile %s\n", argv[3] ); return 1; }
@@ -94,13 +94,13 @@ static int cmd_profiles( int argc, char **argv )
     snprintf( cmd, sizeof cmd, "mkdir -p '%s/profiles' && for f in '%s'/../profiles/*; do [ -e '%s/profiles/'\"$(basename \"$f\")\" ] || cp \"$f\" '%s/profiles/'; done && echo installed into %s/profiles", d, self, d, d, d );
     return system( cmd ) ? 1 : 0;
     }
-  if( ! asp_profile_list( list_cb, NULL ) ) printf( "no profiles in %s/profiles (aspace profiles install copies the examples)\n", d );
+  if( ! asp_profile_list( list_cb, NULL ) ) printf( "no profiles in %s/profiles (a5pace profiles install copies the examples)\n", d );
   return 0;
   }
 
 static int usage( void )
   {
-  fprintf( stderr, "usage: aspace new DIR NAME SECONDS [--profile NAME]\n       aspace profiles | profiles show NAME | profiles install\n       aspace run [-S LAT [--fast|--step]] [-C PORT] [--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
+  fprintf( stderr, "usage: a5pace new DIR NAME SECONDS [--profile NAME]\n       a5pace profiles | profiles show NAME | profiles install\n       a5pace run [-S LAT [--fast|--step]] [-C PORT] [--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
   return 2;
   }
 
@@ -309,7 +309,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--nofeed" ) ) cfg.feed = 0;       /* takes are stored but not put into the loop (alignment tests) */
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
     else if( ! strcmp( argv[i], "--tank" ) && i + 1 < argc ) tankpath = argv[++i];                   /* where the loop file lives (it is a cache: /dev/shm on a board with an sd card) */
-    else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (aspace profiles) */
+    else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (a5pace profiles) */
     else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) addflag( flagtext, "sync_max", argv[++i] );   /* never louder than this, dB re asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) addflag( flagtext, "sync_start", argv[++i] );
     else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */

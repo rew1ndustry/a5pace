@@ -1,20 +1,20 @@
 # Running aspace: the runner, the shell, and the backend
 
 ```
-aspace new DIR NAME SECONDS          make a session (a later create tool will build one from bpm, time
+a5pace new DIR NAME SECONDS          make a session (a later create tool will build one from bpm, time
                                      signature and bars, with a metronome track made from samples)
-aspace run [options] DIR             run it
-aspsh DIR                            terminal window on a running aspace: status line, events, a few keys
-aspctl DIR [COMMAND...]              one command to a running aspace; no command prints the status line
+a5pace run [options] DIR             run it
+a5shell DIR                            terminal window on a running aspace: status line, events, a few keys
+a5control DIR [COMMAND...]              one command to a running aspace; no command prints the status line
 ```
 
-`aspace run` has two edges:
+`a5pace run` has two edges:
 - **pipe** (default): raw little-endian s32 stereo 48 kHz on stdin, ticks of 9600 frames, the loop on stdout.
-  `arecord ... | aspace run DIR | aplay ...` or aspface. The edge does the device and the loopback.
+  `arecord ... | a5pace run DIR | aplay ...` or aspface. The edge does the device and the loopback.
 - **simulated card** (`-S LAT`): no devices at all; the loop's output comes back in only during sync, with LAT
   frames of round trip. Real time by default, `--fast` as fast as it will go, `--step` only when told.
   This is the backend for testing and for Claude: a whole session can be started, played into and inspected with
-  no sound card and almost no cost (`aspctl` is a few hundred bytes of text each way).
+  no sound card and almost no cost (`a5control` is a few hundred bytes of text each way).
 
 The control port is TCP on 127.0.0.1 (TCP_NODELAY), its number in `DIR/ctl`. Every command gets lines then `OK`
 or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, the log as it is written.
@@ -71,28 +71,28 @@ It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind o
 - the tick clicks (`CLICK`): dropped entirely; the create tool will make a metronome track from samples
 - `aspace.rc`-style variables read by several scripts: options are the runner's
 
-## On a real sound card: `tools/aspcard DIR [aspace options]`
-`arecord | aspace run | aplay` on ALSA (the UR22C here; add a case for another card), with the shell's jobs done
+## On a real sound card: `tools/a5card DIR [aspace options]`
+`arecord | a5pace run | aplay` on ALSA (the UR22C here; add a case for another card), with the shell's jobs done
 for aspace: the loopback goes on for the sync hunt and off for playing (it follows `sync_start` / `sync_found` /
 `resync` in the log), and the card's `overrun` / `underrun` reports become `EDGE drop` / `EDGE starve`. The sync
-tone is capped (`ASPCARD_SYNCMAX`, default -36 dB re asp4's) because the monitor may be in headphones; it starts at
+tone is capped (`A5CARD_SYNCMAX`, default -36 dB re asp4's) because the monitor may be in headphones; it starts at
 -48 and only rises if it is not heard. It never stops anything it did not start. If only pipewire holds the card,
-`ASPCARD_RELEASE=1` sets the card's pipewire profile to "off" for the run and puts it back on exit. `ASPCARD_DRY=1`
+`A5CARD_RELEASE=1` sets the card's pipewire profile to "off" for the run and puts it back on exit. `A5CARD_DRY=1`
 checks everything and starts nothing. First real run (2026-10-27, UR22C, loopback): sync found on the first
 attempt, 30123 frames (0.63 s: the pipes and card buffers), spread 1 sample, no drops or starves, loopback off and
 pipewire restored at the end.
 
 ### The driver's idea of the latency, against the measured one
-`aspcard` samples ALSA's own status files (`/proc/asound/cardN/pcm0p|pcm0c/sub0/status`, "delay") for four seconds after
+`a5card` samples ALSA's own status files (`/proc/asound/cardN/pcm0p|pcm0c/sub0/status`, "delay") for four seconds after
 each sync and logs `edge_latency` (measured, driver's playback + capture, buffers, periods, the gap), also appended
 to `DIR/cache/latency.tsv`; after three runs it says whether the gap is steady. On the UR22C, six runs
 (2026-10-27): the measured round trip was 30118-30137 frames (19 frames, one USB microframe is 8), the driver's
 figure moved by about 600 frames and the gap by about 900, so the driver's number is less steady than the sync and
-not a substitute for it here. Reusing the last measured value instead (`aspace run --latency FRAMES`, no hunt) is
+not a substitute for it here. Reusing the last measured value instead (`a5pace run --latency FRAMES`, no hunt) is
 good to about 20 frames (0.4 ms); it is there as an option, and the sync stays the default.
 
 ### Options, and what the shell does about pipewire
-The card is taken only if it is free; if anything holds it, `aspcard` names it and stops (what you want for
-exclusive use). `ASPCARD_RELEASE=1` is the opt-in: when only pipewire / wireplumber hold the card, switch its
+The card is taken only if it is free; if anything holds it, `a5card` names it and stops (what you want for
+exclusive use). `A5CARD_RELEASE=1` is the opt-in: when only pipewire / wireplumber hold the card, switch its
 pipewire profile to "off" for the run and restore it after. Running through pipewire, or jack, would be other
 shells; this one does ALSA direct only.

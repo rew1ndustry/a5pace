@@ -1,6 +1,6 @@
-/* aspctl DIR COMMAND...   send one command to a running aspace and print the reply
-   aspctl DIR WATCH         print events as they happen: "@tick type json"
-   aspctl DIR              the one line status
+/* a5control DIR COMMAND...   send one command to a running aspace and print the reply
+   a5control DIR WATCH         print events as they happen: "@tick type json"
+   a5control DIR              the one line status
    commands: STATE LINE TAKES SAFE LIVE SYNC RELEARN GATE n|+n|-n RING n AUTOMIX off|fade n|overlap n|swap [each]
              REVERT seq (while SAFE) EDGE drop|starve frames QUIT; with a simulated card: SIM BURST ch amp [ticks],
              SIM DUP 0|1, STEP n (waits until done) */
@@ -14,9 +14,9 @@ static void show( const char *l, void *u ) { (void)u; puts( l ); }
 
 int main( int argc, char **argv )
   {
-  if( argc < 2 ) { fprintf( stderr, "usage: aspctl DIR [COMMAND...]\n" ); return 2; }
+  if( argc < 2 ) { fprintf( stderr, "usage: a5control DIR [COMMAND...]\n" ); return 2; }
   int fd = ctlc_connect( argv[1] );
-  if( fd < 0 ) { fprintf( stderr, "aspctl: %s is not running (no control port)\n", argv[1] ); return 1; }
+  if( fd < 0 ) { fprintf( stderr, "a5control: %s is not running (no control port)\n", argv[1] ); return 1; }
   char line[1000] = "LINE";
   if( argc > 2 ) { line[0] = 0; for( int i = 2; i < argc; i++ ) { if( i > 2 ) strcat( line, " " ); strncat( line, argv[i], sizeof line - strlen( line ) - 2 ); } }
   int rc = ctlc_cmd( fd, line, show, NULL );

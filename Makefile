@@ -27,7 +27,7 @@ SQL_LIBS   = -lsqlite3
 endif
 
 LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o build/sync.o build/settings.o build/aspcore.o
-all: bin/gateprobe bin/aspace bin/aspctl bin/aspsh bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
+all: bin/gateprobe bin/a5pace bin/a5control bin/a5shell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -103,18 +103,18 @@ bin/test_mix: tests/test_mix.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-parentheses $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 
-bin/aspace: src/aspace_main.c src/ctlsrv.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
+bin/a5pace: src/aspace_main.c src/ctlsrv.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-unused-function $(INC) $(SQL_CFLAGS) -o $@ src/aspace_main.c src/ctlsrv.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/gateprobe: tools/gateprobe.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
-bin/aspctl: src/aspctl.c src/ctlclient.c
+bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/aspctl.c src/ctlclient.c
-bin/aspsh: src/aspsh.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
+bin/a5shell: src/a5shell.c src/ctlclient.c
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/aspsh.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5shell.c src/ctlclient.c
 
 bin/test_gate: tests/test_gate.c build/gate.o
 	@mkdir -p bin
@@ -131,6 +131,13 @@ test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job
 	bin/test_core
 gate-diff:
 	tests/gate_diff.sh $(FILES)
+PREFIX ?= $(HOME)
+install: bin/a5pace bin/a5control bin/a5shell
+	@mkdir -p $(PREFIX)/bin
+	install -m 755 bin/a5pace bin/a5control bin/a5shell $(PREFIX)/bin/
+	install -m 755 tools/a5card tools/a5doctor tools/a5play $(PREFIX)/bin/
+	bin/a5pace profiles install
+	@echo "installed a5pace a5control a5shell a5card a5doctor a5play in $(PREFIX)/bin"
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
-.PHONY: all test clean gate-diff
+.PHONY: all test clean gate-diff install

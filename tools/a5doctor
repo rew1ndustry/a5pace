@@ -1,29 +1,30 @@
 #!/bin/bash
-# aspdoctor [-o FILE] [--test] [--anon] [DIR]
+# a5doctor [-o FILE] [--test] [--anon] [DIR]
 # gathers what is needed to work out why aspace is not working on a machine, into one file to send:
 # the system, the build, the sound cards and who holds them, and (given a session DIR) the session's settings,
 # its log, its loop header and a check of its files. NO audio and nothing from outside these places goes in.
 # --test also runs the test suite and includes the output; --anon blanks the user and host names.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+if [ -f "$HERE/src/aspace_main.c" ]; then REPO=1; A5CONTROL="$HERE/bin/a5control"; ASPSTORE="$HERE/bin/aspstore"; else REPO=0; A5CONTROL=$(command -v a5control); ASPSTORE=""; fi
 OUT=""; TEST=0; ANON=0; DIR=""
 while [ $# -gt 0 ]; do
   case $1 in -o) OUT=$2; shift ;; --test) TEST=1 ;; --anon) ANON=1 ;; -h|--help) sed -n 2,7p "$0"; exit 0 ;; *) DIR=$1 ;; esac
   shift
 done
-W=$(mktemp -d); B=$W/aspdoctor-$(date +%y%m%d-%H%M%S); mkdir -p $B
+W=$(mktemp -d); B=$W/a5doctor-$(date +%y%m%d-%H%M%S); mkdir -p $B
 OUT=${OUT:-$PWD/$(basename $B).tar.gz}
 run() { local f=$1; shift; { echo "\$ $*"; "$@" 2>&1; echo "[exit $?]"; } >> "$B/$f.txt"; }
 sh_() { local f=$1; shift; { echo "\$ $*"; bash -c "$*" 2>&1; echo "[exit $?]"; } >> "$B/$f.txt"; }
 
 cat > $B/README.txt <<'R'
-aspdoctor bundle. Everything in here is plain text. Read it before you send it.
+a5doctor bundle. Everything in here is plain text. Read it before you send it.
   system.txt   the machine (kernel, distribution, cpu, memory, limits, your groups)
   build.txt    which aspace this is and how it was built (git revision, compiler, libraries it links)
   audio.txt    sound cards, who has them open, pipewire state, the alsa status files of any running stream
   session.txt  (if a session was named) its descriptor, counts, the loop file's header, a check of its files
   log.txt      the last 300 events of the session log (no audio; take ids and sizes only)
-  latency.tsv  measured round trips against the driver's, from aspcard
+  latency.tsv  measured round trips against the driver's, from a5card
   tests.txt    (with --test) the test suite output
 Not included: any audio, any file outside the aspace directory and the session you named.
 R
@@ -40,8 +41,8 @@ sh_ system 'date; uptime'
 # --- build
 sh_ build "cd '$HERE' && git log --oneline -3 2>/dev/null; git status --short 2>/dev/null | head -20"
 run build cc --version
-sh_ build "ls -la '$HERE/bin' 2>/dev/null"
-sh_ build "ldd '$HERE/bin/aspace' 2>&1 | head -20"
+sh_ build "ls -la '$HERE/bin' 2>/dev/null; command -v a5pace a5control a5shell a5card a5play 2>&1"
+sh_ build "ldd '$HERE/bin/a5pace' 2>&1 | head -20"
 sh_ build "cd '$HERE' && grep -m1 -E 'SQLITE_VERSION ' third_party/sqlite/sqlite3.h 2>/dev/null; ls build/flac/src/libFLAC/libFLAC.a 2>&1"
 sh_ build "cd '$HERE' && ls third_party 2>&1; echo FLACDIR=\${FLACDIR:-(default)}"
 
@@ -61,9 +62,9 @@ if [ -n "$DIR" ]; then
   else
     S=$B/session
     sh_ session "ls -la '$DIR' '$DIR/cache' 2>&1; du -sh '$DIR' 2>&1; df -h '$DIR' 2>&1 | tail -2"
-    [ -x "$HERE/bin/aspstore" ] && run session "$HERE/bin/aspstore" "$DIR" info
+    [ -x "$ASPSTORE" ] && run session "$ASPSTORE" "$DIR" info
     sh_ session "cat '$DIR/ctl' 2>&1"
-    [ -x "$HERE/bin/aspctl" ] && { run session "$HERE/bin/aspctl" "$DIR" STATE; run session "$HERE/bin/aspctl" "$DIR" LINE; run session "$HERE/bin/aspctl" "$DIR" TAKES; }
+    [ -x "$A5CONTROL" ] && { run session "$A5CONTROL" "$DIR" STATE; run session "$A5CONTROL" "$DIR" LINE; run session "$A5CONTROL" "$DIR" TAKES; }
     sh_ session "head -c 128 '$DIR/cache/loop.d64' 2>/dev/null | xxd | head -9"
     if command -v python3 >/dev/null; then
       python3 -I - "$DIR" >> $B/session.txt 2>&1 <<'PY'
@@ -98,7 +99,7 @@ PY
 fi
 
 # --- tests
-if [ $TEST = 1 ]; then ( cd "$HERE" && make test > "$B/tests.txt" 2>&1; echo "[exit $?]" >> "$B/tests.txt" ); fi
+if [ $TEST = 1 ] && [ $REPO = 1 ]; then ( cd "$HERE" && make test > "$B/tests.txt" 2>&1; echo "[exit $?]" >> "$B/tests.txt" ); fi
 
 # --- anonymise
 if [ $ANON = 1 ]; then

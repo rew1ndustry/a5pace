@@ -7,7 +7,7 @@ that exists, or by hand) and the loop shell only picks one from a list.
 <config>/defaults           inherited by every new session
 <config>/profiles/NAME      one named setup (an instrument, a room, a signal chain)
 ```
-`<config>` is `$ASPACE_CONFIG`, else `$XDG_CONFIG_HOME/aspace`, else `~/.config/aspace`. A file is `key value` (or
+`<config>` is `$A5PACE_CONFIG`, else `$XDG_CONFIG_HOME/a5pace`, else `~/.config/a5pace`. A file is `key value` (or
 `key=value`) a line, `#` comments; the first comment line is the description shown in the list.
 
 | key | meaning |
@@ -25,18 +25,18 @@ Precedence, lowest first: built-in, `defaults`, the session's own stored setting
 a revert restores it and a session carries its setup with it.
 
 ```
-aspace profiles                  the list
-aspace profiles show NAME        what is in one
-aspace profiles install          copy the examples that ship in profiles/ (never over yours)
-aspace new DIR NAME SECS --profile violin-line
-aspace run --profile bass-line DIR
-aspctl DIR PROFILES | PROFILE name | SETTINGS      (and p in aspsh)
+a5pace profiles                  the list
+a5pace profiles show NAME        what is in one
+a5pace profiles install          copy the examples that ship in profiles/ (never over yours)
+a5pace new DIR NAME SECS --profile violin-line
+a5pace run --profile bass-line DIR
+a5control DIR PROFILES | PROFILE name | SETTINGS      (and p in a5shell)
 ```
 The sync keys apply at the next start; the gate keys, mono and automix are in force at once.
 
 ## Running on a board with an SD card (stability first)
 - Every tick's processing time is measured: `STATE` has `tick_ms_avg`, `tick_ms_max` and `slow_ticks`; a tick over 100 ms
   (half the tick) is logged as `shell_slow_tick`. This is how to see what the storage does to you.
-- `aspace run --tank /dev/shm/loop.d64` keeps the loop file in RAM: it is only a cache, rebuilt from the store when it
+- `a5pace run --tank /dev/shm/loop.d64` keeps the loop file in RAM: it is only a cache, rebuilt from the store when it
   is missing, so nothing is lost and the SD card is spared the loop's constant rewriting.
-- `ASPCARD_BUFFER_MS` sets the ALSA buffer; do not go under about 600 ms (three ticks) on slow storage.
+- `A5CARD_BUFFER_MS` sets the ALSA buffer; do not go under about 600 ms (three ticks) on slow storage.

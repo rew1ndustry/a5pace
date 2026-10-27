@@ -1,16 +1,16 @@
 #!/bin/bash
-# aspplay FILE.raw|FILE.wav   play a file straight to the sound card (ALSA direct, 48 kHz stereo s32 for .raw).
-# like aspcard it only takes a free card; ASPCARD_RELEASE=1 lets go of pipewire for the time and puts it back.
+# a5play FILE.raw|FILE.wav   play a file straight to the sound card (ALSA direct, 48 kHz stereo s32 for .raw).
+# like a5card it only takes a free card; A5CARD_RELEASE=1 lets go of pipewire for the time and puts it back.
 set -u
-F=${1:?usage: aspplay FILE}
-DEV=${ASPCARD_DEV:-hw:UR22C}; CARD=${DEV#hw:}; CARD=${CARD%%,*}
+F=${1:?usage: a5play FILE}
+DEV=${A5CARD_DEV:-hw:UR22C}; CARD=${DEV#hw:}; CARD=${CARD%%,*}
 CARDNO=$(grep -i "${CARD}" /proc/asound/cards | head -1 | awk '{print $1}')
 holders() { fuser -v /dev/snd/pcmC${CARDNO}D*p 2>&1 | grep -v "COMMAND\|^ *$" | grep -v kernel; }
 PWDEV=""; PWOLD=""
-restore() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && echo "aspplay: pipewire has the card back" >&2; }
+restore() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && echo "a5play: pipewire has the card back" >&2; }
 trap restore EXIT
 busy=$(holders)
-if [ -n "$busy" ] && [ "${ASPCARD_RELEASE:-0}" = 1 ] && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
+if [ -n "$busy" ] && [ "${A5CARD_RELEASE:-0}" = 1 ] && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
   read PWDEV PWOLD PWOFF < <(pw-dump 2>/dev/null | python3 -c "
 import json,sys
 for o in json.load(sys.stdin):
@@ -24,5 +24,5 @@ for o in json.load(sys.stdin):
   for i in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(holders)" ] && break; sleep 0.3; done
   busy=$(holders)
 fi
-if [ -n "$busy" ]; then echo "aspplay: the card is in use: $busy" >&2; exit 1; fi
+if [ -n "$busy" ]; then echo "a5play: the card is in use: $busy" >&2; exit 1; fi
 case $F in *.wav) aplay -q -D "$DEV" "$F" ;; *) aplay -q -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw "$F" ;; esac

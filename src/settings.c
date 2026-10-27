@@ -7,10 +7,10 @@
 
 int asp_config_dir( char *buf, size_t n )
   {
-  const char *e = getenv( "ASPACE_CONFIG" ), *x = getenv( "XDG_CONFIG_HOME" ), *h = getenv( "HOME" );
+  const char *e = getenv( "A5PACE_CONFIG" ), *x = getenv( "XDG_CONFIG_HOME" ), *h = getenv( "HOME" );
   if( e && *e ) snprintf( buf, n, "%s", e );
-  else if( x && *x ) snprintf( buf, n, "%s/aspace", x );
-  else if( h && *h ) snprintf( buf, n, "%s/.config/aspace", h );
+  else if( x && *x ) snprintf( buf, n, "%s/a5pace", x );
+  else if( h && *h ) snprintf( buf, n, "%s/.config/a5pace", h );
   else return -1;
   return 0;
   }
