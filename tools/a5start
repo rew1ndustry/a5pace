@@ -1,0 +1,45 @@
+#!/bin/bash
+# a5start DIR [--wait]: make sure the space DIR is running; start it if it is not. a5shell, a5control --start, the gui and
+# the backend all call this, so how a space is started is decided in one place.
+#
+# how, in order: the file DIR/start (lines "edge card|sim", "args ...", "release 1"), else the line "edge ..." in
+# ~/.config/a5pace/defaults, else the sound card if there is one (a5card), else a simulated card. A5START_EDGE=sim|card
+# overrides all of them. the space runs detached, its words go to DIR/run.log; the card is only taken if it is free.
+set -u
+DIR=${1:?usage: a5start DIR}; shift
+CFG=${A5PACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/a5pace}
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+if [ -f "$HERE/src/aspace_main.c" ]; then A5PACE="$HERE/bin/a5pace"; A5CONTROL="$HERE/bin/a5control"; A5CARD="$HERE/tools/a5card"
+else A5PACE=$(command -v a5pace); A5CONTROL=$(command -v a5control); A5CARD=$(command -v a5card); fi
+[ -d "$DIR" ] || { echo "a5start: $DIR is not a space (a5create makes one)" >&2; exit 1; }
+
+running() { [ -s "$DIR/ctl" ] && "$A5CONTROL" "$DIR" LINE > /dev/null 2>&1; }
+if running; then echo "a5start: $DIR is already running"; exit 0; fi
+rm -f "$DIR/ctl"                                                     # a leftover from a crash
+
+get() { sed -n "s/^$2[[:space:]=]*//p" "$1" 2>/dev/null | head -1; }
+edge=${A5START_EDGE:-}; args=""; release=""
+[ -z "$edge" ] && edge=$(get "$DIR/start" edge)
+args=$(get "$DIR/start" args); release=$(get "$DIR/start" release)
+[ -z "$edge" ] && edge=$(get "$CFG/defaults" edge)
+if [ -z "$edge" ]; then
+  if [ -x "$A5CARD" ] && grep -qi "UR22C\|USB-Audio" /proc/asound/cards 2>/dev/null; then edge=card; else edge=sim; fi
+fi
+LOG=$DIR/run.log
+case $edge in
+  card) [ -x "$A5CARD" ] || { echo "a5start: no a5card to run on the sound card" >&2; exit 1; }
+        [ -n "$release" ] && export A5CARD_RELEASE=$release
+        echo "a5start: starting $DIR on the sound card"
+        setsid nohup "$A5CARD" "$DIR" $args > "$LOG" 2>&1 < /dev/null & ;;
+  sim)  echo "a5start: starting $DIR on a simulated card (no sound)"
+        setsid nohup "$A5PACE" run -q -S ${A5START_SIM:-7001} $args "$DIR" > "$LOG" 2>&1 < /dev/null & ;;
+  *)    echo "a5start: edge \"$edge\" is not card or sim" >&2; exit 1 ;;
+esac
+pid=$!
+n=0
+while [ $n -lt 80 ]; do                                              # up to 40 s for it to answer
+  running && { echo "a5start: running"; exit 0; }
+  kill -0 $pid 2>/dev/null || { sleep 0.3; running && { echo "a5start: running"; exit 0; }; echo "a5start: it stopped at once:" >&2; tail -5 "$LOG" >&2; exit 1; }
+  sleep 0.5; n=$((n+1))
+done
+echo "a5start: it did not answer in 40 s; see $LOG" >&2; exit 1

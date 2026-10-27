@@ -109,6 +109,28 @@ chk "and the history says so" "$c3 HISTORY | head -1 | grep -q 'kept (not in the
 $c3 AUTOMIX LOOP > /dev/null
 chk "back to the plain loop" "$c3 LINE | grep -q 'automix loop'"
 $c3 QUIT > /dev/null; wait $pid || true
+# the tape: the input as it came, in flac; the loop as it went out only if asked
+d4=$t/s4; $here/bin/a5pace new $d4 tape 6.25 > /dev/null
+$here/bin/a5pace run -q -S 7001 --fast --tape $d4 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $d4/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+c4="$here/bin/a5control $d4"
+chk "only the input is taped by default" "$c4 TAPE | grep -q 'input tape: .*/tape/input-' && $c4 TAPE | grep -q 'loop tape: off'"
+wait_for "$c4 STATE | grep -q '\"gate_learnt\":1'"
+$c4 SIM BURST 1 0.1 3 > /dev/null
+sleep 1
+$c4 TAPE LOOP ON $t/loop.flac > /dev/null
+sleep 1
+chk "the loop can be taped for a while" "$c4 TAPE | grep -q 'loop tape: $t/loop.flac'"
+$c4 TAPE LOOP OFF > /dev/null
+chk "and stopped" "$c4 TAPE | grep -q 'loop tape: off'"
+tk=$($c4 STATE | sed 's/.*"tick":\([0-9]*\).*/\1/')
+$c4 QUIT > /dev/null; wait $pid || true
+in=$(ls $d4/tape/input-*.flac)
+chk "the input tape decodes with its checksum" "$here/bin/aspflac dec $in $t/in.d32"
+chk "it is every tick of the run" "[ \$(( \$(stat -c %s $t/in.d32) / 8 )) -ge \$(( tk * 9600 )) ] && [ \$(( \$(stat -c %s $t/in.d32) / 8 % 9600 )) = 0 ]"
+chk "the burst is in it" "python3 -I -c \"import numpy as n;a=n.fromfile('$t/in.d32','<i4');import sys;sys.exit(0 if abs(a).max()>1e8 else 1)\""
+chk "the stopped loop tape is a valid flac, shorter than the run" "$here/bin/aspflac dec $t/loop.flac $t/loop.d32 && [ \$(stat -c %s $t/loop.d32) -lt \$(stat -c %s $t/in.d32) ]"
 rm -rf $t
 [ $fail = 0 ] && echo "all runner tests passed"
 exit $fail

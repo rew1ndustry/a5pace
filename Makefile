@@ -142,6 +142,7 @@ test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job
 	tests/test_runner.sh
 	tests/test_cal.sh
 	tests/test_click.sh
+	tests/test_start.sh
 	bin/test_store
 	bin/test_tank
 	bin/test_sync
@@ -152,11 +153,11 @@ PREFIX ?= $(HOME)
 install: bin/a5pace bin/a5control bin/a5shell bin/a5tune bin/a5create bin/a5click bin/aspflac
 	@mkdir -p $(PREFIX)/bin
 	install -m 755 bin/a5pace bin/a5control bin/a5shell $(PREFIX)/bin/
-	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal $(PREFIX)/bin/
+	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
 	install -m 755 bin/a5tune bin/a5create bin/a5click $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
 	bin/a5pace profiles install
-	@echo "installed a5pace a5control a5shell a5card a5doctor a5play a5cal a5tune a5create a5click a5flac in $(PREFIX)/bin"
+	@echo "installed a5pace a5control a5shell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5flac in $(PREFIX)/bin"
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
 .PHONY: all test clean gate-diff install

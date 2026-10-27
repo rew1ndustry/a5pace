@@ -11,6 +11,7 @@
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
+            --tape  keep the input as it came (flac, in DIR/tape/); --tape-loop also the loop as it went out (heavy)
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
    the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
 #define _POSIX_C_SOURCE 200809L
@@ -27,6 +28,7 @@
 #include "ctlsrv.h"
 #include "plat.h"
 #include "settings.h"
+#include "flacio.h"
 #include "simedge.h"
 
 static volatile sig_atomic_t quit;
@@ -36,6 +38,8 @@ typedef struct
   {
   AspStore *store; AspTank *tank; AspCore *core; CtlSrv *ctl;
   Sim sim; int simmode, step, step_cl; int64_t steps; int run;
+  char dir[1100];
+  AspFlacEnc *tin, *tout; char tin_path[1100], tout_path[1100];      /* the tape: the input as it came; the loop as it went out */
   double tick_ms_max, tick_ms_sum; int64_t ticks_timed, slow_ticks;   /* how long the core takes per tick: the cubieboard question */
   } Run;
 
@@ -50,6 +54,37 @@ static void addflag( char *text, const char *k, const char *v )
   {
   char one[300]; snprintf( one, sizeof one, "%s=%s", k, v );
   asp_settings_merge( text, 600, one );
+  }
+
+/* --- the tape: for finding out what happened. the input as the card gave it (flac, stereo: it keeps the zero bits the
+   converter leaves out, so it is small), and optionally the loop as it went out (heavy, and does not compress). sample n
+   of a tape is tick n / 9600 of the run: the log's ticks say what happened where. both are off unless asked for. */
+static void tape_open( Run *r, int loop, const char *path )
+  {
+  AspFlacEnc **e = loop ? &r->tout : &r->tin; char *p = loop ? r->tout_path : r->tin_path; char b[1300], a[1400];
+  AspCoreStatus st; asp_core_status( r->core, &st );
+  if( *e ) return;
+  if( path && *path ) snprintf( p, 1100, "%s", path );
+  else { time_t t = time( NULL ); struct tm tmv; char ts[40]; localtime_r( &t, &tmv ); strftime( ts, sizeof ts, "%y%m%d-%H%M%S", &tmv );
+         snprintf( b, sizeof b, "%s/tape", r->dir ); mkdir( b, 0777 ); snprintf( p, 1100, "%s/tape/%s-%s.flac", r->dir, loop ? "loop" : "input", ts ); }
+  *e = asp_flac_enc_open( p, 2, 48000 );
+  if( ! *e ) { snprintf( a, sizeof a, "{\"what\":\"tape not opened\",\"path\":\"%s\"}", p ); asp_log( r->store, "aspace", "error", a, st.tick ); return; }
+  snprintf( a, sizeof a, "{\"kind\":\"%s\",\"path\":\"%s\",\"tick0\":%lld}", loop ? "loop" : "input", p, (long long)st.tick );
+  asp_log( r->store, "aspace", "tape_start", a, st.tick );
+  }
+static void tape_close( Run *r, int loop )
+  {
+  AspFlacEnc **e = loop ? &r->tout : &r->tin; char a[1400]; AspCoreStatus st; asp_core_status( r->core, &st );
+  if( ! *e ) return;
+  asp_flac_enc_close( *e ); *e = NULL;
+  snprintf( a, sizeof a, "{\"kind\":\"%s\",\"path\":\"%s\"}", loop ? "loop" : "input", loop ? r->tout_path : r->tin_path );
+  asp_log( r->store, "aspace", "tape_stop", a, st.tick );
+  }
+static void tape_tap( void *u, const int32_t *in, const int32_t *out )
+  {
+  Run *r = u;
+  if( r->tin ) asp_flac_enc_write( r->tin, in, ASP_TICK );
+  if( r->tout ) asp_flac_enc_write( r->tout, out, ASP_TICK );
   }
 
 typedef struct { char settings[1100], profile[64]; } Stored;
@@ -304,6 +339,15 @@ static void handle( void *u, int cl, const char *line )
     for( int i = 0; h[i]; i++ ) ctl_say( c, cl, "%s", h[i] );
     ctl_ok( c, cl );
     }
+  else if( ! strcmp( w[0], "TAPE" ) )                  /* TAPE ON [path] | OFF | LOOP ON [path] | LOOP OFF | (nothing: what is running) */
+    {
+    int k = 1, loop = 0;
+    if( n > k && ! strcasecmp( w[k], "LOOP" ) ) { loop = 1; k++; }
+    if( n > k && ! strcasecmp( w[k], "ON" ) ) { tape_open( r, loop, n > k + 1 ? w[k+1] : NULL ); }
+    else if( n > k && ! strcasecmp( w[k], "OFF" ) ) { if( n == 2 && ! loop ) tape_close( r, 1 ); tape_close( r, loop ); }
+    ctl_say( c, cl, "input tape: %s", r->tin ? r->tin_path : "off" ); ctl_say( c, cl, "loop tape: %s", r->tout ? r->tout_path : "off" );
+    ctl_ok( c, cl );
+    }
   else if( ! strcmp( w[0], "WIPE" ) )
     { int all = n > 1 && ! strcasecmp( w[1], "ALL" ); int k = asp_core_wipe( r->core, all ); ctl_say( c, cl, "%d take(s) taken out of the loop", k ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "HISTORY" ) ) { history( r, cl, n > 1 ? atoi( w[1] ) : 30 ); ctl_ok( c, cl ); }
@@ -390,7 +434,7 @@ static int cmd_run( int argc, char **argv )
   Run r; memset( &r, 0, sizeof r ); r.step_cl = -1;
   AspCoreCfg cfg; asp_core_defaults( &cfg );
   int port = 0, fast = 0, quiet = 0; int64_t lat = 0;
-  const char *dir = NULL, *profile = NULL, *tankpath = NULL;
+  const char *dir = NULL, *profile = NULL, *tankpath = NULL; int tape_in = 0, tape_loop = 0;
   char flagtext[600] = "", settings[1100] = "", stored[1100] = "", pname[64] = "";
   for( int i = 2; i < argc; i++ )
     {
@@ -399,6 +443,8 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--step" ) ) r.step = 1;
     else if( ! strcmp( argv[i], "-C" ) && i + 1 < argc ) port = atoi( argv[++i] );
     else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
+    else if( ! strcmp( argv[i], "--tape" ) ) tape_in = 1;                                   /* the input as it came, flac, in DIR/tape/ */
+    else if( ! strcmp( argv[i], "--tape-loop" ) ) tape_loop = 1;                            /* and the loop as it went out: heavy, does not compress */
     else if( ! strcmp( argv[i], "--nofeed" ) ) cfg.feed = 0;       /* takes are stored but not put into the loop (alignment tests) */
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
     else if( ! strcmp( argv[i], "--tank" ) && i + 1 < argc ) tankpath = argv[++i];                   /* where the loop file lives (it is a cache: /dev/shm on a board with an sd card) */
@@ -456,7 +502,10 @@ static int cmd_run( int argc, char **argv )
   if( ! r.ctl ) { fprintf( stderr, "aspace: no control port\n" ); return 1; }
   snprintf( ctlp, sizeof ctlp, "%s/ctl", dir );
   { FILE *f = fopen( ctlp, "w" ); if( f ) { fprintf( f, "%d %d\n", chosen, (int)getpid() ); fclose( f ); } }
-  if( r.simmode ) sim_init( &r.sim, r.core, lat, 4 );
+  snprintf( r.dir, sizeof r.dir, "%s", dir );
+  if( r.simmode ) { sim_init( &r.sim, r.core, lat, 4 ); r.sim.tap = tape_tap; r.sim.tapu = &r; }
+  if( tape_in ) tape_open( &r, 0, NULL );
+  if( tape_loop ) tape_open( &r, 1, NULL );
   signal( SIGINT, onsig ); signal( SIGTERM, onsig ); signal( SIGPIPE, SIG_IGN );
   if( ! quiet ) fprintf( stderr, "aspace: %s, control port %d%s\n", dir, chosen, r.simmode ? ", simulated card" : "" );
 
@@ -484,11 +533,13 @@ static int cmd_run( int argc, char **argv )
       {
       if( read_tick( in ) ) break;                        /* the edge closed */
       { struct timespec a, b; clock_gettime( CLOCK_MONOTONIC, &a ); asp_core_tick( r.core, in, out ); clock_gettime( CLOCK_MONOTONIC, &b ); timed( &r, ( b.tv_sec - a.tv_sec ) * 1e3 + ( b.tv_nsec - a.tv_nsec ) / 1e6 ); }
+      tape_tap( &r, in, out );
       if( write_tick( out ) ) break;
       }
     if( ctl_watchers( r.ctl ) || ( r.sim.tickn % 25 ) == 0 )
       last = asp_log_since( r.store, last, ev_cb, &r );
     }
+  tape_close( &r, 0 ); tape_close( &r, 1 );
   if( ! quiet ) fprintf( stderr, "aspace: closing\n" );
   asp_log_since( r.store, last, ev_cb, &r );
   asp_core_close( r.core );

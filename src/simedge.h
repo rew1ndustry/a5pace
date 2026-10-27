@@ -13,6 +13,7 @@ typedef struct
   {
   AspCore *core; int64_t tickn, lat, cap; int32_t *outs; unsigned rs; double noise; int dup;   /* outs: ring of cap frames */
   SimBurst b[16]; int32_t tone[SIM_BLEN];
+  void (*tap)( void *u, const int32_t *in, const int32_t *out ); void *tapu;   /* told of every tick: the input that came and the output that went */
   } Sim;
 
 static double sim_rnd( Sim *s ) { s->rs = s->rs * 1664525u + 1013904223u; return ( (int)( s->rs >> 8 ) & 0xffff ) / 32768.0 - 1; }
@@ -55,6 +56,7 @@ static void sim_step( Sim *s )
       }
     }
   asp_core_tick( s->core, in, out );
+  if( s->tap ) s->tap( s->tapu, in, out );
   memcpy( s->outs + 2 * ( ( s->tickn * ASP_TICK ) % s->cap ), out, sizeof out );
   s->tickn++;
   }

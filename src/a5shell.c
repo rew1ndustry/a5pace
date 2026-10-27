@@ -1,5 +1,5 @@
 /* a5shell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
-   press ? for all of them.
+   press ? for all of them. if the space is not running it is started first (a5start; --no-start to not).
      space  safe / live     h  history: places to return to     w  wipe the loop     a  choose the mode
      r  sync again   l  relearn the floor   g/G  gate   p  profile   t  takes   ?  help   q  leave   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
@@ -92,8 +92,18 @@ static void help( void )
 
 int main( int argc, char **argv )
   {
-  if( argc != 2 ) { fprintf( stderr, "usage: a5shell DIR\n" ); return 2; }
-  int cmd = ctlc_connect( argv[1] ), ev = ctlc_connect( argv[1] );
+  int nostart = argc == 3 && ! strcmp( argv[2], "--no-start" );
+  if( argc != 2 && ! nostart ) { fprintf( stderr, "usage: a5shell DIR [--no-start]\n" ); return 2; }
+  int cmd = ctlc_connect( argv[1] ), ev;
+  if( cmd < 0 && ! nostart )                                      /* not running: start it (how is a5start's business) */
+    {
+    char line[1300];
+    fprintf( stderr, "a5shell: %s is not running; starting it\n", argv[1] );
+    snprintf( line, sizeof line, "a5start '%s'", argv[1] );
+    if( system( line ) ) { fprintf( stderr, "a5shell: could not start it\n" ); return 1; }
+    cmd = ctlc_connect( argv[1] );
+    }
+  ev = cmd >= 0 ? ctlc_connect( argv[1] ) : -1;
   if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
   { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }

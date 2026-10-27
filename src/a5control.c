@@ -14,8 +14,15 @@ static void show( const char *l, void *u ) { (void)u; puts( l ); }
 
 int main( int argc, char **argv )
   {
-  if( argc < 2 ) { fprintf( stderr, "usage: a5control DIR [COMMAND...]\n" ); return 2; }
+  int start = argc > 1 && ! strcmp( argv[1], "--start" );          /* a5control --start DIR CMD...: start the space first if it is not running */
+  if( start ) { argv++; argc--; }
+  if( argc < 2 ) { fprintf( stderr, "usage: a5control [--start] DIR [COMMAND...]\n" ); return 2; }
   int fd = ctlc_connect( argv[1] );
+  if( fd < 0 && start )
+    {
+    char l[1300]; snprintf( l, sizeof l, "a5start '%s' >&2", argv[1] );
+    if( system( l ) == 0 ) fd = ctlc_connect( argv[1] );
+    }
   if( fd < 0 ) { fprintf( stderr, "a5control: %s is not running (no control port)\n", argv[1] ); return 1; }
   char line[1000] = "LINE";
   if( argc > 2 ) { line[0] = 0; for( int i = 2; i < argc; i++ ) { if( i > 2 ) strcat( line, " " ); strncat( line, argv[i], sizeof line - strlen( line ) - 2 ); } }

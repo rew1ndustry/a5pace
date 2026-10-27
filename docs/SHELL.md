@@ -40,6 +40,19 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 A loop that was not closed cleanly (dirty flag in its header), is the wrong length, or is an asp4 file is
 rebuilt from the store on the next start.
 
+## Starting a space, and the tape
+`a5start DIR` makes sure the space is running and starts it if not; `a5shell DIR` and `a5control --start DIR ...` call it
+(and so will the gui and the backend), so how a space is started is decided in one place: the file `DIR/start` (lines
+`edge card|sim`, `args ...` extra options for a5pace, `release 1` to let go of pipewire for the card), else an `edge` line
+in `~/.config/a5pace/defaults`, else the sound card if there is one, else a simulated card. `A5START_EDGE=sim|card`
+overrides. It runs detached; its words go to `DIR/run.log`; `a5shell DIR --no-start` does not start it.
+
+**Tape.** `a5pace run --tape` keeps the input exactly as the card gave it, as stereo FLAC in `DIR/tape/input-DATE.flac`
+(zero bits the converter leaves out compress away, so it is small). Sample n of the tape is tick n/9600 of the run, so the
+log's ticks say what happened where. `--tape-loop` also keeps the loop as it went out (`loop-DATE.flac`): useful for
+diagnosis, but heavy, and a sum of takes does not compress. `a5control DIR TAPE ON [path] | OFF` and `TAPE LOOP ON [path] | OFF`
+start and stop either while running; both are off unless asked for. On a board with an SD card, keep them off for playing.
+
 ## Modes (one at a time)
 - **loop**: the usual. Every take goes into the loop as it is recorded. This is the default.
 - **keep**: takes are recorded and stored, but not put into the loop (their state is `off`, the history marks them "kept").
