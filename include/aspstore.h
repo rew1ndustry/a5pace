@@ -33,6 +33,8 @@ int64_t asp_log( AspStore *s, const char *actor, const char *type, const char *a
 int64_t asp_log_last( AspStore *s );
 typedef void (*AspLogCb)( int64_t seq, int64_t tick, const char *actor, const char *type, const char *args_json, void *user );
 int64_t asp_log_since( AspStore *s, int64_t after, AspLogCb cb, void *user );   /* calls cb for each newer event, returns the last seq */
+typedef void (*AspLogCbW)( int64_t seq, int64_t tick, double wall, const char *actor, const char *type, const char *args_json, void *user );
+int64_t asp_log_since_w( AspStore *s, int64_t after, AspLogCbW cb, void *user );   /* the same, with the wall clock time of each event */
 const char *asp_descriptor( AspStore *s );                                       /* the session's descriptor json (static buffer) */
 
 /* takes. add encodes pcm to flac (.part, fsync, rename) then commits the row and its

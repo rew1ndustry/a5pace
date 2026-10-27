@@ -19,7 +19,7 @@ typedef struct
   {
   int64_t id, iter, off, len, peak;
   AspPlace now, base;             /* where it is (decided); where it was put when recorded */
-  int in, mono, src, overlaps;
+  int in, mono, src, overlaps, gen;
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
@@ -133,7 +133,7 @@ static void load_cb( int64_t id, const char *json, void *u )
   LoopTake *t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
   t->now = t->base = (AspPlace){ st.l, st.r, st.flip };
-  t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->peak = st.peak;
+  t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
   if( t->in && t->peak < 0 && asp_take_peak( c->store, id, &t->peak ) ) t->peak = 0;
   }
 
@@ -274,6 +274,20 @@ void asp_core_settings( AspCore *c, const char *profile, const char *text )
   }
 const char *asp_core_profile( const AspCore *c ) { return c->profile; }
 const char *asp_core_settings_text( const AspCore *c ) { return c->settings; }
+
+int asp_core_wipe( AspCore *c, int all )
+  {
+  int n = 0;
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    LoopTake *t = c->lt + i;
+    if( ! t->in || ( t->gen && ! all ) ) continue;
+    change( c, t, t->now, 0, "wipe" );
+    n++;
+    }
+  logf_( c, "wipe", "{\"takes\":%d,\"all\":%d}", n, all );
+  return n;
+  }
 
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {

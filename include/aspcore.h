@@ -68,6 +68,9 @@ int64_t  asp_core_revert( AspCore *c, int64_t seq );
 void     asp_core_settings( AspCore *c, const char *profile, const char *text );
 const char *asp_core_profile( const AspCore *c );
 const char *asp_core_settings_text( const AspCore *c );
+/* take the recorded takes out of the loop (they stay in the store, and a revert can bring them back); all also takes out
+   generated ones (the clicks, an imported file). returns how many */
+int      asp_core_wipe( AspCore *c, int all );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lowcut < 0 keeps it; strict < 0 keeps it */
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */

@@ -27,6 +27,9 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
 | `AUTOMIX OFF`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
 | `TAKES` | every take with its state |
+| `WIPE [ALL]` | take the recorded takes out of the loop (`ALL`: the generated ones too, clicks and an imported file); they stay in the store |
+| `HISTORY [n]` | the moments the loop changed, newest first: each a place to return to, with how many takes were in the loop after it |
+| `REVERT TAKE iter off` | go back to how the loop was just after the take with that iteration and offset (needs SAFE) |
 | `REVERT seq` | go back to a log point (only while SAFE); the loop is rebuilt from the store |
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
 | `EVENT edge_x {json}` | an edge or shell tells the log something (a latency report) |
@@ -53,6 +56,12 @@ the move is done. A take that fills the loop waits one pass and goes anyway (tha
 The loop is the sum of the takes in 64 bits. On the way out it is brought down by a right shift so the peak fits 32
 bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
 the change is a ramp and not a step.
+
+### The shell's keys (`a5shell DIR`)
+`space` safe/live, `r` sync again, `l` relearn the gate floor, `g`/`G` gate more/less sensitive, `a` next automix (off, overlap, swap),
+`+`/`-` the automix number, `e` swap each take, `t` list takes, `p` choose a profile, `w` wipe the loop (asks), `h` history: the
+places to return to, pick a row or type an iteration and offset such as `7.3`; it goes safe first and asks you to press space
+when you want to go live, `q` leave, `Q` stop aspace. The status line shows the automix as `overlap 4` or `swap each`.
 
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is

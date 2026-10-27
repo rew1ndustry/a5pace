@@ -3,6 +3,7 @@
      g / G  gate more / less sensitive (3 dB)        a  next automix (off, overlap, swap)
      + / -  automix amount up / down                 e  swap: also within an iteration
      u      revert (asks for a log point; safe only) t  list takes
+     w      wipe the recorded takes out of the loop (asks)    h  the history: places to return to, and restore one
      p      choose a gate profile from the list    q  leave this shell   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
@@ -26,7 +27,7 @@ static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J a5shell   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [u] revert  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J a5shell   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [p] profile  [w] wipe  [h] history  [q] quit  [Q] stop\n\n" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -45,6 +46,8 @@ int main( int argc, char **argv )
     {
     ctlc_cmd( cmd, "LINE", keep, NULL );
     live = strstr( status, "SAFE" ) == NULL;
+    { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
+      if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 1; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 2; each = strncmp( a + 4, " each", 5 ) == 0; } else amode = 0; } }
     draw();
     struct pollfd p[2] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 } };
     if( poll( p, 2, 250 ) <= 0 ) continue;
@@ -95,6 +98,42 @@ int main( int argc, char **argv )
           printf( "\n number to choose, anything else to cancel: " ); fflush( stdout );
           { char d; int w = 0; while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
             if( d >= '1' && d < '1' + np ) snprintf( c, sizeof c, "PROFILE %s", names[d - '1'] ); }
+          break;
+          }
+        case 'w':
+          {
+          char d = 0; int w = 0;
+          printf( "\033[H\033[J wipe the loop?  y = the recorded takes   c = everything, clicks too   anything else cancels  (a revert can bring them back)" ); fflush( stdout );
+          while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
+          if( d == 'y' ) strcpy( c, "WIPE" ); else if( d == 'c' ) strcpy( c, "WIPE ALL" );
+          break;
+          }
+        case 'h':
+          {
+          /* the places to return to, newest first. choose a row, or an iteration and offset (7.3), and the loop goes back to
+             how it was just after that take; it needs safe, so it goes safe first and asks before going live again */
+          char rows[40][300]; long long seqs[40]; int nr = 0, r;
+          printf( "\033[H\033[J history (newest first), the loop as it was after each:\n\n" );
+          { char b[400]; snprintf( b, sizeof b, "HISTORY 30\n" ); if( send( cmd, b, strlen( b ), 0 ) > 0 )
+              while( ( r = ctlc_readline( cmd, b, sizeof b, 3000 ) ) > 0 && strcmp( b, "OK" ) && strncmp( b, "ERR", 3 ) )
+                if( nr < 40 ) { char *t1 = strchr( b, '\t' ); if( ! t1 ) continue; seqs[nr] = atoll( t1 + 1 ); char *t2 = strchr( t1 + 1, '\t' ); snprintf( rows[nr], 300, "%.*s  %s", (int)( t1 - b ), b, t2 ? t2 + 1 : "" ); printf( "  %s\n", rows[nr] ); nr++; } }
+          if( ! nr ) printf( "  (nothing yet)\n" );
+          char l[60] = "";
+          restore(); printf( "\n go back to: a row number, or iteration.offset such as 7.3 (enter cancels): " ); fflush( stdout );
+          if( fgets( l, sizeof l, stdin ) && nr )
+            {
+            int a = 0, o = 0;
+            if( strchr( l, '.' ) && sscanf( l, "%d.%d", &a, &o ) == 2 ) snprintf( c, sizeof c, "REVERT TAKE %d %d", a, o );
+            else if( atoi( l ) >= 1 && atoi( l ) <= nr ) snprintf( c, sizeof c, "REVERT %lld", seqs[atoi( l ) - 1] );
+            }
+          tcsetattr( 0, TCSANOW, &raw );
+          if( c[0] )
+            {
+            if( live ) ctlc_cmd( cmd, "SAFE", quiet, NULL );
+            ctlc_cmd( cmd, c, quiet, NULL );
+            snprintf( events[nev++ % 8], 220, "went back (%s). safe is on: press space to go live", c );
+            c[0] = 0;
+            }
           break;
           }
         case 'Q': ctlc_cmd( cmd, "QUIT", NULL, NULL ); return 0;

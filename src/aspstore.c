@@ -359,6 +359,21 @@ int64_t asp_revert( AspStore *s, int64_t to_seq, const char *actor )
   return asp_log( s, actor, "revert", args, -1 );
   }
 
+int64_t asp_log_since_w( AspStore *s, int64_t after, AspLogCbW cb, void *user )
+  {
+  sqlite3_stmt *q;
+  int64_t last = after;
+  if( sqlite3_prepare_v2( s->db, "select seq,coalesce(tick,-1),wall,actor,type,args_json from log where seq>? order by seq", -1, &q, NULL ) ) return after;
+  sqlite3_bind_int64( q, 1, after );
+  while( sqlite3_step( q ) == SQLITE_ROW )
+    {
+    last = sqlite3_column_int64( q, 0 );
+    cb( last, sqlite3_column_int64( q, 1 ), sqlite3_column_double( q, 2 ), (const char *)sqlite3_column_text( q, 3 ), (const char *)sqlite3_column_text( q, 4 ), (const char *)sqlite3_column_text( q, 5 ), user );
+    }
+  sqlite3_finalize( q );
+  return last;
+  }
+
 const char *asp_descriptor( AspStore *s )
   {
   static char buf[2048];

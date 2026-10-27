@@ -73,6 +73,28 @@ pid=$!
 n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "a profile given at run is used and remembered" "$c2 STATE | grep -q '\"profile\":\"knocks-and-clicks\"' && $c2 STATE | grep -q '\"lowcut\":30'"
 $c2 QUIT > /dev/null; wait $pid || true
+# wipe, history, and going back to a take by iteration and offset
+d3=$t/s3; $here/bin/a5pace new $d3 hist 6.25 > /dev/null
+$here/bin/a5pace run -q -S 7001 --fast $d3 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $d3/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+c3="$here/bin/a5control $d3"
+wait_for "$c3 STATE | grep -q '\"gate_learnt\":1'"
+$c3 SIM BURST 2 0.1 5 > /dev/null
+wait_for "$c3 STATE | grep -q '\"loop_takes\":1'"
+sleep 2
+$c3 SIM BURST 2 0.1 5 > /dev/null
+wait_for "$c3 STATE | grep -q '\"loop_takes\":2'"
+wait_for "$c3 STATE | grep -q '\"take_open\":0'"
+chk "history lists the takes, newest first, with how many were in the loop" "$c3 HISTORY | head -1 | grep -q 'take, iteration' && $c3 HISTORY | head -1 | grep -q '2 in the loop' && $c3 HISTORY | sed -n 2p | grep -q '1 in the loop'"
+first=$($c3 TAKES | head -1 | sed 's/.*iter \([0-9]*\) off \([0-9]*\) .*/\1 \2/')
+chk "wipe takes the recorded takes out" "$c3 WIPE | grep -q '2 take' && $c3 STATE | grep -q '\"loop_takes\":0'"
+chk "history records it" "$c3 HISTORY | grep -q 'wipe: 2 take'"
+$c3 SAFE > /dev/null
+chk "going back to a take by iteration and offset" "$c3 REVERT TAKE $first > /dev/null && $c3 STATE | grep -q '\"loop_takes\":1'"
+chk "an unknown iteration is refused" "! $c3 REVERT TAKE 99 99 > /dev/null"
+chk "the line shows the automix amount" "$c3 AUTOMIX OVERLAP 3 > /dev/null && $c3 LINE | grep -q 'automix overlap 3'"
+$c3 QUIT > /dev/null; wait $pid || true
 rm -rf $t
 [ $fail = 0 ] && echo "all runner tests passed"
 exit $fail
