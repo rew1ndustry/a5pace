@@ -8,6 +8,7 @@
             -C PORT control port (0 any free; default 0)  --safe  start with recording off
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
+            --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
    the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
 #define _POSIX_C_SOURCE 200809L
@@ -107,10 +108,10 @@ static void handle( void *u, int cl, const char *line )
     {
     ctl_say( c, cl, "{\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
-      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
+      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
       st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
-      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
+      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
@@ -129,6 +130,8 @@ static void handle( void *u, int cl, const char *line )
   else if( ! strcmp( w[0], "RELEARN" ) ) { asp_core_gate_relearn( r->core ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "GATE" ) && n > 1 )
     { double v = atof( w[1] ); if( w[1][0] == '+' || w[1][0] == '-' ) v += st.gate_db; asp_core_gate( r->core, v, 0 ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "LOWCUT" ) && n > 1 ) { asp_core_gate_options( r->core, atof( w[1] ), -1 ); ctl_ok( c, cl ); }   /* nothing below this opens the gate */
+  else if( ! strcmp( w[0], "STRICT" ) && n > 1 ) { asp_core_gate_options( r->core, -1, atoi( w[1] ) ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "RING" ) && n > 1 ) { asp_core_gate( r->core, 0, atof( w[1] ) ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "AUTOMIX" ) && n > 1 )
     {
@@ -223,6 +226,8 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) cfg.sync.target_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "-g" ) && i + 1 < argc ) cfg.gate_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "-r" ) && i + 1 < argc ) cfg.ring_db = atof( argv[++i] );
+    else if( ! strcmp( argv[i], "--lowcut" ) && i + 1 < argc ) cfg.lowcut = atof( argv[++i] );    /* the instrument's lowest note, Hz */
+    else if( ! strcmp( argv[i], "--strict" ) ) cfg.strict = 1;
     else if( ! strcmp( argv[i], "--automix" ) && i + 1 < argc )
       {
       const char *s = argv[++i];

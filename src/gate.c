@@ -60,6 +60,7 @@ typedef struct
   double heard; int64_t count;		/* power while learning, for the log */
   int    frames, hang;
   double dc[2], rest;			/* SWITCH: low pass state, rest */
+  int    why;				/* which rules fired since asked: 1 click, 2 ring, 4 two bands, 8 a band twice */
   int    mute, calm, fade, deaf;	/* SWITCH: samples */
   } GateChan;
 
@@ -69,6 +70,10 @@ typedef struct Gate
   int64_t seen;				/* samples fed since reset */
   char ready, learnt;
   double gate, ring;			/* dB: the margin; a block that rings, over the floor */
+  double lowcut;			/* Hz: nothing below the instrument's lowest note may open the gate */
+  double lob[4][5];			/* the high pass for that, per gate */
+  int    firstband;			/* the first band that may count */
+  int    strict;			/* 1: one band alone, twice running, no longer opens the gate */
   void (*say)( void *, const char * );
   void *user;
   } Gate;
@@ -206,7 +211,7 @@ static int gateFrame( Gate *g, GateChan *c )
     dev[b] = d = ls - c->floor[b];
     thr = GATE_SPREAD * sqrt( c->var[b] );
     if( thr < g->gate ) thr = g->gate;
-    if( d > thr )
+    if( d > thr && b >= g->firstband )
       {
       ++many;
       if( c->was[b] ) again = 1;
@@ -229,7 +234,7 @@ static int gateFrame( Gate *g, GateChan *c )
     return( 0 );
     }
 
-  if( many >= 2 || again ) { c->hang = GATE_HANG; hit = 1; }
+  if( many >= 2 || ( again && ! g->strict ) ) { c->hang = GATE_HANG; hit = 1; c->why |= ( many >= 2 ? 4 : 0 ) | ( again && ! g->strict ? 8 : 0 ); }
 
   /* learn only while shut; while open the floor may only fall, and a
      band stuck above it creeps up, so a lasting change of hum frees it */
@@ -345,7 +350,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
       {
       double x = pcm[n*2+ch], y = x, h;
       int i;
-      for( i = 0; i < 4; ++i ) y = gateFilter( gateLoB[i], c->lo[i], y );
+      for( i = 0; i < 4; ++i ) y = gateFilter( g->lob[i], c->lo[i], y );
       h = y;
       for( i = 0; i < 2; ++i ) h = gateFilter( gateHiB[i], c->hi[i], h );
 
@@ -355,6 +360,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
 	int64_t at = top + n - GATE_PRE;
 	if( at < best ) best = at;
 	c->hang = GATE_HANG;
+	c->why |= 1;
 	}
       if( c->deaf ) c->blk = c->blkn = c->lit = 0;		/* SWITCH, silence is not the floor */
       else if( c->frames < GATE_INIT )
@@ -381,6 +387,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
 	    at = top + n + 1 - (int64_t)GATE_BLK * ( j + 1 ) - GATE_PRE;
 	    if( at < best ) best = at;
 	    c->hang = GATE_HANG;
+	    c->why |= 2;
 	    }
 	  else if( ! lit && ! c->hang && p > c->ybg * 1e-3 )
 	    c->ybg += ( p - c->ybg ) * ( (double)GATE_BLK / HZ ) / GATE_ADAPT;
@@ -440,12 +447,13 @@ AspGate *asp_gate_new( void (*say)( void *, const char * ), void *user )
   Gate *g = calloc( 1, sizeof *g );
   gateReset( g );
   g->gate = 18.0; g->ring = 7.5; g->say = say; g->user = user;
+  asp_gate_set_lowcut( g, 30 );
   return g;
   }
 void asp_gate_free( AspGate *g ) { free( g ); }
 void asp_gate_reset( AspGate *g )
-  { double a = g->gate, b = g->ring; void (*s)( void *, const char * ) = g->say; void *u = g->user;
-    gateReset( g ); g->gate = a; g->ring = b; g->say = s; g->user = u; }
+  { double a = g->gate, b = g->ring, l = g->lowcut; int st = g->strict; void (*s)( void *, const char * ) = g->say; void *u = g->user;
+    gateReset( g ); g->gate = a; g->ring = b; g->say = s; g->user = u; g->strict = st; asp_gate_set_lowcut( g, l ); }
 void asp_gate_set( AspGate *g, double gate_db, double ring_db )
   {
   if( gate_db > 0 ) g->gate = gate_db < 1 ? 1 : ( gate_db > 60 ? 60 : gate_db );
@@ -462,3 +470,26 @@ int asp_gate_learnt( AspGate *g ) { return g->chan[0].frames >= GATE_INIT && g->
 /* the learnt floor as an amplitude (rms of the signal above 30 Hz); 0 until learnt */
 double asp_gate_floor( AspGate *g, int ch )
   { return g->chan[ch].frames >= GATE_INIT ? sqrt( g->chan[ch].ybg ) : 0; }
+
+/* which rules opened the gate since this was last asked (bits: 1 click, 2 ring, 4 two bands, 8 one band twice) */
+int asp_gate_why( AspGate *g )
+  { int w = g->chan[0].why | g->chan[1].why; g->chan[0].why = g->chan[1].why = 0; return w; }
+
+/* nothing below this frequency may open the gate (handling bumps, stand knocks, the room): set it just under the
+   instrument's lowest fundamental. the take still records everything; only the opening decision ignores it.
+   30 is the old behaviour. */
+void asp_gate_set_lowcut( AspGate *g, double hz )
+  {
+  static const double lq[4] = { 0.50980, 0.60134, 0.89998, 2.56292 };
+  int b;
+  if( hz < 30 ) hz = 30;
+  if( hz > 2000 ) hz = 2000;
+  g->lowcut = hz;
+  for( int i = 0; i < 4; ++i ) gateBiquad( g->lob[i], hz, lq[i] );
+  for( b = 0; b < gateBands && gateEdge[b+1] * (double)HZ / GATE_WIN <= hz; ++b ) {}
+  g->firstband = hz <= 30 ? 0 : b;
+  }
+double asp_gate_lowcut( AspGate *g ) { return g->lowcut; }
+
+void asp_gate_set_strict( AspGate *g, int on ) { g->strict = on != 0; }
+int asp_gate_strict( AspGate *g ) { return g->strict; }

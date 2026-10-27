@@ -19,4 +19,9 @@ void asp_gate_switch( AspGate *g, int32_t *pcm, int32_t *prev, int count, int ar
 int asp_gate_active( AspGate *g, int ch );
 int asp_gate_learnt( AspGate *g );
 double asp_gate_floor( AspGate *g, int ch );
+int asp_gate_why( AspGate *g );     /* rules that fired since last asked: 1 click, 2 ring, 4 two bands, 8 a band twice */
+void asp_gate_set_lowcut( AspGate *g, double hz );   /* the instrument's lowest note: nothing below may open the gate (30 = as asp4) */
+double asp_gate_lowcut( AspGate *g );
+void asp_gate_set_strict( AspGate *g, int on );     /* 1: a single band over its threshold twice running no longer opens the gate */
+int asp_gate_strict( AspGate *g );
 #endif

@@ -131,6 +131,8 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
   c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 1;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
+  if( cfg->lowcut > 0 ) asp_gate_set_lowcut( c->gate, cfg->lowcut );
+  asp_gate_set_strict( c->gate, cfg->strict );
   c->sync = asp_sync_new( &cfg->sync );
   c->phase = 0;
   if( ! asp_tank_legacy( t ) )
@@ -530,6 +532,12 @@ void asp_core_gate( AspCore *c, double gate_db, double ring_db )
   asp_gate_set( c->gate, gate_db, ring_db );
   logf_( c, "gate_set", "{\"gate\":%.1f,\"ring\":%.1f}", asp_gate_margin( c->gate ), asp_gate_ring( c->gate ) );
   }
+void asp_core_gate_options( AspCore *c, double lowcut, int strict )
+  {
+  if( lowcut >= 0 ) asp_gate_set_lowcut( c->gate, lowcut );
+  if( strict >= 0 ) asp_gate_set_strict( c->gate, strict );
+  logf_( c, "gate_set", "{\"lowcut\":%.0f,\"strict\":%d}", asp_gate_lowcut( c->gate ), asp_gate_strict( c->gate ) );
+  }
 void asp_core_gate_relearn( AspCore *c ) { c->gate_relearn = 1; }
 
 void asp_core_status( const AspCore *c, AspCoreStatus *st )
@@ -541,7 +549,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
-  st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
+  st->lowcut = asp_gate_lowcut( c->gate ); st->strict = asp_gate_strict( c->gate ); st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
   st->log_seq = asp_log_last( c->store ); st->loop_frames = c->size; st->peak = (int64_t)c->peak;
   }
 

@@ -23,6 +23,8 @@ typedef struct
   {
   AspSyncCfg sync;
   double gate_db, ring_db;     /* gate margin, ring rule; 0 keeps the defaults (18, 7.5) */
+  double lowcut;               /* Hz: the instrument's lowest note; nothing below opens the gate. 0 or 30: as asp4 */
+  int    strict;               /* 1: one band alone over its threshold no longer opens the gate */
   int    live;                 /* record takes (default 1); 0 starts safe */
   int    feed;                 /* put each take into the loop as it is recorded (default 1) */
   int64_t gain;                /* output gain, asp4's my_gain (0) */
@@ -42,7 +44,7 @@ typedef struct
   double   sync_level_db;
   int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
-  double   gate_db, ring_db; int gate_learnt;
+  double   gate_db, ring_db, lowcut; int gate_learnt, strict;
   int64_t  log_seq, loop_frames, peak;
   } AspCoreStatus;
 
@@ -61,5 +63,6 @@ void     asp_core_gate( AspCore *c, double gate_db, double ring_db );
    store (which takes a moment: an edge that is not read meanwhile will report a drop). returns the revert's seq */
 int64_t  asp_core_revert( AspCore *c, int64_t seq );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
+void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lowcut < 0 keeps it; strict < 0 keeps it */
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif

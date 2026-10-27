@@ -1,0 +1,28 @@
+#!/bin/bash
+# aspplay FILE.raw|FILE.wav   play a file straight to the sound card (ALSA direct, 48 kHz stereo s32 for .raw).
+# like aspcard it only takes a free card; ASPCARD_RELEASE=1 lets go of pipewire for the time and puts it back.
+set -u
+F=${1:?usage: aspplay FILE}
+DEV=${ASPCARD_DEV:-hw:UR22C}; CARD=${DEV#hw:}; CARD=${CARD%%,*}
+CARDNO=$(grep -i "${CARD}" /proc/asound/cards | head -1 | awk '{print $1}')
+holders() { fuser -v /dev/snd/pcmC${CARDNO}D*p 2>&1 | grep -v "COMMAND\|^ *$" | grep -v kernel; }
+PWDEV=""; PWOLD=""
+restore() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && echo "aspplay: pipewire has the card back" >&2; }
+trap restore EXIT
+busy=$(holders)
+if [ -n "$busy" ] && [ "${ASPCARD_RELEASE:-0}" = 1 ] && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
+  read PWDEV PWOLD PWOFF < <(pw-dump 2>/dev/null | python3 -c "
+import json,sys
+for o in json.load(sys.stdin):
+    i=o.get('info') or {}
+    if o.get('type','').endswith('Device') and str((i.get('props') or {}).get('api.alsa.card'))=='$CARDNO':
+        cur=(i['params'].get('Profile') or [{}])[0].get('index')
+        off=[p['index'] for p in i['params'].get('EnumProfile',[]) if p.get('name')=='off']
+        if cur is not None and off: print(o['id'],cur,off[0]); break
+")
+  [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOFF }" > /dev/null 2>&1
+  for i in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(holders)" ] && break; sleep 0.3; done
+  busy=$(holders)
+fi
+if [ -n "$busy" ]; then echo "aspplay: the card is in use: $busy" >&2; exit 1; fi
+case $F in *.wav) aplay -q -D "$DEV" "$F" ;; *) aplay -q -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw "$F" ;; esac

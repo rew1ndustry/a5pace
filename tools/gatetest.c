@@ -28,10 +28,10 @@ static int32_t *load( const char *path, int64_t *frames )
 
 int main( int argc, char **argv )
   {
-  double gm = 18, rg = 7.5;
+  double gm = 18, rg = 7.5, lc = 30; int strict = 0;
   int a = 1;
   for( ; a < argc && argv[a][0] == '-'; a += 2 )
-    { if( argv[a][1] == 'g' ) gm = atof( argv[a+1] ); else if( argv[a][1] == 'r' ) rg = atof( argv[a+1] ); }
+    { if( argv[a][1] == 'g' ) gm = atof( argv[a+1] ); else if( argv[a][1] == 'r' ) rg = atof( argv[a+1] ); else if( argv[a][1] == 'l' ) lc = atof( argv[a+1] ); else if( argv[a][1] == 's' ) strict = atoi( argv[a+1] ); }
   if( argc - a < 2 ) { fprintf( stderr, "usage: gatetest [-g dB] [-r dB] LEARN.d32 TAKE.d32...\n" ); return 2; }
   int64_t ln;
   int32_t *L = load( argv[a], &ln );
@@ -49,7 +49,7 @@ int main( int argc, char **argv )
     int64_t n; int32_t *T = load( argv[a], &n );
     if( ! T ) { perror( argv[a] ); continue; }
     AspGate *g = asp_gate_new( NULL, NULL );
-    asp_gate_set( g, gm, rg );
+    asp_gate_set( g, gm, rg ); asp_gate_set_lowcut( g, lc ); asp_gate_set_strict( g, strict );
     for( int64_t s = 0; s + ASP_TICK <= W; s += ASP_TICK )
       { int32_t buf[ASP_TICK * 2]; memcpy( buf, L + 2 * ( at + s ), sizeof buf ); asp_gate_scan( g, buf, ASP_TICK ); }
     int found = 0; int64_t first = -1;
