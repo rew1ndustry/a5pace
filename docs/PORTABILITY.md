@@ -14,6 +14,7 @@ Rules the core follows:
 - **Directories and fsync.** The store uses `mkdir`, `rename`, `fsync` (POSIX). Windows needs a
   five-line shim (`_mkdir`, `MoveFileEx`, `_commit`); it will live in `plat.h` when the first
   Windows build is attempted.
-- **Arithmetic.** No shifts of negative integers; the loop gain is a double multiply on the way out.
+- **Arithmetic.** Level shifts use `>>` on negative integers, arithmetic on every compiler we
+  target; `test_tank` checks it.
 
 Not yet built or tested on Windows, macOS or AIX; Linux only so far.

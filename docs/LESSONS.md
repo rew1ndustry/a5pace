@@ -32,12 +32,12 @@ First pass, from the working notes. Extend as the importer finds more.
   already taken out of the loop, for long takes aged out pass by pass).
 - Removals must wait for a running insert to finish unless their range ends; a ranged removal
   that would leave a hole must fail (rc 3), not silently proceed.
-- asp4 kept per-take levels as shifts and moved takes by adding (new - old). asp5 has no per-take levels: a
-  take is in or out, the loop has one gain, applied on the way out and faded over the next output tick.
+- Level changes are exact because they add (new - old) through one function; keep levels as
+  integer shifts or explicit gains applied that way.
 
 ## Mix behaviour users asked for
-- Fade over N repeats (now the loop gain), drop takes covered by more than N later ones (OVERLAP), ping-pong
-  successive takes L/R (SWAP). Gain and placement are log events, not shell arithmetic.
+- Fade over N repeats, drop takes covered by more than N later ones, ping-pong the newest take
+  L/R, slow L-R-L pan per take. Pan and gain should be log events, not shell arithmetic.
 - LAYERS n keeps the newest n iterations; a long take counts one layer per pass.
 - Undo takes the newest take.
 

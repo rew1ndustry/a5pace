@@ -25,40 +25,40 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `SAFE` / `LIVE` | stop / resume recording takes (the loop keeps playing) |
 | `SYNC` | hunt the round trip again |
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
-| `GAIN n`, `DOWN [n]`, `UP [n]` | the loop gain, in steps of 6 dB down |
-| `AUTOMIX OFF`, `FADE n [restore]`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
+| `AUTOMIX OFF`, `OVERLAP n`, `SWAP [each]` | one automix at a time, see below |
 | `TAKES` | every take with its state |
 | `REVERT seq` | go back to a log point (only while SAFE); the loop is rebuilt from the store |
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
+| `EVENT edge_x {json}` | an edge or shell tells the log something (a latency report) |
 | `SIM BURST ch amp [ticks]`, `SIM DUP 0\|1`, `STEP n` | simulated card only: play a tone burst in (ch 0 left, 1 right, 2 both), identical noise on both channels, step n ticks and reply when done |
 | `QUIT` | close cleanly |
 
 A loop that was not closed cleanly (dirty flag in its header), is the wrong length, or is an asp4 file is
 rebuilt from the store on the next start.
 
-## Loop gain, and the automixes (one at a time)
-There are no per-take levels. A take is in the loop or it is not, and the loop as a whole has one gain, in
-steps of 6 dB down. `GAIN n` sets it, `DOWN [n]` knocks it down n x 6 dB, `UP [n]` brings it back. **Whenever the
-gain changes, the next output tick fades from the old gain to the new one**, so it never clicks. The tank does not
-change (the gain is applied on the way out); the gain is kept in the store as the state of take 0, so a revert
-restores it.
-- **FADE n [restore]**: at the top of each pass the loop gain goes down n x 6 dB, until what the loop plays is at
-  the learnt noise floor, and stays there. A take recorded while the loop has faded plays at the faded gain;
-  `restore` goes back to full gain when a take starts.
+## Automix (one at a time)
 - **OVERLAP n**: a take goes out of the loop when n newer takes have overlapped it (it stays in the store; its
   state is `off`, and a revert can bring it back).
 - **SWAP [each]**: successive takes swap channels. Mono takes go hard left, hard right, hard left; stereo
   takes alternate flipped and not. By default the swap happens between iterations; `each` also swaps between
   takes of the same iteration.
+Fading is not an automix yet. A take's gain and pan are, for now, one constant setting across the whole take
+(`lev`: a right shift per output channel, 6 dB a step, or off); fades will be envelopes on a take (a perceived
+linear drop over the whole take) once envelopes are mapped out.
 A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
 (a fifth of a second of work a tick), started when the playhead is not in the take and will not reach it before
 the move is done. A take that fills the loop waits one pass and goes anyway (that one may click).
 
+## The output
+The loop is the sum of the takes in 64 bits. On the way out it is brought down by a right shift so the peak fits 32
+bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
+the change is a ramp and not a step.
+
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
-stored as one channel and placed in the middle (fed to both outputs); with SWAP
+stored as one channel and placed in the middle (a level shift of 1, 6 dB down, on both outputs); with SWAP
 it goes hard left / right instead. While it is being recorded it is heard as stereo, and is replaced by the mono
-placement when it ends. `mono_detect` is in the core's config.
+placement when it ends. `mono_detect` and `mono_lev` are in the core's config.
 
 ## What was not carried over from aspace.sh
 It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind on purpose:
@@ -81,3 +81,18 @@ tone is capped (`ASPCARD_SYNCMAX`, default -36 dB re asp4's) because the monitor
 checks everything and starts nothing. First real run (2026-10-27, UR22C, loopback): sync found on the first
 attempt, 30123 frames (0.63 s: the pipes and card buffers), spread 1 sample, no drops or starves, loopback off and
 pipewire restored at the end.
+
+### The driver's idea of the latency, against the measured one
+`aspcard` samples ALSA's own status files (`/proc/asound/cardN/pcm0p|pcm0c/sub0/status`, "delay") for four seconds after
+each sync and logs `edge_latency` (measured, driver's playback + capture, buffers, periods, the gap), also appended
+to `DIR/cache/latency.tsv`; after three runs it says whether the gap is steady. On the UR22C, six runs
+(2026-10-27): the measured round trip was 30118-30137 frames (19 frames, one USB microframe is 8), the driver's
+figure moved by about 600 frames and the gap by about 900, so the driver's number is less steady than the sync and
+not a substitute for it here. Reusing the last measured value instead (`aspace run --latency FRAMES`, no hunt) is
+good to about 20 frames (0.4 ms); it is there as an option, and the sync stays the default.
+
+### Options, and what the shell does about pipewire
+The card is taken only if it is free; if anything holds it, `aspcard` names it and stops (what you want for
+exclusive use). `ASPCARD_RELEASE=1` is the opt-in: when only pipewire / wireplumber hold the card, switch its
+pipewire profile to "off" for the run and restore it after. Running through pipewire, or jack, would be other
+shells; this one does ALSA direct only.

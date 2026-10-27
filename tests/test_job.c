@@ -21,12 +21,13 @@ static int32_t *mk( int64_t n, int ch, unsigned seed )
   for( int64_t i = 0; i < n * ch; i++ ) { x = x * 1664525u + 1013904223u; p[i] = (int32_t)( x ^ ( x << 7 ) ); }
   return p;
   }
+static int64_t lv( int64_t x, int lev ) { return lev == 99 ? 0 : lev >= 0 ? x >> lev : x * ( 1 << -lev ); }
 static void mput( const int32_t *p, int64_t n, int ch, int64_t pos0, int sign, AspPlace pl )
   {
   for( int64_t i = 0; i < n; i++ )
     {
     int64_t a = p[i*ch], b = ch > 1 ? p[i*ch+1] : p[i*ch], s0 = pl.flip ? b : a, s1 = pl.flip ? a : b, at = ( pos0 + i ) % LOOP;
-    if( pl.l ) model[2*at] += sign * s0; if( pl.r ) model[2*at+1] += sign * s1;
+    model[2*at] += sign * lv( s0, pl.l ); model[2*at+1] += sign * lv( s1, pl.r );
     }
   }
 static int same( AspTank *t )
@@ -49,7 +50,7 @@ int main( void )
   AspTake b; CHECK( asp_take_add_d32( s, 1, 1, f2, 1, 48000, "off", 0, &b ) == 0 );
   CHECK( b.channels == 1 );
 
-  AspPlace OFF = ASP_PLACE_OFF, st00 = { 1, 1, 0 }, sw = { 1, 1, 1 }, c11 = { 1, 1, 0 }, hl = { 1, 0, 0 }, hr = { 0, 1, 0 };
+  AspPlace OFF = ASP_PLACE_OFF, st00 = { 0, 0, 0 }, sw = { 2, 1, 1 }, c11 = { 1, 1, 0 }, hl = { 0, ASP_LEV_OFF, 0 }, hr = { ASP_LEV_OFF, 0, 0 };
 
   CHECK( asp_move_take( t, s, a.id, 0, -1, OFF, st00 ) == 0 );   mput( S, 30000, 2, 0, 1, st00 );     CHECK( same( t ) );
   CHECK( asp_move_take( t, s, a.id, 0, -1, st00, sw ) == 0 );    mput( S, 30000, 2, 0, -1, st00 ); mput( S, 30000, 2, 0, 1, sw );   CHECK( same( t ) );   /* swapped channels, new levels */
@@ -74,14 +75,14 @@ int main( void )
   }
 
   /* rebuild from state: flip and mono follow the log */
-  asp_take_set_state( s, a.id, "{\"status\":\"mix\",\"out\":\"lr\",\"flip\":1,\"gone\":0}", "t", 1 );
-  asp_take_set_state( s, b.id, "{\"status\":\"mix\",\"out\":\"lr\",\"mono\":1}", "t", 2 );
+  asp_take_set_state( s, a.id, "{\"status\":\"mix\",\"lev\":[\"2\",\"1\"],\"flip\":1,\"gone\":0}", "t", 1 );
+  asp_take_set_state( s, b.id, "{\"status\":\"mix\",\"lev\":[\"1\",\"1\"],\"mono\":1}", "t", 2 );
   memset( model, 0, sizeof model );
   mput( S, 30000, 2, 0, 1, sw ); mput( M, 9000, 1, 48000, 1, c11 );
   CHECK( asp_rebuild( t, s, -1 ) == 0 && same( t ) );
   int64_t pk; CHECK( asp_take_peak( s, b.id, &pk ) == 0 && pk > 0 );
-  AspTakeState ps; asp_parse_state( "{\"status\":\"mix\",\"out\":\"l\",\"flip\":1,\"peak\":777,\"len\":55}", &ps );
-  CHECK( ps.l == 1 && ps.r == 0 && ps.flip == 1 && ps.peak == 777 && ps.len == 55 );
+  AspTakeState ps; asp_parse_state( "{\"status\":\"mix\",\"lev\":[\"1\",\"-\"],\"flip\":1,\"peak\":777,\"len\":55}", &ps );
+  CHECK( ps.l == 1 && ps.r == ASP_LEV_OFF && ps.flip == 1 && ps.peak == 777 && ps.len == 55 );
 
   asp_tank_close( t ); asp_close( s ); free( S ); free( M );
   snprintf( cmd, sizeof cmd, "rm -rf %s", dir ); if( system( cmd ) ) {}

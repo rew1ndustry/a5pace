@@ -5,11 +5,10 @@
 #include "aspstore.h"
 #include "asptank.h"
 
-/* where a take sits in the loop: which output channels it feeds (1 or 0) and whether the source channels
-   are swapped. a mono take feeds the outputs it is placed on. there are no levels. */
+/* where a take sits in the loop: an output level per channel (a right shift, or ASP_LEV_OFF) and
+   whether the source channels are swapped. a mono take feeds both outputs. */
 typedef struct { int l, r, flip; } AspPlace;
-#define ASP_PLACE_OFF     ((AspPlace){ 0, 0, 0 })
-#define ASP_PLACE_STEREO  ((AspPlace){ 1, 1, 0 })
+#define ASP_PLACE_OFF  ((AspPlace){ ASP_LEV_OFF, ASP_LEV_OFF, 0 })
 
 /* a move: take the old placement of some data out of the loop and put the new one in, as one exact
    add-the-difference. old and new may be different data (a stereo take converted to mono). a job does
@@ -29,13 +28,15 @@ int     asp_move_take( AspTank *t, AspStore *s, int64_t take_id, int64_t lo, int
 int  asp_pcm_load( const char *flac, int32_t **pcm, int64_t *frames, int *channels );
 int  asp_take_peak( AspStore *s, int64_t take_id, int64_t *peak );     /* largest |sample| over all channels */
 
+/* the older call: same data, no swap */
+int asp_apply_take( AspTank *t, AspStore *s, int64_t take_id, int64_t lo, int64_t hi,
+                    int ol, int orr, int nl, int nr );
+
 /* zero the tank, then put in every take that is in the loop as of log point upto (< 0 = now) */
 int asp_tank_clear( AspTank *t );
 int asp_rebuild( AspTank *t, AspStore *s, int64_t upto );
 
-/* the take-state fields the engine reads from the json state: status, "out":"lr" (or "l", "r", ""),
-   flip, mono, gone, peak, len. asp4 states ("lev":[..]) are read as on or off: their levels are dropped.
-   take id 0 is not a take: it holds the loop gain, {"gain_steps":n} (see aspcore.h) */
-typedef struct { char status[8]; int l, r, flip, mono; int64_t gone, peak, len; } AspTakeState;   /* l, r: 1 if fed to that output */
+/* the take-state fields the engine reads from the json state */
+typedef struct { char status[8]; int l, r, flip, mono; int64_t gone, peak, len; } AspTakeState;
 void asp_parse_state( const char *json, AspTakeState *st );
 #endif

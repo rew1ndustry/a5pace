@@ -42,6 +42,12 @@ pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "a crash is noticed and the loop rebuilt" "grep -q rebuilding $t/err3"
 $c QUIT > /dev/null; wait $pid || true
+# a declared latency starts playing at once, without the hunt
+$here/bin/aspace run -q -S 7001 --fast --latency 4321 $d 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+chk "declared latency plays at once" "$c STATE | grep -q '\"phase\":\"play\".*\"latency\":4321'"
+$c QUIT > /dev/null; wait $pid || true
 rm -rf $t
 [ $fail = 0 ] && echo "all runner tests passed"
 exit $fail

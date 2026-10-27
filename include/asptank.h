@@ -15,6 +15,9 @@
 #include <stdint.h>
 
 #define ASP_TICK   9600           /* frames in a tick: 1/5 s at 48 kHz */
+#define ASP_LEV_OFF 99            /* the channel is not in the loop */
+#define ASP_LEV_MIN (-8)
+#define ASP_LEV_MAX 31
 
 typedef struct AspTank AspTank;
 AspTank *asp_tank_create( const char *path, int64_t frames, int rate, char *err, int errn );
@@ -37,10 +40,15 @@ int      asp_tank_set_dirty( AspTank *t, int dirty );
 int  asp_tank_get( AspTank *t, int64_t pos, int64_t n, int64_t *mix );
 int  asp_tank_put( AspTank *t, int64_t pos, int64_t n, const int64_t *mix );
 
-/* the tank is a plain sum: a take goes in by being added, comes out by being subtracted (engine.h).
-   there are no per-take levels; the loop as a whole has a gain, applied on the way out (aspcore.h) */
-int  asp_tank_add( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n );
+/* a take's level is a right shift (0 as recorded, 1 half, -1 double) or ASP_LEV_OFF.
+   moving a take from one level to another adds the difference, so insert, remove and a
+   change of level are one operation, and exact. */
+int64_t asp_level( int64_t x, int lev );
+void    asp_mix_level( const int32_t *pcm, int64_t n, int64_t *mix, int ol, int orr, int nl, int nr );
+int     asp_tank_level( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n, int ol, int orr, int nl, int nr );
 
 /* one tick of the loop to output pcm; returns the new peak (peak to peak) */
-uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix );
+/* shift: how far the last tick was brought down to fit (kept between calls). when it changes, this tick fades from
+   the old scale to the new one, so the change is never a step. */
+uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int64_t gain, int *shift );
 #endif

@@ -86,8 +86,8 @@ static inline void contrib( const int32_t *p, int ch, AspPlace pl, int sign, int
   {
   int64_t a = p[0], b = ch > 1 ? p[1] : p[0];
   int64_t s0 = pl.flip ? b : a, s1 = pl.flip ? a : b;
-  if( pl.l ) m[0] += sign * s0;
-  if( pl.r ) m[1] += sign * s1;
+  m[0] += sign * asp_level( s0, pl.l );
+  m[1] += sign * asp_level( s1, pl.r );
   }
 
 int asp_job_step( AspJob *j, AspTank *t, int64_t budget )
@@ -120,6 +120,9 @@ int asp_move_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, 
   return rc < 0 ? -1 : 0;
   }
 
+int asp_apply_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, int ol, int orr, int nl, int nr )
+  { return asp_move_take( t, s, id, lo, hi, (AspPlace){ ol, orr, 0 }, (AspPlace){ nl, nr, 0 } ); }
+
 int asp_tank_clear( AspTank *t )
   {
   int64_t z[ASP_TICK * 2] = { 0 }, n = asp_tank_frames( t ), pos = 0;
@@ -128,10 +131,13 @@ int asp_tank_clear( AspTank *t )
   return asp_tank_set_head( t, asp_tank_iter( t ), 0 );
   }
 
-static int on_of( const char *s, const char *end )
+static int lev_of( const char *s, const char *end )
   {
-  for( ; s < end; s++ ) if( ! isspace( (unsigned char)*s ) && *s != '"' ) return *s != '-' && strncmp( s, "null", 4 ) && strncmp( s, "off", 3 );
-  return 0;
+  char b[16]; int n = 0;
+  for( ; s < end && n < 15; s++ ) if( ! isspace( (unsigned char)*s ) && *s != '"' ) b[n++] = *s;
+  b[n] = 0;
+  if( ! n || ! strcmp( b, "-" ) || ! strcmp( b, "null" ) || ! strcmp( b, "off" ) ) return ASP_LEV_OFF;
+  return atoi( b );
   }
 
 static int64_t num_after( const char *j, const char *key, int64_t dflt )
@@ -146,22 +152,17 @@ static int64_t num_after( const char *j, const char *key, int64_t dflt )
 void asp_parse_state( const char *j, AspTakeState *st )
   {
   const char *p;
-  strcpy( st->status, "legacy" ); st->l = st->r = 1; st->flip = st->mono = 0; st->gone = 0; st->peak = -1; st->len = -1;
+  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = 0; st->gone = 0; st->peak = -1; st->len = -1;
   if( ( p = strstr( j, "\"status\":\"" ) ) )
     {
     int n = 0; p += 10;
     while( *p && *p != '"' && n < 7 ) st->status[n++] = *p++;
     st->status[n] = 0;
     }
-  if( ( p = strstr( j, "\"out\":\"" ) ) )
-    {
-    st->l = st->r = 0;
-    for( p += 7; *p && *p != '"'; p++ ) { if( *p == 'l' ) st->l = 1; else if( *p == 'r' ) st->r = 1; }
-    }
-  else if( ( p = strstr( j, "\"lev\":[" ) ) )                  /* asp4's levels: in or out, nothing between */
+  if( ( p = strstr( j, "\"lev\":[" ) ) )
     {
     const char *c = strchr( p, ',' ), *e = strchr( p, ']' );
-    if( c && e && c < e ) { st->l = on_of( p + 7, c ); st->r = on_of( c + 1, e ); }
+    if( c && e && c < e ) { st->l = lev_of( p + 7, c ); st->r = lev_of( c + 1, e ); }
     }
   st->gone = num_after( j, "\"gone\":", 0 );
   st->flip = (int)num_after( j, "\"flip\":", 0 );
@@ -190,7 +191,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
   for( int i = 0; ! rc && i < l.n; i++ )
     {
     AspTakeState *st = &l.e[i].st;
-    if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* not a take / not in the loop */
+    if( ! strcmp( st->status, "off" ) ) continue;               /* not in the loop */
     rc = asp_move_take( t, s, l.e[i].id, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip } );
     }
   free( l.e );

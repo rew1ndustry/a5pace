@@ -104,6 +104,36 @@ xrun() {   # drop|starve
   done
 }
 
+# --- the driver's idea of the latency, next to what the sync measured ---------------------------
+# alsa keeps a status file for each running stream: "delay" is the frames the driver says are in flight (queued for
+# playback, waiting for capture); hw_params has the buffer and period. we sample them a while after the sync, and put
+# the sum beside the measured round trip. the pipes and aspace's own tick are in the measured number and not the
+# driver's, so what matters is whether the gap is the same every time (kept in DIR/cache/latency.tsv).
+procval() { sed -n "s/^$2 *: *//p" "$1" 2>/dev/null | head -1 | awk '{print $1}'; }
+latency_report() {   # measured frames
+  local meas=$1 pd="" cd="" i P=/proc/asound/card$CARDNO/pcm0p/sub0 C=/proc/asound/card$CARDNO/pcm0c/sub0
+  local pl="" cl="" pb cb pp cp
+  sleep 2
+  for i in $(seq 1 80); do                           # 4 s, a score of ticks, so the queue's swing averages out
+    pl="$pl $(procval $P/status delay)"; cl="$cl $(procval $C/status delay)"; sleep 0.05
+  done
+  pd=$(echo $pl | tr ' ' '\n' | grep -E '^-?[0-9]+$' | awk '{s+=$1} END{if(NR) printf "%d", s/NR}')
+  cd=$(echo $cl | tr ' ' '\n' | grep -E '^-?[0-9]+$' | awk '{s+=$1} END{if(NR) printf "%d", s/NR}')
+  pb=$(procval $P/hw_params buffer_size); pp=$(procval $P/hw_params period_size)
+  cb=$(procval $C/hw_params buffer_size); cp=$(procval $C/hw_params period_size)
+  if [ -z "$pd" ] || [ -z "$cd" ]; then say_ "no driver latency to read (no status for $P / $C)"; return; fi
+  local sum=$((pd+cd)) gap=$((meas-pd-cd)) hist="$DIR/cache/latency.tsv" note=""
+  echo -e "$(date +%y%m%d-%H%M%S)\t$meas\t$sum\t$pd\t$cd\t$gap\t$pb\t$pp" >> "$hist"
+  local n; n=$(wc -l < "$hist")
+  if [ "$n" -ge 3 ]; then
+    note=$(tail -8 "$hist" | awk -F'\t' '{g[NR]=$6; l[NR]=$2} END{mn=g[1];mx=g[1];lmn=l[1];lmx=l[1];for(i=2;i<=NR;i++){if(g[i]<mn)mn=g[i];if(g[i]>mx)mx=g[i];if(l[i]<lmn)lmn=l[i];if(l[i]>lmx)lmx=l[i]}
+         printf "over the last %d runs the gap moved by %d frames and the measured round trip by %d frames", NR, mx-mn, lmx-lmn;
+         if (mx-mn<=24) printf " - steady enough to declare (aspcard DIR --latency <frames>)"; else printf " - not steady, keep the sync"}')
+  fi
+  say_ "latency: sync measured $meas frames; driver says playback $pd + capture $cd = $sum (buffers $pb/$cb, periods $pp/$cp); gap $gap frames. $note"
+  "$BIN/aspctl" "$DIR" EVENT edge_latency "{\"measured\":$meas,\"driver\":$sum,\"playback\":$pd,\"capture\":$cd,\"gap\":$gap,\"buffer\":[${pb:-0},${cb:-0}],\"period\":[${pp:-0},${cp:-0}]}" > /dev/null 2>&1
+}
+
 mixer on
 # the pipeline; the first stage's stderr goes to the drop monitor, the last to the starve monitor
 ( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw 2> >(xrun drop) \
@@ -116,7 +146,8 @@ n=0; while [ ! -s "$DIR/ctl" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
 [ -s "$DIR/ctl" ] || { say_ "aspace did not start"; exit 1; }
 ( "$BIN/aspctl" "$DIR" WATCH | while IFS= read -r ev; do
     case $ev in
-      *" sync_found "*) mixer off; say_ "synced: $ev" ;;
+      *" sync_found "*) mixer off; say_ "synced: $ev"
+                       fr=$(echo "$ev" | sed -n 's/.*"frames":\([0-9]*\).*/\1/p'); latency_report "$fr" & ;;
       *" sync_start "*|*" resync "*) mixer on ;;
       *" edge_drop "*|*" edge_starve "*) say_ "$ev" ;;
     esac

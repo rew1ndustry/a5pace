@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "asptank.h"
 #include "plat.h"
 
@@ -140,32 +141,61 @@ int asp_tank_get( AspTank *t, int64_t pos, int64_t n, int64_t *mix )
 int asp_tank_put( AspTank *t, int64_t pos, int64_t n, const int64_t *mix )
   { unsigned char b[BLK * 16]; int rc = span( t, pos, n, 1, b, (int64_t *)mix ); fflush( t->f ); return rc; }
 
-int asp_tank_add( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n )
+int64_t asp_level( int64_t x, int lev )
+  {
+  if( lev == ASP_LEV_OFF ) return 0;
+  if( lev >= 0 ) return x >> lev;                 /* arithmetic shift, as on every target we build for */
+  return x * ( (int64_t)1 << -lev );
+  }
+
+void asp_mix_level( const int32_t *pcm, int64_t n, int64_t *mix, int ol, int orr, int nl, int nr )
+  {
+  for( int64_t i = 0; i < n; i++ )
+    {
+    *mix++ += asp_level( pcm[2*i],   nl ) - asp_level( pcm[2*i],   ol );
+    *mix++ += asp_level( pcm[2*i+1], nr ) - asp_level( pcm[2*i+1], orr );
+    }
+  }
+
+int asp_tank_level( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n, int ol, int orr, int nl, int nr )
   {
   int64_t mix[BLK * 2];
   while( n > 0 )
     {
     int64_t k = n < BLK ? n : BLK;
     if( asp_tank_get( t, pos, k, mix ) ) return -1;
-    for( int64_t i = 0; i < 2 * k; i++ ) mix[i] += pcm[i];
+    asp_mix_level( pcm, k, mix, ol, orr, nl, nr );
     if( asp_tank_put( t, pos, k, mix ) ) return -1;
     pcm += 2 * k; pos += k; n -= k;
     }
   return 0;
   }
 
-uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix )
+uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int64_t gain, int *shift )
   {
-  int64_t min = mix[0], max = mix[0];
-  int msb = 0;
+  int msb = 0, sh, old;
   uint64_t p = peak | 1;
   while( p ) { msb++; p >>= 1; }                     /* 64 - clz( peak | 1 ) */
+  sh = msb > 30 ? msb - 30 : 0;                      /* how far the loop must come down to fit */
+  old = shift ? *shift : sh;
+  double s0 = ldexp( 1.0, -old ), s1 = ldexp( 1.0, -sh );
+  int64_t min = 0, max = 0;
   for( int64_t i = 0; i < 2 * n; i++ )
     {
-    int64_t sam = mix[i];
-    if( msb > 30 ) sam >>= ( msb - 30 );
-    pcm[i] = (int32_t)sam;
-    if( sam < min ) min = sam; else if( sam > max ) max = sam;
+    int64_t sam = mix[i], v;
+    if( gain ) sam += ( sam * gain ) >> 31;
+    if( old == sh ) v = sam >> sh;                   /* steady: exact, as asp4 */
+    else
+      {
+      /* the shift has changed, a step of 6 dB or more: fade from the old scale to the new across this tick */
+      double sc = s0 + ( s1 - s0 ) * ( (double)( i / 2 + 1 ) / (double)n ), d = (double)sam * sc;
+      v = (int64_t)( d < 0 ? d - 0.5 : d + 0.5 );
+      }
+    if( v > 2147483647 ) v = 2147483647; else if( v < -2147483647 - 1 ) v = -2147483647 - 1;
+    pcm[i] = (int32_t)v;
+    if( i == 0 ) min = max = v;
+    if( v < min ) min = v; else if( v > max ) max = v;
     }
+  if( shift ) *shift = sh;
   return (uint64_t)( max - min ) > peak ? (uint64_t)( max - min ) : peak;
   }

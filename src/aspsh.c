@@ -1,9 +1,8 @@
 /* aspsh DIR: a terminal shell for a running aspace. a status line, the recent events, and a few keys:
      space  safe / live        r  sync again         l  learn the gate floor again
-     g / G  gate more / less sensitive (3 dB)        a  next automix (off, fade, overlap, swap)
+     g / G  gate more / less sensitive (3 dB)        a  next automix (off, overlap, swap)
      + / -  automix amount up / down                 e  swap: also within an iteration
-     d / u  loop gain down / up 6 dB                  t  list takes
-     v      revert (asks for a log point; safe only)
+     u      revert (asks for a log point; safe only) t  list takes
      q      leave this shell   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
@@ -26,7 +25,7 @@ static void quiet( const char *l, void *u ) { (void)u; if( ! strncmp( l, "ERR", 
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [d/u] loop gain  [v] revert  [q] quit  [Q] stop\n\n" );
+  printf( "\033[H\033[J aspsh   [space] safe/live  [r] sync  [l] relearn  [g/G] gate  [a] automix  [+/-] n  [e] each  [t] takes  [u] revert  [q] quit  [Q] stop\n\n" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -67,17 +66,15 @@ int main( int argc, char **argv )
         case 'g': strcpy( c, "GATE -3" ); break;                    /* a lower margin hears more */
         case 'G': strcpy( c, "GATE +3" ); break;
         case 'a': case '+': case '-': case 'e':
-          if( k == 'a' ) amode = ( amode + 1 ) % 4;
+          if( k == 'a' ) amode = ( amode + 1 ) % 3;
           if( k == '+' ) amount++;
           if( k == '-' && amount > 1 ) amount--;
           if( k == 'e' ) each = ! each;
-          snprintf( c, sizeof c, "AUTOMIX %s %d%s", amode == 1 ? "FADE" : amode == 2 ? "OVERLAP" : amode == 3 ? "SWAP" : "OFF", amount, amode == 3 && each ? " each" : "" );
-          if( amode == 3 && each ) snprintf( c, sizeof c, "AUTOMIX SWAP each" );
+          snprintf( c, sizeof c, "AUTOMIX %s %d%s", amode == 1 ? "OVERLAP" : amode == 2 ? "SWAP" : "OFF", amount, amode == 2 && each ? " each" : "" );
+          if( amode == 2 && each ) snprintf( c, sizeof c, "AUTOMIX SWAP each" );
           break;
         case 't': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
-        case 'd': strcpy( c, "DOWN 1" ); break;
-        case 'u': strcpy( c, "UP 1" ); break;
-        case 'v':
+        case 'u':
           {
           char l[40] = "";
           restore(); printf( "\nrevert to log point: " ); fflush( stdout );

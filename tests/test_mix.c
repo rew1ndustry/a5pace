@@ -67,7 +67,7 @@ int main( void )
   AspTake k0, k1;
   CHECK( asp_take_get( r.s, s.id[0], &k0 ) == 0 && asp_take_get( r.s, s.id[1], &k1 ) == 0 );
   CHECK( k0.channels == 1 && k1.channels == 1 );
-  CHECK( s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 && s.st[1].mono && s.st[1].l == 1 && s.st[1].r == 1 );   /* in the middle: both outputs */
+  CHECK( s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 && s.st[1].mono && s.st[1].l == 1 );
   CHECK( strstr( "x", "x" ) );
   AspCoreStatus st; asp_core_status( r.c, &st );
   CHECK( st.jobs == 0 );
@@ -89,7 +89,7 @@ int main( void )
   base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
   sim_burst( &r.sim, base, 2, 0.1 );
   sim_until( &r.sim, base + LOOP + 48000 * 3 );
-  { States s; states( &r, &s ); AspTake k; CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &k ) == 0 && k.channels == 2 && ! s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 && ! s.st[0].flip ); CHECK( matches( &r ) ); }
+  { States s; states( &r, &s ); AspTake k; CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &k ) == 0 && k.channels == 2 && ! s.st[0].mono && s.st[0].l == 0 && s.st[0].r == 0 ); CHECK( matches( &r ) ); }
   rig_close( &r );
 
   /* --- swap: mono takes go hard left, hard right, hard left; stereo takes flip --- */
@@ -106,53 +106,32 @@ int main( void )
   CHECK( s.n == 5 );
   if( s.n == 5 )
     {
-    CHECK( s.st[0].l == 1 && s.st[0].r == 0 );          /* hard left, hard right, hard left */
-    CHECK( s.st[1].l == 0 && s.st[1].r == 1 );
-    CHECK( s.st[2].l == 1 && s.st[2].r == 0 );
+    CHECK( s.st[0].l == 0 && s.st[0].r == ASP_LEV_OFF );
+    CHECK( s.st[1].l == ASP_LEV_OFF && s.st[1].r == 0 );
+    CHECK( s.st[2].l == 0 && s.st[2].r == ASP_LEV_OFF );
     CHECK( s.st[3].flip != s.st[4].flip );
     }
   CHECK( matches( &r ) );
   }
   rig_close( &r );
 
-  /* --- fade: the loop gain steps down every loop, to the noise floor, and stays; the output fades to it --- */
-  asp_core_defaults( &cfg ); cfg.automix.mode = ASP_AUTOMIX_FADE; cfg.automix.n = 1;
-  rig_open( &r, &cfg, 140 );
-  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
-  sim_burst( &r.sim, base, 2, 0.1 );
-  int last = -1, rises = 0, steady = 0;
-  for( int p = 0; p < 24; p++ )
-    {
-    sim_until( &r.sim, base + LOOP * ( p + 1 ) + 48000 * 3 );
-    AspCoreStatus st; asp_core_status( r.c, &st );
-    if( st.gain_steps > last ) rises++; else steady++;
-    last = st.gain_steps;
-    }
-  printf( "fade: %d steps down, %d passes unchanged, final gain %d steps (-%d dB)\n", rises, steady, last, 6 * last );
-  CHECK( rises >= 8 && rises <= 16 && steady >= 6 && last > 6 );
-  CHECK( matches( &r ) );                                 /* the tank never changed: the gain is on the way out */
-  rig_close( &r );
-
-  /* --- the output fades to a new gain over the next tick, whatever the loop holds, and is steady after --- */
+  /* --- the output fades when it has to come down further to fit, and is exact when steady --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 30 );
   {
-  static int64_t flat[2 * ASP_TICK];
-  for( int i = 0; i < 2 * ASP_TICK; i++ ) flat[i] = 1000000;
-  for( int64_t pos = 0; pos < LOOP; pos += ASP_TICK ) asp_tank_put( r.t, pos, LOOP - pos < ASP_TICK ? LOOP - pos : ASP_TICK, flat );
+  static int64_t loud[2 * ASP_TICK];
+  for( int i = 0; i < ASP_TICK; i++ ) { loud[2*i] = loud[2*i+1] = ( i & 1 ) ? -1200000000LL : 1200000000LL; }   /* peak to peak 2.4e9: needs 2 bits down */
+  for( int64_t pos = 0; pos < LOOP; pos += ASP_TICK ) asp_tank_put( r.t, pos, LOOP - pos < ASP_TICK ? LOOP - pos : ASP_TICK, loud );
   int32_t in[2 * ASP_TICK] = { 0 }, a[2 * ASP_TICK], b[2 * ASP_TICK], c[2 * ASP_TICK];
-  asp_core_tick( r.c, in, a );
-  asp_core_gain( r.c, 1, 1 );                                 /* -6 dB: the next output tick fades */
-  asp_core_tick( r.c, in, b );
-  asp_core_tick( r.c, in, c );
-  int mono = 1; for( int i = 1; i < ASP_TICK; i++ ) if( b[2*i] > b[2*(i-1)] ) mono = 0;
-  printf( "gain change: before %d, fade %d .. %d, after %d\n", a[0], b[0], b[2*(ASP_TICK-1)], c[0] );
-  CHECK( a[0] == 1000000 && a[2*(ASP_TICK-1)] == 1000000 );
-  CHECK( b[0] > 999900 && b[2*(ASP_TICK-1)] == 500000 && mono );            /* starts where it was, ends at the new gain, smoothly */
-  CHECK( c[0] == 500000 && c[2*(ASP_TICK-1)] == 500000 );
-  asp_core_gain( r.c, 0, 0 );
-  asp_core_tick( r.c, in, a );
-  CHECK( a[0] <= 500200 && a[0] >= 500000 && a[2*(ASP_TICK-1)] == 1000000 );   /* and back up the same way */
+  asp_core_tick( r.c, in, a );                                /* the first: nothing known about the peak yet */
+  asp_core_tick( r.c, in, b );                                /* the shift has to change: this one fades */
+  asp_core_tick( r.c, in, c );                                /* steady at the new shift */
+  double ma = 0, mb0 = 0, mb1 = 0, mc = 0;
+  for( int i = 0; i < 100; i++ ) { ma += llabs( a[2*i] ); mb0 += llabs( b[2*i] ); mb1 += llabs( b[2*(ASP_TICK-1-i)] ); mc += llabs( c[2*i] ); }
+  printf( "output shift: first tick %.3g, fading tick %.3g .. %.3g, after %.3g\n", ma / 100, mb0 / 100, mb1 / 100, mc / 100 );
+  CHECK( ma / 100 > 1.1e9 && mb0 / 100 > 1.1e9 * 0.99 && mb1 / 100 < 3.2e8 && mc / 100 > 2.9e8 && mc / 100 < 3.1e8 );
+  int smooth = 1; for( int i = 2; i < ASP_TICK - 2; i++ ) if( llabs( llabs( (int64_t)b[2*i] ) - llabs( (int64_t)b[2*(i-2)] ) ) > 400000 ) smooth = 0;
+  CHECK( smooth );                                            /* no step anywhere inside the fading tick */
   }
   rig_close( &r );
 

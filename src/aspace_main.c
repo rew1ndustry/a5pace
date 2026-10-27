@@ -7,7 +7,8 @@
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --safe  start with recording off
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
-            -g DB -r DB  gate margin, ring  --automix SPEC (off | fade N | overlap N | swap [each])
+            --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
+            -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
    the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -81,7 +82,7 @@ static void fold_cb( int64_t id, const char *st, void *u )
   ctl_say( r->ctl, r->run, "take %lld iter %lld off %lld frames %lld ch %d %s", (long long)id, (long long)k.iter, (long long)k.off, (long long)k.frames, k.channels, st );
   }
 
-static const char *mode_name( int m ) { return m == ASP_AUTOMIX_FADE ? "fade" : m == ASP_AUTOMIX_OVERLAP ? "overlap" : m == ASP_AUTOMIX_SWAP ? "swap" : "off"; }
+static const char *mode_name( int m ) { return m == ASP_AUTOMIX_OVERLAP ? "overlap" : m == ASP_AUTOMIX_SWAP ? "swap" : "off"; }
 
 static void handle( void *u, int cl, const char *line )
   {
@@ -106,19 +107,19 @@ static void handle( void *u, int cl, const char *line )
     {
     ctl_say( c, cl, "{\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
-      "\"gain_steps\":%d,\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
+      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"session\":\"%.12s\"}",
       st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
-      st.gain_steps, mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
+      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.gate_learnt, st.sync_level_db, (long long)st.log_seq, asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0;
-    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  gain %ddB  automix %s%s  gate %.0fdB%s  lat %.1fms",
+    ctl_say( c, cl, "%s %5.1fs  loop %4.1f/%4.1fs  iter %llu  takes %d%s%s  %s  automix %s%s  gate %.0fdB%s  lat %.1fms",
       st.phase ? "PLAY" : "SYNC", st.tick / 5.0, pos / 48000.0, st.loop_frames / 48000.0, (unsigned long long)st.iter, st.loop_takes,
-      st.jobs ? " (moving)" : "", st.take_open ? "  REC" : "", st.live ? "live" : "SAFE", -6 * st.gain_steps, mode_name( st.automix.mode ),
-      st.automix.mode == ASP_AUTOMIX_FADE || st.automix.mode == ASP_AUTOMIX_OVERLAP ? " n" : "", st.gate_db, st.gate_learnt ? "" : " learning",
+      st.jobs ? " (moving)" : "", st.take_open ? "  REC" : "", st.live ? "live" : "SAFE", mode_name( st.automix.mode ),
+      st.automix.mode == ASP_AUTOMIX_OVERLAP ? " n" : "", st.gate_db, st.gate_learnt ? "" : " learning",
       st.latency * 1000.0 / 48000 );
     ctl_ok( c, cl );
     }
@@ -132,27 +133,29 @@ static void handle( void *u, int cl, const char *line )
   else if( ! strcmp( w[0], "AUTOMIX" ) && n > 1 )
     {
     for( char *q = w[1]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
-    int m = ! strcmp( w[1], "FADE" ) ? ASP_AUTOMIX_FADE : ! strcmp( w[1], "OVERLAP" ) ? ASP_AUTOMIX_OVERLAP :
+    int m = ! strcmp( w[1], "OVERLAP" ) ? ASP_AUTOMIX_OVERLAP :
             ! strcmp( w[1], "SWAP" ) ? ASP_AUTOMIX_SWAP : ! strcmp( w[1], "OFF" ) ? ASP_AUTOMIX_OFF : -1;
-    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX OFF | FADE n [RESTORE] | OVERLAP n | SWAP [EACH]" ); return; }
-    int arg = n > 2 ? atoi( w[2] ) : 0, bits = 0;
-    for( int k = 2; k < n; k++ )
-      { if( ! strncasecmp( w[k], "each", 4 ) ) bits |= 1; else if( ! strncasecmp( w[k], "restore", 4 ) ) bits |= 2; }
+    if( m < 0 ) { ctl_err( c, cl, "AUTOMIX OFF | OVERLAP n | SWAP [EACH]" ); return; }
+    int arg = n > 2 ? atoi( w[2] ) : 0, each = n > 2 && ( w[2][0] == 'e' || w[2][0] == 'E' );
     if( m == ASP_AUTOMIX_SWAP ) arg = 0;
-    if( ( m == ASP_AUTOMIX_FADE || m == ASP_AUTOMIX_OVERLAP ) && arg < 1 ) arg = m == ASP_AUTOMIX_FADE ? 1 : 4;
-    asp_core_automix( r->core, m, arg, bits );
+    if( m == ASP_AUTOMIX_OVERLAP && arg < 1 ) arg = 4;
+    asp_core_automix( r->core, m, arg, each );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "EDGE" ) && n > 2 )
     { asp_core_edge( r->core, ! strcasecmp( w[1], "starve" ), atoll( w[2] ) ); ctl_ok( c, cl ); }
-  else if( ! strcmp( w[0], "GAIN" ) && n > 1 ) { asp_core_gain( r->core, atoi( w[1] ), 0 ); ctl_ok( c, cl ); }          /* absolute: steps of 6 dB down */
-  else if( ! strcmp( w[0], "DOWN" ) ) { asp_core_gain( r->core, n > 1 ? atoi( w[1] ) : 1, 1 ); ctl_ok( c, cl ); }   /* knock the loop down n * 6 dB */
-  else if( ! strcmp( w[0], "UP" ) ) { asp_core_gain( r->core, -( n > 1 ? atoi( w[1] ) : 1 ), 1 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {
     int64_t q = asp_core_revert( r->core, atoll( w[1] ) );
     if( q < 0 ) ctl_err( c, cl, "REVERT needs SAFE first, and a log point that exists" ); else { ctl_say( c, cl, "%lld", (long long)q ); ctl_ok( c, cl ); }
+    }
+  else if( ! strcmp( w[0], "EVENT" ) && n > 2 && ( ! strncmp( w[1], "edge_", 5 ) || ! strncmp( w[1], "shell_", 6 ) ) )
+    {
+    /* the edge or the shell tells the log something (a latency report, ...): EVENT edge_latency {json} */
+    const char *js = strstr( line, w[1] ); js += strlen( w[1] ); while( *js == ' ' ) js++;
+    asp_log( r->store, "edge", w[1], *js ? js : "{}", st.tick );
+    ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "WATCH" ) ) { ctl_watch( c, cl, 1 ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "QUIT" ) ) { ctl_ok( c, cl ); quit = 1; }
@@ -214,6 +217,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
     else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) cfg.sync.max_db = atof( argv[++i] );      /* never louder than this, dB re asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) cfg.sync.start_db = atof( argv[++i] );
+    else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */
     else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */
     else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) cfg.sync.target_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "-g" ) && i + 1 < argc ) cfg.gate_db = atof( argv[++i] );
@@ -221,10 +225,10 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--automix" ) && i + 1 < argc )
       {
       const char *s = argv[++i];
-      cfg.automix.mode = ! strncmp( s, "fade", 4 ) ? ASP_AUTOMIX_FADE : ! strncmp( s, "overlap", 7 ) ? ASP_AUTOMIX_OVERLAP :
+      cfg.automix.mode = ! strncmp( s, "overlap", 7 ) ? ASP_AUTOMIX_OVERLAP :
                          ! strncmp( s, "swap", 4 ) ? ASP_AUTOMIX_SWAP : ASP_AUTOMIX_OFF;
       const char *sp = strchr( s, ' ' );
-      cfg.automix.n = sp ? atoi( sp + 1 ) : ( cfg.automix.mode == ASP_AUTOMIX_FADE ? 1 : 4 );
+      cfg.automix.n = sp ? atoi( sp + 1 ) : 4;
       cfg.automix.each = sp && strstr( sp, "each" ) != NULL;
       }
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
