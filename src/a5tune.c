@@ -138,9 +138,13 @@ static void params_from( AspGateParams *p, const char *text )
   if( ! asp_settings_get( text, "ring", v, sizeof v ) ) p->ring = atof( v );
   if( ! asp_settings_get( text, "lowcut", v, sizeof v ) ) p->lowcut = atof( v );
   if( ! asp_settings_get( text, "strict", v, sizeof v ) ) p->strict = atoi( v );
+  if( ! asp_settings_get( text, "minpeak", v, sizeof v ) ) p->minpeak = atof( v );
   }
 static void params_text( const AspGateParams *p, char *out, size_t n )
-  { snprintf( out, n, "gate=%g;ring=%g;lowcut=%g;strict=%d", p->gate, p->ring, p->lowcut, p->strict ); }
+  {
+  snprintf( out, n, "gate=%g;ring=%g;lowcut=%g;strict=%d", p->gate, p->ring, p->lowcut, p->strict );
+  if( p->minpeak < 0 ) { size_t l = strlen( out ); snprintf( out + l, n - l, ";minpeak=%g", p->minpeak ); }
+  }
 
 static void print_eval( const int32_t *pcm, int64_t frames, const AspGateParams *p, Win *w, int nw )
   {
@@ -222,13 +226,53 @@ static int cmd_tune( int argc, char **argv )
       printf( "." ); fflush( stdout );
       }
     }
+  /* stage 3: the quietest take worth keeping. from the best setting so far: if what it wrongly keeps is all clearly
+     quieter than the quietest good sound, a floor between them takes the rest out */
+  {
+  AspGateParams bp = c[best].p;
+  int ne = asp_gatesim( pcm, frames, &bp, evs, MAXE );
+  score_it( evs, ne, w, nw );
+  double maxbad = -300, mingood = 300; int nbad = 0;
+  for( int k = 0; k < ne; k++ )
+    {
+    double s = evs[k].start / RATE, e = evs[k].end / RATE; int good = 0, bad2 = 0;
+    if( ! evs[k].kept ) continue;
+    for( int i = 0; i < nw; i++ )
+      {
+      if( w[i].cls == 'G' && s < w[i].e && e > w[i].s ) good = 1;
+      else if( w[i].cls != 'G' && w[i].cls != 'X' && in_win( w + i, s ) ) bad2 = 1;
+      }
+    if( ! good && ! bad2 ) { bad2 = 1; }                       /* a stray event */
+    if( good && evs[k].peak_db < mingood ) mingood = evs[k].peak_db;
+    if( bad2 && ! good ) { nbad++; if( evs[k].peak_db > maxbad ) maxbad = evs[k].peak_db; }
+    }
+  if( nbad && mingood < 300 && maxbad < mingood - 8 )
+    {
+    Cand *k = c + nc++;
+    k->p = bp; k->p.minpeak = floor( ( mingood + maxbad ) / 2 );
+    k->s = run_one( pcm, frames, &k->p, w, nw );
+    if( k->s.score <= c[best].s.score ) best = nc - 1;
+    printf( "m" );
+    /* try the same floor on every setting that was tied for best before it, so the plateau is measured with it */
+    int upto = nc - 1; double topbefore = 1e18, floordb = c[upto].p.minpeak;
+    for( int i = 0; i < upto; i++ ) if( c[i].s.score < topbefore ) topbefore = c[i].s.score;
+    for( int i = 0; i < upto; i++ ) if( c[i].s.score == topbefore && c[i].p.minpeak == 0 && nc < 590 )
+      {
+      Cand *q = c + nc++;
+      q->p = c[i].p; q->p.minpeak = floordb;
+      q->s = run_one( pcm, frames, &q->p, w, nw );
+      if( q->s.score < c[best].s.score ) best = nc - 1;
+      }
+    printf( "m" );
+    }
+  }
   printf( "%d settings tried\n", nc );
   double top = c[best].s.score; int same = 0;
   double mg = 0, mr = 0, ml = 0, ms = 0;
-  for( int i = 0; i < nc; i++ ) if( c[i].s.score == top ) { same++; mg += log( c[i].p.gate ); mr += c[i].p.ring; ml += log( c[i].p.lowcut ); ms += c[i].p.strict; }
+  for( int i = 0; i < nc; i++ ) if( c[i].s.score == top && c[i].p.minpeak == c[best].p.minpeak ) { same++; mg += log( c[i].p.gate ); mr += c[i].p.ring; ml += log( c[i].p.lowcut ); ms += c[i].p.strict; }
   mg = exp( mg / same ); mr /= same; ml = exp( ml / same ); ms /= same;
   int pick = best; double bd = 1e9;
-  for( int i = 0; i < nc; i++ ) if( c[i].s.score == top )
+  for( int i = 0; i < nc; i++ ) if( c[i].s.score == top && c[i].p.minpeak == c[best].p.minpeak )
     {
     double d = fabs( log( c[i].p.gate / mg ) ) + fabs( c[i].p.ring - mr ) / 3 + fabs( log( c[i].p.lowcut / ml ) ) + fabs( c[i].p.strict - ms );
     if( d < bd ) { bd = d; pick = i; }

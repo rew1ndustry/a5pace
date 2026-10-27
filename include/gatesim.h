@@ -5,7 +5,7 @@
 #define ASPGATESIM_H
 #include <stdint.h>
 
-typedef struct { double gate, ring, lowcut; int strict; } AspGateParams;
+typedef struct { double gate, ring, lowcut; int strict; double minpeak; } AspGateParams;   /* minpeak: dBFS, 0 = off: a take that never reaches it is not worth keeping */
 typedef struct
   {
   int64_t start, end;          /* frames from the start of the input */

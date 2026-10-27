@@ -24,7 +24,7 @@ a5cal list
 3. **Search** (`a5tune`): the gate and the core's take logic are replayed over the capture with many settings. A setting is
    scored by: good sounds missed (worst), bad or quiet windows opened, stray events in the rests. It searches the lowcut
    (never above the instrument's lowest note, which is why `a5cal` asks), strict, then the gate margin and the ring rule,
-   and takes the setting in the middle of the best ones, so a wide plateau is preferred to a lucky point. It says how many
+   then the quietest take worth keeping (`minpeak`, placed between the loudest wrong event and the softest good one, when they are clearly apart), and takes the setting in the middle of the best ones, so a wide plateau is preferred to a lucky point. It says how many
    settings were equally good: few means the capture was thin, record more.
 4. **Save**: the proposal becomes the profile. Re-run any time; capture again to change it.
 

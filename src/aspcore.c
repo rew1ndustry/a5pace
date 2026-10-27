@@ -109,6 +109,7 @@ static void apply_text( AspCore *c, const char *text )
   if( ! asp_settings_get( text, "lowcut", v, sizeof v ) ) asp_gate_set_lowcut( c->gate, atof( v ) );
   if( ! asp_settings_get( text, "strict", v, sizeof v ) ) asp_gate_set_strict( c->gate, atoi( v ) );
   if( ! asp_settings_get( text, "mono", v, sizeof v ) ) c->cfg.mono_detect = atoi( v );
+  if( ! asp_settings_get( text, "minpeak", v, sizeof v ) ) c->cfg.minpeak = atof( v );
   if( ! asp_settings_get( text, "automix", v, sizeof v ) )
     {
     AspCoreCfg t = c->cfg; asp_settings_cfg( &t, text );
@@ -323,17 +324,21 @@ static void take_end( AspCore *c, const int32_t *last )
   int bad = asp_flac_enc_close( c->enc );
   c->enc = NULL;
 
-  /* a bump: told the instrument's lowest note, a take with most of its power below it is not a note. it is not kept */
+  /* not worth keeping: a bump (told the instrument's lowest note, most of the take lies below it), or a take that never
+     reaches the quietest level worth keeping. it is not stored, and it is taken out of the loop again */
   double share = asp_gate_event_share( c->gate, 1 );
-  if( ! bad && c->cfg.lowcut > 30 && asp_gate_lowcut( c->gate ) > 30 && share < asp_gate_dominance( c->gate ) )
+  double pkdb = level_db( c->t_peak[0] > c->t_peak[1] ? c->t_peak[0] : c->t_peak[1] );
+  int is_bump = c->cfg.lowcut > 30 && asp_gate_lowcut( c->gate ) > 30 && share < asp_gate_dominance( c->gate );
+  int is_quiet = c->cfg.minpeak < 0 && pkdb < c->cfg.minpeak;
+  if( ! bad && ( is_bump || is_quiet ) )
     {
     int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
     if( c->cfg.feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == 2 )   /* it was fed into the loop as it came: take it out again */
       mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, 2, (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, 2, ASP_PLACE_OFF ) );   /* fed at level 0 0 */
     else free( sp );
     unlink( c->part );
-    logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"bump\",\"peak_db\":[%.1f,%.1f]}",
-           (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, level_db( c->t_peak[0] ), level_db( c->t_peak[1] ) );
+    logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
+           (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, is_bump ? "bump" : "quiet", level_db( c->t_peak[0] ), level_db( c->t_peak[1] ) );
     c->gone = c->tick;
     return;
     }

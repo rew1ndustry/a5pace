@@ -7,7 +7,7 @@
 
 #define HANG 10                       /* as the core: ticks of quiet a take keeps */
 
-void asp_gateparams_default( AspGateParams *p ) { p->gate = 18; p->ring = 7.5; p->lowcut = 30; p->strict = 0; }
+void asp_gateparams_default( AspGateParams *p ) { p->gate = 18; p->ring = 7.5; p->lowcut = 30; p->strict = 0; p->minpeak = 0; }
 
 int asp_gatesim( const int32_t *pcm, int64_t frames, const AspGateParams *p, AspGateEvent *ev, int max )
   {
@@ -40,8 +40,8 @@ close:
     if( n < max )
       {
       ev[n].start = start; ev[n].end = ( tick + 1 ) * ASP_TICK; ev[n].share = share;
-      ev[n].kept = ! ( p->lowcut > 30 && share < asp_gate_dominance( g ) );
       ev[n].peak_db = peak ? 20 * log10( peak / 2147483648.0 ) : -200;
+      ev[n].kept = ! ( p->lowcut > 30 && share < asp_gate_dominance( g ) ) && ! ( p->minpeak < 0 && ev[n].peak_db < p->minpeak );
       }
     n++; track = 0; gone = tick; shh = 0;
     }
@@ -53,8 +53,8 @@ next:
     {
     double share = asp_gate_event_share( g, 1 );
     ev[n].start = start; ev[n].end = frames; ev[n].share = share;
-    ev[n].kept = ! ( p->lowcut > 30 && share < asp_gate_dominance( g ) );
     ev[n].peak_db = peak ? 20 * log10( peak / 2147483648.0 ) : -200;
+    ev[n].kept = ! ( p->lowcut > 30 && share < asp_gate_dominance( g ) ) && ! ( p->minpeak < 0 && ev[n].peak_db < p->minpeak );
     n++;
     }
   asp_gate_free( g );

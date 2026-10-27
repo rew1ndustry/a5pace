@@ -102,6 +102,19 @@ int main( void )
     CHECK( matches( &r ) ); }                                      /* and the thump was taken out of the loop again */
   rig_close( &r );
 
+  /* --- minpeak: a take that never reaches the quietest level worth keeping is not kept --- */
+  asp_core_defaults( &cfg ); cfg.minpeak = -45;
+  rig_open( &r, &cfg, 60 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  sim_burst_hz( &r.sim, base, 2, 0.003, 440 );                     /* -50 dBFS: opens the gate, too quiet to keep */
+  sim_burst_hz( &r.sim, base + 2 * LOOP, 2, 0.05, 440 );           /* -26 dBFS: kept */
+  sim_until( &r.sim, base + 3 * LOOP + 48000 * 3 );
+  { States s; states( &r, &s );
+    printf( "minpeak test: %d take(s) stored, %d discarded\n", s.n, count_type( r.dir, "discarded" ) );
+    CHECK( s.n == 1 && count_type( r.dir, "discarded" ) == 1 && count_type( r.dir, "new" ) == 2 );
+    CHECK( matches( &r ) ); }
+  rig_close( &r );
+
   /* --- stereo stays stereo; identical channels count as mono --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 40 );

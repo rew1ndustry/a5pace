@@ -25,6 +25,7 @@ typedef struct
   double gate_db, ring_db;     /* gate margin, ring rule; 0 keeps the defaults (18, 7.5) */
   double lowcut;               /* Hz: the instrument's lowest note; nothing below opens the gate. 0 or 30: as asp4 */
   int    strict;               /* 1: one band alone over its threshold no longer opens the gate */
+  double minpeak;              /* dBFS (negative), 0 = off: a take that never reaches this is not kept */
   int    live;                 /* record takes (default 1); 0 starts safe */
   int    feed;                 /* put each take into the loop as it is recorded (default 1) */
   int64_t gain;                /* output gain, asp4's my_gain (0) */

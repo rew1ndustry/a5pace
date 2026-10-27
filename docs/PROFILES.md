@@ -15,6 +15,7 @@ that exists, or by hand) and the loop shell only picks one from a list.
 | `gate` | the gate's margin over the learnt floor, dB (18) |
 | `ring` | the ring rule, dB over the floor (7.5) |
 | `lowcut` | the instrument's lowest note, Hz: nothing below it opens the gate; a take mostly below it is a bump and is not kept (30 = as asp4) |
+| `minpeak` | dBFS (negative): a take that never reaches this level is not kept, and is taken out of the loop again (the quietest sound worth keeping; calibration finds it) |
 | `strict` | 1: one band alone, twice running, does not open the gate |
 | `mono` | 1: a take from one channel (or two identical ones) is stored as mono (default 1) |
 | `sync_max`, `sync_start`, `sync_target` | the sync tone: ceiling and first level in dB re asp4's, and the wanted input peak in dBFS |
