@@ -26,7 +26,7 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o
+LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/gate.o
 all: bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank
 
 $(FLACLIB):
@@ -46,6 +46,9 @@ build/flacio.o: src/flacio.c include/flacio.h $(FLAC_DEP)
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) $(FLAC_CFLAGS) -c -o $@ $<
 build/sha256.o: src/sha256.c include/aspstore.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+build/gate.o: src/gate.c include/gate.h include/asptank.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/asptank.o: src/asptank.c include/asptank.h include/plat.h
@@ -78,6 +81,8 @@ bin/test_tank: tests/test_tank.c $(LIBOBJ) $(SQL_OBJ)
 test: bin/test_store bin/test_tank
 	bin/test_store
 	bin/test_tank
+gate-diff:
+	tests/gate_diff.sh $(FILES)
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
-.PHONY: all test clean
+.PHONY: all test clean gate-diff
