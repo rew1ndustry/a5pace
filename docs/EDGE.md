@@ -31,3 +31,19 @@ aspface/SDL, an ALSA/JACK/CoreAudio adapter, a network feed from another machine
 leaves the machine and no take is committed as published. aspace itself keeps recording whatever
 passes the gate; publishing happens outside aspace (auto for live performance, or by marking a take
 ready in keep mode).
+
+## The sync hunt in detail (`include/sync.h`)
+- One second at a time: `asp_sync_out` gives the second to play, `asp_sync_in` takes the second recorded
+  while it played. Tone coding and decoding are asp4's (CPV/MSK), held to it by `tests/sync_diff.sh`.
+- **Level:** starts at -48 dB (re asp4's level) and rises 6 dB for each second not heard, to at most
+  `max_db`. Once heard it measures the input peak and moves the output in one step so the input peak
+  lands on `target_db` (default -12 dBFS), never above `max_db`. If the shell has muted what is heard
+  (`output_muted`), it starts at the top level instead; the shell does the muting around the hunt.
+- **Polarity:** each second tries the louder channel then the other, each both ways up, and reports
+  which one read. (asp4 only ever tried one polarity per second, alternating by second.)
+- **Answer:** the median of `need` (3) readings at the settled level; if they spread by more than `tol`
+  (2) samples the path is unsteady and it keeps trying until `give_up` seconds, then reports -1 with the
+  spread. Zero crossings through real converters move by a sample with noise, so precision is +-1.
+- A round trip of 0 frames is asp4's "not found" and cannot be reported.
+- **Loop origin:** the loop will start at its top when sync is found (not at the elapsed offset); that is
+  done in the tick loop, which sets the origin tick, not here.
