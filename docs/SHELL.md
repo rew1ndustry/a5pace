@@ -70,3 +70,14 @@ It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind o
 - signals (SIGUSR1/2, SIGURG) as the control path: replaced by the control port
 - the tick clicks (`CLICK`): dropped entirely; the create tool will make a metronome track from samples
 - `aspace.rc`-style variables read by several scripts: options are the runner's
+
+## On a real sound card: `tools/aspcard DIR [aspace options]`
+`arecord | aspace run | aplay` on ALSA (the UR22C here; add a case for another card), with the shell's jobs done
+for aspace: the loopback goes on for the sync hunt and off for playing (it follows `sync_start` / `sync_found` /
+`resync` in the log), and the card's `overrun` / `underrun` reports become `EDGE drop` / `EDGE starve`. The sync
+tone is capped (`ASPCARD_SYNCMAX`, default -36 dB re asp4's) because the monitor may be in headphones; it starts at
+-48 and only rises if it is not heard. It never stops anything it did not start. If only pipewire holds the card,
+`ASPCARD_RELEASE=1` sets the card's pipewire profile to "off" for the run and puts it back on exit. `ASPCARD_DRY=1`
+checks everything and starts nothing. First real run (2026-10-27, UR22C, loopback): sync found on the first
+attempt, 30123 frames (0.63 s: the pipes and card buffers), spread 1 sample, no drops or starves, loopback off and
+pipewire restored at the end.

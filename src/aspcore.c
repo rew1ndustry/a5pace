@@ -151,6 +151,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
+  logf_( c, "sync_start", "{\"level_db\":%.1f}", asp_sync_level( c->sync ) );
   logf_( c, "core_open", "{\"loop\":%lld,\"iter\":%llu,\"live\":%d,\"takes\":%d,\"gain_steps\":%d}", (long long)c->size, (unsigned long long)c->iter, c->live, c->nlt, c->gain_steps );
   return c;
   }

@@ -6,6 +6,7 @@
    options: -S LAT  simulated card with LAT frames of round trip (no pipe), paced in real time
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --safe  start with recording off
+            --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
             -g DB -r DB  gate margin, ring  --automix SPEC (off | fade N | overlap N | swap [each])
    the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
 #define _POSIX_C_SOURCE 200809L
@@ -211,6 +212,10 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "-C" ) && i + 1 < argc ) port = atoi( argv[++i] );
     else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
+    else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) cfg.sync.max_db = atof( argv[++i] );      /* never louder than this, dB re asp4's sync */
+    else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) cfg.sync.start_db = atof( argv[++i] );
+    else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */
+    else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) cfg.sync.target_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "-g" ) && i + 1 < argc ) cfg.gate_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "-r" ) && i + 1 < argc ) cfg.ring_db = atof( argv[++i] );
     else if( ! strcmp( argv[i], "--automix" ) && i + 1 < argc )

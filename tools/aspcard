@@ -1,0 +1,126 @@
+#!/bin/bash
+# aspcard DIR [aspace run options]
+# aspace on a real sound card: arecord | aspace | aplay, the loopback switched on for the sync hunt and off for
+# playing, and the card's dropped / starved samples reported to aspace. this is a shell: the platform is here,
+# not in the core. alsa + the UR22C on this host; add a case to mixer() and DEV for another card.
+#
+#   ASPCARD_DEV     the alsa device          (default hw:UR22C)
+#   ASPCARD_SYNCMAX highest sync tone, dB re asp4's, kept low for headphones (default -36)
+#   ASPCARD_DRY=1   check everything, start nothing
+#   ASPCARD_RELEASE=1  when only pipewire/wireplumber hold the card, switch its profile to "off" for the run and
+#                      put it back afterwards (nothing is killed)
+#
+# it never stops anything it did not start: if the card is in use it says who and leaves.
+set -u
+DIR=${1:?usage: aspcard DIR [aspace run options]}; shift
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+BIN=$HERE/bin
+DEV=${ASPCARD_DEV:-hw:UR22C}
+SYNCMAX=${ASPCARD_SYNCMAX:--36}
+FMT="-q -D $DEV -f S32_LE -c 2 -r 48000 -t raw"
+CARD=${DEV#hw:}; CARD=${CARD%%,*}
+
+say_() { echo "aspcard: $*" >&2; }
+
+# --- the card must be free, and we only look -------------------------------------------------
+holders() { fuser -v /dev/snd/pcmC${CARDNO}D* 2>&1 | grep -v "COMMAND\|^ *$" | grep -v "kernel"; }
+CARDNO=$(grep -i "${CARD}" /proc/asound/cards | head -1 | awk '{print $1}')
+[ -n "$CARDNO" ] || { say_ "no card $CARD"; exit 1; }
+
+PWDEV=""; PWOLD=""
+release_pipewire() {
+  # the profile of the pipewire device for this card: remember it, set "off", and wait for the card to be let go
+  command -v pw-dump >/dev/null && command -v pw-cli >/dev/null || return 1
+  read PWDEV PWOLD PWOFF < <(pw-dump 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for o in d:
+    i=o.get('info') or {}
+    if o.get('type','').endswith('Device') and str((i.get('props') or {}).get('api.alsa.card'))=='$CARDNO':
+        cur=(i['params'].get('Profile') or [{}])[0].get('index')
+        off=[p['index'] for p in i['params'].get('EnumProfile',[]) if p.get('name')=='off']
+        if cur is not None and off: print(o['id'],cur,off[0]); break
+")
+  [ -n "$PWDEV" ] || return 1
+  pw-cli set-param "$PWDEV" Profile "{ index: $PWOFF }" > /dev/null 2>&1 || return 1
+  say_ "pipewire let go of the card (profile $PWOLD -> off, restored on exit)"
+  for i in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(holders)" ] && return 0; sleep 0.3; done
+  return 1
+}
+restore_pipewire() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && say_ "pipewire has the card back (profile $PWOLD)"; }
+
+busy=$(holders)
+if [ -n "$busy" ] && [ "${ASPCARD_RELEASE:-0}" = 1 ] && [ "${ASPCARD_DRY:-0}" != 1 ] \
+   && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
+  release_pipewire; busy=$(holders)
+fi
+if [ -n "$busy" ]; then
+  say_ "the sound card is in use, not starting:"; echo "$busy" >&2
+  say_ "(only pipewire? ASPCARD_RELEASE=1 lets go of it for the run and puts it back)"
+  restore_pipewire
+  exit 1
+fi
+[ -d "$DIR" ] || { say_ "$DIR is not a session (aspace new DIR NAME SECONDS)"; exit 1; }
+[ -x "$BIN/aspace" ] || { say_ "build first: make"; exit 1; }
+arecord -l 2>/dev/null | grep -q "$CARD" || { say_ "no capture device $DEV"; exit 1; }
+
+# --- the mixer: loopback on while syncing, off in play ----------------------------------------
+UR22C=$(command -v ur22c || true)
+mixer() {   # on | off
+  case $(hostname) in
+    box|box.*) if [ -n "$UR22C" ]; then "$UR22C" loopback "$1" > /dev/null 2>&1; return; fi ;;
+  esac
+  if [ "$1" = on ]; then say_ "please let aspace hear its own output now (loop the output to the input)"
+  else say_ "please undo the loop now: aspace must hear only your inputs"; fi
+}
+
+if [ "${ASPCARD_DRY:-0}" = 1 ]; then
+  say_ "dry run: card $DEV free, session $DIR, sync ceiling $SYNCMAX dB; would run:"
+  echo "  arecord $FMT | aspace run --sync-max $SYNCMAX $* $DIR | aplay $FMT" >&2
+  exit 0
+fi
+
+pids=""
+cleanup() {
+  trap - EXIT INT TERM
+  "$BIN/aspctl" "$DIR" QUIT > /dev/null 2>&1; sleep 0.5       # aspace closes cleanly first
+  for p in $pids; do pkill -P "$p" 2>/dev/null; done        # then only our own pipeline, children of the subshell
+  [ -n "$pids" ] && kill $pids 2>/dev/null
+  mixer off
+  rm -f "$DIR/ctl"
+  restore_pipewire
+  say_ "done; loopback off"
+}
+trap cleanup EXIT INT TERM
+
+# --- xruns: arecord says "overrun", aplay says "underrun": tell aspace -------------------------
+xrun() {   # drop|starve
+  while IFS= read -r line; do
+    echo "$line" >&2
+    case $line in *[Oo]verrun*|*[Uu]nderrun*)
+      ms=$(echo "$line" | sed -n 's/.*at least \([0-9.]*\) ms.*/\1/p'); ms=${ms:-0}
+      "$BIN/aspctl" "$DIR" EDGE "$1" "$(awk "BEGIN{printf \"%d\", $ms*48}")" > /dev/null 2>&1 ;;
+    esac
+  done
+}
+
+mixer on
+# the pipeline; the first stage's stderr goes to the drop monitor, the last to the starve monitor
+( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw 2> >(xrun drop) \
+  | "$BIN/aspace" run -C 0 --sync-max "$SYNCMAX" "$@" "$DIR" \
+  | "$(command -v aplay)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw 2> >(xrun starve) ) &
+pipe=$!; pids="$pipe"
+
+# --- follow the log: loopback off when the round trip is found, on again if the hunt restarts ---
+n=0; while [ ! -s "$DIR/ctl" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
+[ -s "$DIR/ctl" ] || { say_ "aspace did not start"; exit 1; }
+( "$BIN/aspctl" "$DIR" WATCH | while IFS= read -r ev; do
+    case $ev in
+      *" sync_found "*) mixer off; say_ "synced: $ev" ;;
+      *" sync_start "*|*" resync "*) mixer on ;;
+      *" edge_drop "*|*" edge_starve "*) say_ "$ev" ;;
+    esac
+  done ) &
+pids="$pids $!"
+say_ "running on $DEV; watch it with: aspsh $DIR"
+wait $pipe
