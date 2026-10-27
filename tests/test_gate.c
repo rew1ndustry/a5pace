@@ -40,6 +40,7 @@ int main( void )
   CHECK( opens( 440, -50, 30, 0 ) && opens( 440, -50, 190, 1 ) );          /* a note opens it, with or without the options */
   CHECK( opens( 80, -50, 30, 0 ) );                                         /* a bump at 80 Hz opens the old gate ... */
   CHECK( ! opens( 80, -50, 190, 0 ) && ! opens( 80, -50, 190, 1 ) );        /* ... and not one told the lowest note is 190 Hz */
+  CHECK( opens( 80, -35, 30, 0 ) && ! opens( 80, -35, 190, 1 ) && ! opens( 120, -30, 190, 1 ) );   /* a loud bump: mostly below the range, so no */
   CHECK( opens( 440, -62, 190, 1 ) );                                       /* a quiet note still does */
   CHECK( opens( 2000, -55, 190, 1 ) );                                      /* and a high one */
   CHECK( ! opens( 440, -200, 190, 1 ) );                                    /* silence does not */

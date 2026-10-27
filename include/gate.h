@@ -24,4 +24,6 @@ void asp_gate_set_lowcut( AspGate *g, double hz );   /* the instrument's lowest 
 double asp_gate_lowcut( AspGate *g );
 void asp_gate_set_strict( AspGate *g, int on );     /* 1: a single band over its threshold twice running no longer opens the gate */
 int asp_gate_strict( AspGate *g );
+double asp_gate_event_share( AspGate *g, int reset );   /* share of the open-gate power above the lowcut; reset starts a new count */
+double asp_gate_dominance( AspGate *g );               /* the share below which an event is a bump (0.15) */
 #endif

@@ -284,6 +284,21 @@ static void take_end( AspCore *c, const int32_t *last )
   int bad = asp_flac_enc_close( c->enc );
   c->enc = NULL;
 
+  /* a bump: told the instrument's lowest note, a take with most of its power below it is not a note. it is not kept */
+  double share = asp_gate_event_share( c->gate, 1 );
+  if( ! bad && c->cfg.lowcut > 30 && asp_gate_lowcut( c->gate ) > 30 && share < asp_gate_dominance( c->gate ) )
+    {
+    int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
+    if( c->cfg.feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == 2 )   /* it was fed into the loop as it came: take it out again */
+      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, 2, (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, 2, ASP_PLACE_OFF ) );   /* fed at level 0 0 */
+    else free( sp );
+    unlink( c->part );
+    logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"bump\",\"peak_db\":[%.1f,%.1f]}",
+           (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, level_db( c->t_peak[0] ), level_db( c->t_peak[1] ) );
+    c->gone = c->tick;
+    return;
+    }
+
   /* mono: one channel never rang, or both are the same */
   int mono = 0, src = 0;
   if( c->cfg.mono_detect && ! c->t_damaged )
@@ -504,6 +519,7 @@ int asp_core_tick( AspCore *c, const int32_t *in, int32_t *out )
 
 void asp_core_safe( AspCore *c, int on )
   {
+  asp_gate_event_share( c->gate, 1 );
   if( on == ! c->live ) return;
   c->live = ! on;
   if( on && c->enc ) take_end( c, NULL );

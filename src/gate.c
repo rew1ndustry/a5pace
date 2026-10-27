@@ -61,6 +61,9 @@ typedef struct
   int    frames, hang;
   double dc[2], rest;			/* SWITCH: low pass state, rest */
   int    why;				/* which rules fired since asked: 1 click, 2 ring, 4 two bands, 8 a band twice */
+  double lo30[4][2];			/* states of the 30 Hz high pass: the whole signal, to compare the in-range part with */
+  double evin, evtot;			/* power above the lowcut, and above 30 Hz, while the gate was held open (one take's worth) */
+  double blk30, hopy, hop30;		/* power above 30 Hz: this ring block; above the lowcut and above 30 Hz over this hop */
   int    mute, calm, fade, deaf;	/* SWITCH: samples */
   } GateChan;
 
@@ -74,6 +77,7 @@ typedef struct Gate
   double lob[4][5];			/* the high pass for that, per gate */
   int    firstband;			/* the first band that may count */
   int    strict;			/* 1: one band alone, twice running, no longer opens the gate */
+  double dom;				/* with a lowcut: the share of the signal's power that must lie above it to open the gate */
   void (*say)( void *, const char * );
   void *user;
   } Gate;
@@ -234,6 +238,7 @@ static int gateFrame( Gate *g, GateChan *c )
     return( 0 );
     }
 
+  if( g->lowcut > 30 && c->hopy < g->dom * c->hop30 ) { many = 0; again = 0; }	/* mostly below the instrument's range: a bump */
   if( many >= 2 || ( again && ! g->strict ) ) { c->hang = GATE_HANG; hit = 1; c->why |= ( many >= 2 ? 4 : 0 ) | ( again && ! g->strict ? 8 : 0 ); }
 
   /* learn only while shut; while open the floor may only fall, and a
@@ -353,6 +358,8 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
       for( i = 0; i < 4; ++i ) y = gateFilter( g->lob[i], c->lo[i], y );
       h = y;
       for( i = 0; i < 2; ++i ) h = gateFilter( gateHiB[i], c->hi[i], h );
+      double y30 = y;
+      if( g->lowcut > 30 ) { y30 = x; for( i = 0; i < 4; ++i ) y30 = gateFilter( gateLoB[i], c->lo30[i], y30 ); }
 
       if( c->deaf ) --c->deaf;		/* SWITCH */
       if( c->frames >= GATE_INIT && ! c->deaf && h * h > click * c->click )   /* a click so loud it needs no ring */
@@ -371,13 +378,18 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
 	}
       else
 	{
+	if( c->hang ) { c->evin += y * y; c->evtot += y30 * y30; }
 	c->sum += h * h;
 	c->blk += y * y;
+	c->blk30 += y30 * y30;
+	c->hopy += y * y;
+	c->hop30 += y30 * y30;
 	if( ++c->blkn == GATE_BLK )
 	  {
 	  double p = c->blk / GATE_BLK;
 	  int lit = p > ring * c->ybg, j = GATE_LITOF - 1;
-	  c->blk = 0; c->blkn = 0;
+	  if( lit && g->lowcut > 30 && p < g->dom * ( c->blk30 / GATE_BLK ) ) lit = 0;	/* a bump: most of it is below the range */
+	  c->blk = 0; c->blkn = 0; c->blk30 = 0;
 	  c->lit = ( ( c->lit << 1 ) | lit ) & ( ( 1 << GATE_LITOF ) - 1 );
 	  if( popcount( c->lit ) >= GATE_LITN )
 	    {
@@ -407,7 +419,7 @@ static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
 	  int64_t at = top + n + 1 - GATE_WIN - GATE_HOP * 2 - GATE_PRE;
 	  if( at < best ) best = at;
 	  }
-	c->sum = 0;
+	c->sum = 0; c->hopy = c->hop30 = 0;
 	}
       }
     }
@@ -484,7 +496,7 @@ void asp_gate_set_lowcut( AspGate *g, double hz )
   int b;
   if( hz < 30 ) hz = 30;
   if( hz > 2000 ) hz = 2000;
-  g->lowcut = hz;
+  g->lowcut = hz; if( g->dom <= 0 ) g->dom = 0.15;
   for( int i = 0; i < 4; ++i ) gateBiquad( g->lob[i], hz, lq[i] );
   for( b = 0; b < gateBands && gateEdge[b+1] * (double)HZ / GATE_WIN <= hz; ++b ) {}
   g->firstband = hz <= 30 ? 0 : b;
@@ -493,3 +505,13 @@ double asp_gate_lowcut( AspGate *g ) { return g->lowcut; }
 
 void asp_gate_set_strict( AspGate *g, int on ) { g->strict = on != 0; }
 int asp_gate_strict( AspGate *g ) { return g->strict; }
+
+/* of the power the gate heard while it was open, the share that lay above the lowcut (1 with no lowcut); reset starts
+   a new count. a take that is mostly below the instrument's range is a bump, not a note. */
+double asp_gate_event_share( AspGate *g, int reset )
+  {
+  double in = g->chan[0].evin + g->chan[1].evin, tot = g->chan[0].evtot + g->chan[1].evtot;
+  if( reset ) g->chan[0].evin = g->chan[1].evin = g->chan[0].evtot = g->chan[1].evtot = 0;
+  return tot > 0 ? in / tot : 1.0;
+  }
+double asp_gate_dominance( AspGate *g ) { return g->dom; }

@@ -8,7 +8,7 @@
 #include "aspcore.h"
 
 #define SIM_BLEN 19200
-typedef struct { int64_t at; int ch; double amp; int on; } SimBurst;     /* ch: 0 left, 1 right, 2 both */
+typedef struct { int64_t at; int ch; double amp; int on; double hz; } SimBurst;     /* ch: 0 left, 1 right, 2 both */
 typedef struct
   {
   AspCore *core; int64_t tickn, lat, cap; int32_t *outs; unsigned rs; double noise; int dup;   /* outs: ring of cap frames */
@@ -26,8 +26,9 @@ static void sim_init( Sim *s, AspCore *c, int64_t lat, int64_t seconds )
     s->tone[i] = (int32_t)( 2147483648.0 * sin( 2 * M_PI * 440 * i / 48000.0 ) * ( 0.5 - 0.5 * cos( 2 * M_PI * i / SIM_BLEN ) ) );
   }
 
-static void sim_burst( Sim *s, int64_t at, int ch, double amp )   /* at: input frame */
-  { for( int i = 0; i < 16; i++ ) if( ! s->b[i].on ) { s->b[i].at = at; s->b[i].ch = ch; s->b[i].amp = amp; s->b[i].on = 1; return; } }
+static void sim_burst_hz( Sim *s, int64_t at, int ch, double amp, double hz )   /* at: input frame */
+  { for( int i = 0; i < 16; i++ ) if( ! s->b[i].on ) { s->b[i].at = at; s->b[i].ch = ch; s->b[i].amp = amp; s->b[i].hz = hz; s->b[i].on = 1; return; } }
+static void sim_burst( Sim *s, int64_t at, int ch, double amp ) { sim_burst_hz( s, at, ch, amp, 440 ); }
 
 static void sim_step( Sim *s )
   {
@@ -46,7 +47,10 @@ static void sim_step( Sim *s )
       v += ch ? n1 : n0;
       for( int b = 0; b < 16; b++ )
         if( s->b[b].on && t >= s->b[b].at && t < s->b[b].at + SIM_BLEN && ( s->b[b].ch == 2 || s->b[b].ch == ch ) )
-          v += s->tone[t - s->b[b].at] * s->b[b].amp;
+          {
+          int64_t k = t - s->b[b].at;
+          v += 2147483648.0 * s->b[b].amp * sin( 2 * M_PI * s->b[b].hz * k / 48000.0 ) * ( 0.5 - 0.5 * cos( 2 * M_PI * k / SIM_BLEN ) );
+          }
       in[2*i+ch] = (int32_t)v;
       }
     }

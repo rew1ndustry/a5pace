@@ -4,11 +4,24 @@
 #include "aspcore.h"
 #include "aspengine.h"
 #include "simedge.h"
+#include "sqlite3.h"
 
 static int fails;
 #define CHECK(x) do { if( ! (x) ) { fprintf( stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, #x ); fails++; } } while(0)
 #define LOOP 300017
 #define LAT  7001
+
+static int count_type( const char *dir, const char *type )
+  {
+  char p[400]; sqlite3 *db; sqlite3_stmt *q; int n = -1;
+  snprintf( p, sizeof p, "%s/s/session.db", dir );
+  sqlite3_open_v2( p, &db, SQLITE_OPEN_READONLY, NULL );
+  sqlite3_prepare_v2( db, "select count(*) from log where type=?", -1, &q, NULL );
+  sqlite3_bind_text( q, 1, type, -1, SQLITE_STATIC );
+  if( sqlite3_step( q ) == SQLITE_ROW ) n = sqlite3_column_int( q, 0 );
+  sqlite3_finalize( q ); sqlite3_close( db );
+  return n;
+  }
 
 typedef struct { AspStore *s; AspTank *t; AspCore *c; Sim sim; char dir[64]; } Rig;
 
@@ -36,7 +49,7 @@ static int matches( Rig *r )
     {
     int64_t n = LOOP - pos < 5000 ? LOOP - pos : 5000;
     asp_tank_get( r->t, pos, n, x ); asp_tank_get( b, pos, n, y );
-    if( memcmp( x, y, (size_t)n * 16 ) ) ok = 0;
+    if( memcmp( x, y, (size_t)n * 16 ) ) { if( getenv( "DBG" ) ) { int64_t i; for( i = 0; i < 2 * n && x[i] == y[i]; i++ ) {} { int64_t cnt = 0, lastd = 0; for( int64_t j = 0; j < 2 * n; j++ ) if( x[j] != y[j] ) { cnt++; lastd = pos + j / 2; } printf( "first difference at frame %lld: live %lld rebuilt %lld; %lld differ in this block, last at %lld\n", (long long)( pos + i / 2 ), (long long)x[i], (long long)y[i], (long long)cnt, (long long)lastd ); } } ok = 0; }
     }
   asp_tank_close( b );
   return ok;
@@ -73,6 +86,20 @@ int main( void )
   CHECK( st.jobs == 0 );
   CHECK( matches( &r ) );
   }
+  rig_close( &r );
+
+  /* --- told the instrument's lowest note, a loud bump is not kept and a note is --- */
+  asp_core_defaults( &cfg ); cfg.lowcut = 190; cfg.strict = 1;
+  rig_open( &r, &cfg, 60 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  sim_burst_hz( &r.sim, base, 2, 0.004, 6000 );                    /* a small high edge opens the gate, as a real bump's does ... */
+  sim_burst_hz( &r.sim, base + 12000, 2, 0.03, 80 );               /* ... then the thump itself, -30 dBFS */
+  sim_burst_hz( &r.sim, base + 2 * LOOP, 2, 0.1, 440 );            /* a note, a pass and a half later */
+  sim_until( &r.sim, base + 3 * LOOP + 48000 * 3 );
+  { States s; states( &r, &s );
+    printf( "bump test: %d take(s) stored, %d discarded\n", s.n, count_type( r.dir, "discarded" ) );
+    CHECK( s.n == 1 && count_type( r.dir, "discarded" ) == 1 && count_type( r.dir, "new" ) == 2 );
+    CHECK( matches( &r ) ); }                                      /* and the thump was taken out of the loop again */
   rig_close( &r );
 
   /* --- stereo stays stereo; identical channels count as mono --- */
