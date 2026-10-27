@@ -12,6 +12,7 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 - `aspace` the runner: a pipe (raw s32 stereo 48 kHz on stdin/stdout) or a simulated card, and a control port
 - `a5shell` a terminal shell: status line, events and a few keys (safe/live, profile, automix, revert)
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
+- `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
 - `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
 - `a5doctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
 - a session is a directory: `session.db` (SQLite: the log and the facts), `blobs/` (the takes as FLAC), `cache/` (the loop)

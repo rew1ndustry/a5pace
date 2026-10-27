@@ -1,0 +1,162 @@
+#!/bin/bash
+# a5cal: prepare or change a gate profile for a named setup, OUTSIDE any loop session.
+# the engineering lives here so that recording can stay peaceful: the loop shell (a5shell) only picks a finished profile
+# from its list. a calibration is a short guided capture of the setup (the quiet, the sounds that must open the gate,
+# the sounds that must not), then a search for the settings that do best on it.
+#
+#   a5cal NAME                    the guided way: capture, tune, look, save
+#   a5cal capture NAME [--script FILE] [--from CAPTURE --windows FILE]
+#   a5cal tune NAME [--lowest HZ]  search; the proposal is kept
+#   a5cal show NAME               the proposal against the profile in use, window by window; the floor and any hum
+#   a5cal save NAME [PROFILE] [--force]   write the proposal as the profile PROFILE (default NAME)
+#   a5cal list                    calibrations made, and the profiles there are
+#
+# data: <config>/calibration/NAME/  (capture.flac, windows.txt, script, lowest, proposal, report.txt)
+#       <config>/profiles/PROFILE   (what the loop shell lists)
+# the card: only taken if it is free (A5CARD_RELEASE=1 lets go of pipewire for the capture and puts it back).
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+if [ -f "$HERE/src/aspace_main.c" ]; then BIN="$HERE/bin"; A5PACE="$BIN/a5pace"; A5TUNE="$BIN/a5tune"; FLAC="$BIN/aspflac"; SHARE="$HERE/share"
+else A5PACE=$(command -v a5pace); A5TUNE=$(command -v a5tune); FLAC=$(command -v a5flac); SHARE="${A5PACE%/*}/../share/a5pace"; fi
+CFG=${A5PACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/a5pace}
+CAL=$CFG/calibration
+DEV=${A5CARD_DEV:-hw:UR22C}; CARD=${DEV#hw:}; CARD=${CARD%%,*}
+die() { echo "a5cal: $*" >&2; exit 1; }
+[ -x "$A5TUNE" ] || die "a5tune not found: build first (make) or install"
+speak() { command -v say > /dev/null && timeout 6 say "$1" > /dev/null 2>&1 & }
+
+valid() { case $1 in ""|.*|*[!A-Za-z0-9._-]*) die "a name is letters, digits, . _ - only";; esac; }
+dir_of() { valid "$1"; echo "$CAL/$1"; }
+
+# --- the card -----------------------------------------------------------------------------------
+CARDNO=""; PWDEV=""; PWOLD=""
+holders() { fuser -v /dev/snd/pcmC${CARDNO}D*c 2>&1 | grep -v "COMMAND\|^ *$" | grep -v kernel; }
+restore_pw() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && echo "a5cal: pipewire has the card back" >&2; PWDEV=""; }
+acquire_card() {
+  CARDNO=$(grep -i "${CARD}" /proc/asound/cards | head -1 | awk '{print $1}')
+  [ -n "$CARDNO" ] || die "no card $CARD (A5CARD_DEV=hw:NAME)"
+  local busy; busy=$(holders)
+  if [ -n "$busy" ] && [ "${A5CARD_RELEASE:-0}" = 1 ] && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
+    read PWDEV PWOLD PWOFF < <(pw-dump 2>/dev/null | python3 -c "
+import json,sys
+for o in json.load(sys.stdin):
+    i=o.get('info') or {}
+    if o.get('type','').endswith('Device') and str((i.get('props') or {}).get('api.alsa.card'))=='$CARDNO':
+        cur=(i['params'].get('Profile') or [{}])[0].get('index')
+        off=[p['index'] for p in i['params'].get('EnumProfile',[]) if p.get('name')=='off']
+        if cur is not None and off: print(o['id'],cur,off[0]); break
+")
+    [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOFF }" > /dev/null 2>&1
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(holders)" ] && break; sleep 0.3; done
+    busy=$(holders)
+  fi
+  [ -z "$busy" ] || { echo "$busy" >&2; restore_pw; die "the card is in use (only pipewire? A5CARD_RELEASE=1)"; }
+  if command -v ur22c > /dev/null && [ "$(ur22c get loopback 2>/dev/null)" = 1 ]; then echo "a5cal: the interface loopback is ON: switching it off for the capture" >&2; ur22c loopback off > /dev/null 2>&1; fi
+}
+
+# --- capture ------------------------------------------------------------------------------------
+do_capture() {
+  local name=$1; shift
+  local d script="" from="" win=""; d=$(dir_of "$name")
+  while [ $# -gt 0 ]; do case $1 in --script) script=$2; shift ;; --from) from=$2; shift ;; --windows) win=$2; shift ;; *) die "capture: unknown $1";; esac; shift; done
+  mkdir -p "$d"
+  if [ -n "$from" ]; then                                  # an existing capture and its windows (testing, or recorded elsewhere)
+    [ -f "$from" ] && [ -f "$win" ] || die "--from CAPTURE needs --windows FILE"
+    case $from in *.flac) cp "$from" "$d/capture.flac" ;; *) "$FLAC" enc "$from" "$d/capture.flac" 2 48000 || die "cannot encode" ;; esac
+    cp "$win" "$d/windows.txt"; echo "a5cal: capture imported into $d"; return
+  fi
+  if [ -z "$script" ]; then if [ -f "$CAL/default.script" ]; then script=$CAL/default.script; else script=$SHARE/calibration.script; fi; fi
+  [ -f "$script" ] || die "no script $script"
+  cp "$script" "$d/script"
+  local info secs n; info=$("$A5TUNE" windows "$d/script" "$d/windows.txt") || die "bad script"; n=${info% *}; secs=${info#* }
+  acquire_card
+  trap 'kill $REC 2>/dev/null; restore_pw' EXIT INT TERM
+  echo "a5cal: $n prompts, about ${secs%.*} seconds. the card is $DEV. keep the loop session closed."
+  echo "a5cal: you will hear and see each prompt. press enter to begin (the first prompt is a quiet one)."; read -r _
+  arecord -q -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw > "$d/capture.raw" 2> "$d/capture.err" &
+  REC=$!
+  while [ "$(stat -c %s "$d/capture.raw" 2>/dev/null || echo 0)" -lt 115200 ]; do sleep 0.05; done   # 0.3 s of audio is in
+  local t0 off; t0=$(date +%s.%N); off=$(awk -v b="$(stat -c %s "$d/capture.raw")" 'BEGIN{printf "%.3f", b/384000}')
+  local cls s e label last=0
+  while read -r cls s e label; do
+    [ "$cls" = "#" ] && continue
+    local now wait; now=$(date +%s.%N)
+    wait=$(awk -v t0="$t0" -v now="$now" -v s="$s" -v off="$off" 'BEGIN{w=(t0-off)+s-now-0.0; if(w<0)w=0; printf "%.2f", w}')
+    sleep "$wait"
+    case $cls in Q) tag="QUIET ";; G) tag="PLAY  ";; B) tag="BUMP  ";; *) tag="FREE  ";; esac
+    printf '\n  %s %s   (%.0f s)\n' "$tag" "$label" "$(awk -v s="$s" -v e="$e" 'BEGIN{print e-s}')"
+    speak "$label"
+  done < "$d/windows.txt"
+  sleep "$(awk -v e="$(tail -1 "$d/windows.txt" | awk '{print $3}')" -v t0="$t0" -v off="$off" -v now="$(date +%s.%N)" 'BEGIN{w=(t0-off)+e+1-now; if(w<0)w=0; print w}')"
+  kill $REC 2>/dev/null; wait $REC 2>/dev/null; trap - EXIT INT TERM; restore_pw
+  "$FLAC" enc "$d/capture.raw" "$d/capture.flac" 2 48000 && rm -f "$d/capture.raw"
+  grep -qi "overrun" "$d/capture.err" && echo "a5cal: WARNING the card overran during the capture (see $d/capture.err): record again" >&2
+  echo "a5cal: captured into $d"
+}
+
+# --- tune ---------------------------------------------------------------------------------------
+cap_of() { [ -f "$1/capture.flac" ] && echo "$1/capture.flac" || die "no capture for this setup yet (a5cal capture NAME)"; }
+do_tune() {
+  local name=$1; shift; local d; d=$(dir_of "$name"); local lowest="" cap; cap=$(cap_of "$d")
+  [ -f "$d/lowest" ] && lowest=$(cat "$d/lowest")
+  while [ $# -gt 0 ]; do case $1 in --lowest) lowest=$2; shift ;; *) die "tune: unknown $1";; esac; shift; done
+  echo "${lowest:-0}" > "$d/lowest"
+  local base=""; [ -f "$CFG/profiles/$name" ] && base=$("$A5PACE" profiles show "$name" 2>/dev/null)
+  echo "a5cal: searching (this takes a minute or two; the lowest note is ${lowest:-unknown} Hz)"
+  "$A5TUNE" tune "$cap" "$d/windows.txt" --lowest "${lowest:-0}" ${base:+--base "$base"} | tee "$d/report.txt" | grep -v '^SETTINGS'
+  grep '^SETTINGS ' "$d/report.txt" | tail -1 | sed 's/^SETTINGS //' > "$d/proposal"
+  [ -s "$d/proposal" ] || die "no proposal"
+  echo "a5cal: proposal kept: $(cat "$d/proposal")"
+}
+
+do_show() {
+  local name=$1; local d; d=$(dir_of "$name"); local cap; cap=$(cap_of "$d")
+  echo "== the noise floor and hum in the quiet windows"; "$A5TUNE" floor "$cap" "$d/windows.txt"
+  local cur=""; [ -f "$CFG/profiles/$name" ] && cur=$("$A5PACE" profiles show "$name" 2>/dev/null)
+  echo; echo "== ${cur:+the profile $name as it is now}${cur:-the gate as asp4 had it}"; "$A5TUNE" eval "$cap" "$d/windows.txt" "$cur" | sed -n 1,2p
+  if [ -s "$d/proposal" ]; then echo; echo "== the proposal"; "$A5TUNE" eval "$cap" "$d/windows.txt" "$(cat "$d/proposal")" | grep -v "  ok "; fi
+}
+
+# --- save ---------------------------------------------------------------------------------------
+do_save() {
+  local name=$1 prof=$1 force=0; shift
+  while [ $# -gt 0 ]; do case $1 in --force) force=1 ;; *) prof=$1 ;; esac; shift; done
+  valid "$prof"; local d; d=$(dir_of "$name"); [ -s "$d/proposal" ] || die "nothing to save: a5cal tune $name"
+  local out="$CFG/profiles/$prof"; mkdir -p "$CFG/profiles"
+  if [ -e "$out" ] && [ $force = 0 ]; then die "profile $prof exists (--force to replace it; the old one is kept as $prof.old)"; fi
+  [ -e "$out" ] && cp "$out" "$out.old"
+  { echo "# $prof: calibrated $(date +%F) from $name; lowest note $(cat "$d/lowest" 2>/dev/null || echo 0) Hz"
+    tr ';' '\n' < "$d/proposal" | sed 's/=/ /'
+    echo "sync_max -36"; } > "$out"
+  echo "a5cal: profile $prof written to $out"
+  echo "a5cal: choose it in a5shell with p, or: a5pace run --profile $prof DIR"
+}
+
+do_list() {
+  echo "calibrations:"; for d in "$CAL"/*/; do [ -f "$d/windows.txt" ] && printf "  %-20s %s\n" "$(basename "$d")" "$( [ -s "$d/proposal" ] && echo "proposal: $(cat "$d/proposal")" || echo "captured, not tuned" )"; done 2>/dev/null
+  echo "profiles:"; "$A5PACE" profiles | sed 's/^/  /'
+}
+
+# --- the guided way -----------------------------------------------------------------------------
+guided() {
+  local name=$1; valid "$name"; local d; d=$(dir_of "$name")
+  echo "a5cal: setting up the gate for \"$name\". nothing here touches a loop session."
+  echo "a5cal: what is the lowest note this setup plays, in Hz? (violin 196, guitar 82, bass 41; enter if unsure)"; read -r lw
+  [ -n "$lw" ] && mkdir -p "$d" && echo "$lw" > "$d/lowest"
+  if [ -f "$d/capture.flac" ]; then echo "a5cal: a capture of $name exists. record a new one? [y/N]"; read -r a; [ "$a" = y ] && do_capture "$name"
+  else do_capture "$name"; fi
+  do_tune "$name"; do_show "$name"
+  echo; echo "a5cal: save this as the profile $name? [y/N]"; read -r a
+  if [ "$a" = y ]; then if [ -e "$CFG/profiles/$name" ]; then do_save "$name" "$name" --force; else do_save "$name"; fi; fi
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  capture) [ $# -ge 1 ] || die "usage: a5cal capture NAME"; do_capture "$@" ;;
+  tune)    [ $# -ge 1 ] || die "usage: a5cal tune NAME"; do_tune "$@" ;;
+  show)    [ $# -ge 1 ] || die "usage: a5cal show NAME"; do_show "$1" ;;
+  save)    [ $# -ge 1 ] || die "usage: a5cal save NAME [PROFILE] [--force]"; do_save "$@" ;;
+  list)    do_list ;;
+  ""|-h|--help) sed -n 2,19p "$0" ;;
+  *)       guided "$cmd" ;;
+esac

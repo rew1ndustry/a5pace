@@ -91,7 +91,7 @@ static int cmd_profiles( int argc, char **argv )
     {
     char self[1100], cmd[2300]; snprintf( self, sizeof self, "%s", argv[0] );
     char *sl = strrchr( self, '/' ); if( sl ) *sl = 0; else strcpy( self, "." );
-    snprintf( cmd, sizeof cmd, "mkdir -p '%s/profiles' && for f in '%s'/../profiles/*; do [ -e '%s/profiles/'\"$(basename \"$f\")\" ] || cp \"$f\" '%s/profiles/'; done && echo installed into %s/profiles", d, self, d, d, d );
+    snprintf( cmd, sizeof cmd, "mkdir -p '%s/profiles' '%s/calibration' && for f in '%s'/../profiles/*; do [ -e '%s/profiles/'\"$(basename \"$f\")\" ] || cp \"$f\" '%s/profiles/'; done; [ -e '%s/calibration/default.script' ] || cp '%s'/../share/calibration.script '%s/calibration/default.script'; echo installed into %s", d, d, self, d, d, d, self, d, d );
     return system( cmd ) ? 1 : 0;
     }
   if( ! asp_profile_list( list_cb, NULL ) ) printf( "no profiles in %s/profiles (a5pace profiles install copies the examples)\n", d );

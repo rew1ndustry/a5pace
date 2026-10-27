@@ -3,6 +3,7 @@
 Ordered roughly by what unblocks what. Items from the user are marked (user).
 
 ## Gate: tunable to any setup, by an iterative process driven from the shell (user)
+First version done: `a5cal` / `a5tune`, see docs/CALIBRATION.md (guided capture of Q/G/B windows, a search over lowcut, strict, margin and ring, floor and hum report, saved as a profile). Still to do from the list below: hum notch, dynamics chains, a real-card trial, labelling in the middle of free playing.
 The gate has to be adjusted to a given setup: a mic on a wooden floor; a coil pickup instrument such as a guitar with
 massive hum; at times the output of a chain of effects including compression, gain and distortion. What exists now:
 margin (`GATE`), ring (`RING`), `LOWCUT` (the instrument's lowest note) and `STRICT`, a bump is discarded when most
@@ -46,3 +47,11 @@ Smaller arecord / aplay buffers to shrink the 0.63 s round trip (the loop stays 
   doing the commit on an idle tick, or a writer thread in the runner (the core stays single-threaded).
 - The loop file on tmpfs (`--tank`) is in place; measure the rebuild time after a reboot on the board.
 - Keep the default buffers; shrinking them is opt-in (`A5CARD_BUFFER_MS`) and only after the soak test.
+
+## `.a5p`: a session file you can click on (user)
+Take over the `.a5p` extension. A session is a directory, so the clickable thing is a small text file, `NAME.a5p`, that
+points at it: the session directory (relative or absolute), the profile to use, and how to run it (the sound card
+through `a5card`, or a simulated card). Opening it starts the session in a terminal with `a5shell`. Needs: a MIME type
+(`application/x-a5p`) and a `.desktop` handler on Linux, a file association on macOS and Windows, `a5pace new` writing
+the file beside the session, and `a5card`/`a5shell` taking a `.a5p` in place of a directory. Make it one file you can
+copy to another machine along with the session directory.

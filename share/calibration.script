@@ -1,0 +1,19 @@
+# a calibration script: what the person is asked to do, in order. class seconds prompt
+#   Q  quiet: nothing should open the gate (the room, the hum, the instrument switched on and still)
+#   G  good: a sound the gate must catch (play it once, any time in the window)
+#   B  bad: a sound the gate must NOT catch (a bump, a knock on the stand, touching the cable)
+#   X  free: do whatever you like, it is not judged
+# a rest of 3 s is added between prompts. add your own: the setup decides what is good and what is bad.
+Q 10 keep still and silent. the instrument is on but not touched
+G 4  play one normal note
+G 4  play one normal note
+G 4  play one normal note
+G 4  play one soft note
+G 4  play one soft note
+G 4  play one short plucked or staccato note
+G 4  play one short plucked or staccato note
+B 4  make a bump: knock the stand or the table
+B 4  make a bump: knock the stand or the table
+B 4  make a bump: tap the floor with your foot
+B 4  touch or move the cable
+Q 15 keep still and silent again
