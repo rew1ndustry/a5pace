@@ -144,11 +144,6 @@ int main( void )
   CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 1 && s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 );
   CHECK( count_type( r.dir, "new" ) == 1 );                           /* the left-only noise opened nothing */
   CHECK( st.jobs == 0 );                                              /* nothing left to convert */
-  /* the loop after the take is the same pass after pass */
-  static int32_t pass[3][2 * LOOP]; int64_t first = ( ( r.sim.tickn - st.origin + 47 ) / 48 ) * 48 + st.origin;
-  while( r.sim.tickn < first ) sim_step( &r.sim );
-  /* the loop is 48 ticks of 9600 frames only when LOOP is 460800; here it is LOOP frames, so compare by output position */
-  (void)pass;
   }
   rig_close( &r );
 

@@ -55,3 +55,13 @@ through `a5card`, or a simulated card). Opening it starts the session in a termi
 (`application/x-a5p`) and a `.desktop` handler on Linux, a file association on macOS and Windows, `a5pace new` writing
 the file beside the session, and `a5card`/`a5shell` taking a `.a5p` in place of a directory. Make it one file you can
 copy to another machine along with the session directory.
+
+## Next: tracks in/out, level and pan mixing (design conversation, not built)
+- `input` (auto|left|right|stereo) is the two-channel case of a general rule: which recorded channels become which loop
+  tracks and where they sit in the stereo loop. N-track cards (four-track and up) keep a stereo loop.
+- Rules to design: channel -> track map; 1+3 hard left and 2+4 hard right; spread across the mix; per-track pan and level
+  as envelopes (a perceived linear drop over a take); one gate per channel or a shared one; per-channel tape; how the
+  calibration (`a5cal`/`a5tune`) detects which channels are in use and writes the rule to a profile.
+- Mandolin case: passive pickup on one channel and room mic on the other = a stereo config, chosen by the profile.
+- `a5cal` should detect the used channel from the G windows and write `input` (done by hand in `violin` for now).
+- Test gap: loop identical pass after pass after a long fixed-mono take is checked only by the stored mono/centre/no-job state.
