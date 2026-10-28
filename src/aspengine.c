@@ -84,9 +84,13 @@ AspJob *asp_job_open( const char *path, int64_t pos0, int64_t lo, int64_t hi, As
    each side has its own */
 AspJob *asp_job_take( AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, int osrc, AspPlace to, int nsrc )
   {
-  AspTake k; char path[1200];
-  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) ) return NULL;
-  return asp_job_open( path, k.off * k.rate, lo, hi, from, osrc, to, nsrc );
+  AspTake k; char path[1200]; AspJob *j = NULL;
+  for( int tries = 0; tries < 2 && ! j; tries++ )          /* a take on its way to its place may move between asking where it is and opening it */
+    {
+    if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) ) return NULL;
+    j = asp_job_open( path, k.off * k.rate, lo, hi, from, osrc, to, nsrc );
+    }
+  return j;
   }
 
 void asp_job_free( AspJob *j ) { if( j ) { asp_tr_close( j->r ); free( j->buf ); free( j ); } }

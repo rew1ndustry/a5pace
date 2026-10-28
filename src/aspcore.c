@@ -552,7 +552,9 @@ static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
 /* frames of a take, from its start, counted so that frame 0 is the start of its second of the loop */
 static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
   {
+  double t0 = now_ms();
   int rc = asp_tw_put( c->enc, pcm, (unsigned)n );          /* both channels, as they came: what was heard is kept */
+  lap( c, "take_write", &t0 );
   if( c->t_fix >= 0 )                                       /* one channel, put in the middle as it comes: no stereo, no conversion */
     {
     int32_t d[2 * 4096];
@@ -653,10 +655,12 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
     ++c->iter;                                           /* that take exists: the next iteration */
     asp_tank_set_head( c->tank, c->iter, c->peak );
     }
+  double t0 = now_ms();
   if( asp_tmp_path( c->store, c->part, sizeof c->part ) ) return -1;
   c->t_in = c->cfg.input;
   c->t_fix = c->t_in == 1 ? 0 : c->t_in == 2 ? 1 : -1;
   c->enc = asp_tw_open( c->part, asp_artist_id( c->store ), 2, RATE, c->t_in );       /* both channels, whatever was told */
+  lap( c, "take_open", &t0 );                          /* making the file: on a card it can wait behind the keeper's sync */
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
   c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0;

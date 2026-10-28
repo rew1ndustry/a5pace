@@ -216,6 +216,15 @@ What is left, from the `slow_phase` log of that run: `take_end` median 508 ms, p
 finished take, see above); `gate` median 48 ms, p90 64 ms; `moves` median 35 ms (the job budget of 48000 frames a tick).
 So the core's own work now fits; the remaining stalls are the card. Nothing was run with the real audio device.
 
+### With the keeper (echo, same run)
+
+The keeper now puts each take in its place (folders, rename), syncs it, and checkpoints the log; the row of a take is made when
+its file is safe. Same 150 s run on the card: `take_end` median 508 -> 76 ms, p90 1.7 s -> 84 ms, worst 11 s -> 177 ms; the
+average tick 164 -> 123 ms. What is left of the card's stalls is the creation of the next take's file (`take_open`: two stalls
+of 1.3 s in 52 takes, the create waiting behind the keeper's journal commit). Ideas, not done: the keeper makes the next part
+file ahead of time; the encoder's verify (about 20% of the 34 ms a tick that recording costs there) off on slow machines; the
+job budget by time instead of by frames (`moves` takes 33 ms a tick while a job runs).
+
 ## Order of work
 
 (2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps
