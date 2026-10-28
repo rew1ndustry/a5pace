@@ -1,6 +1,6 @@
 #!/bin/bash
 # a5cal: prepare or change a gate profile for a named setup, OUTSIDE any loop session.
-# the engineering lives here so that recording can stay peaceful: the loop shell (a5shell) only picks a finished profile
+# the engineering lives here so that recording can stay peaceful: the loop shell (a5hell) only picks a finished profile
 # from its list. a calibration is a short guided capture of the setup (the quiet, the sounds that must open the gate,
 # the sounds that must not), then a search for the settings that do best on it.
 #
@@ -129,7 +129,7 @@ do_save() {
     tr ';' '\n' < "$d/proposal" | sed 's/=/ /'
     echo "sync_max -36"; } > "$out"
   echo "a5cal: profile $prof written to $out"
-  echo "a5cal: choose it in a5shell with p, or: a5pace run --profile $prof DIR"
+  echo "a5cal: choose it in a5hell with p, or: a5pace run --profile $prof DIR"
 }
 
 do_list() {

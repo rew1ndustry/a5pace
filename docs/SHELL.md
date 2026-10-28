@@ -4,7 +4,7 @@
 a5pace new DIR NAME SECONDS          make a session (a later create tool will build one from bpm, time
                                      signature and bars, with a metronome track made from samples)
 a5pace run [options] DIR             run it
-a5shell DIR                            terminal window on a running aspace: status line, events, a few keys
+a5hell DIR                            terminal window on a running aspace: status line, events, a few keys
 a5control DIR [COMMAND...]              one command to a running aspace; no command prints the status line
 ```
 
@@ -43,11 +43,11 @@ A loop that was not closed cleanly (dirty flag in its header), is the wrong leng
 rebuilt from the store on the next start.
 
 ## Starting a space, and the tape
-`a5start DIR` makes sure the space is running and starts it if not; `a5shell DIR` and `a5control --start DIR ...` call it
+`a5start DIR` makes sure the space is running and starts it if not; `a5hell DIR` and `a5control --start DIR ...` call it
 (and so will the gui and the backend), so how a space is started is decided in one place: the file `DIR/start` (lines
 `edge card|sim`, `args ...` extra options for a5pace, `release 1` to let go of pipewire for the card), else an `edge` line
 in `~/.config/a5pace/defaults`, else the sound card if there is one, else a simulated card. `A5START_EDGE=sim|card`
-overrides. It runs detached; its words go to `DIR/run.log`; `a5shell DIR --no-start` does not start it.
+overrides. It runs detached; its words go to `DIR/run.log`; `a5hell DIR --no-start` does not start it.
 
 **Tape.** `a5pace run --tape` keeps the input exactly as the card gave it, as stereo FLAC in `DIR/tape/input-DATE.flac`
 (zero bits the converter leaves out compress away, so it is small). Sample n of the tape is tick n/9600 of the run, so the
@@ -62,7 +62,7 @@ start and stop either while running; both are off unless asked for. On a board w
   can bring it back).
 - **swap [each]**: successive takes swap channels. Mono takes go hard left, hard right, hard left; stereo takes alternate
   flipped and not. By default the swap happens between iterations; `each` also swaps between takes of the same iteration.
-Set from the control port with `AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]`, from `a5shell` with `a` (a short list, then
+Set from the control port with `AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]`, from `a5hell` with `a` (a short list, then
 the one question that mode asks), or from a profile (`automix loop`, `automix keep`, `automix overlap 4`, `automix swap each`).
 Fading is not a mode yet. A take's gain and pan are, for now, one constant setting across the whole take
 (`lev`: a right shift per output channel, 6 dB a step, or off); fades will be envelopes on a take (a perceived
@@ -76,7 +76,7 @@ The loop is the sum of the takes in 64 bits. On the way out it is brought down b
 bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
 the change is a ramp and not a step.
 
-### The shell's keys (`a5shell DIR`; press `?` in it)
+### The shell's keys (`a5hell DIR`; press `?` in it)
 aspace starts SAFE (nothing is recorded) unless run with `--live`; the shell keeps no state of its own, it shows what aspace reports and `space` asks aspace to switch.
 The top line names the space. `space` safe/live. `u` undoes the last take and `U` every take of the last iteration: they go
 out of the loop, and takes the automix removed because of them come back; it is heard from each take's next start, and does

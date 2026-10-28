@@ -41,7 +41,7 @@ sh_ system 'date; uptime'
 # --- build
 sh_ build "cd '$HERE' && git log --oneline -3 2>/dev/null; git status --short 2>/dev/null | head -20"
 run build cc --version
-sh_ build "ls -la '$HERE/bin' 2>/dev/null; command -v a5pace a5control a5shell a5card a5play 2>&1"
+sh_ build "ls -la '$HERE/bin' 2>/dev/null; command -v a5pace a5control a5hell a5card a5play 2>&1"
 sh_ build "ldd '$HERE/bin/a5pace' 2>&1 | head -20"
 sh_ build "cd '$HERE' && grep -m1 -E 'SQLITE_VERSION ' third_party/sqlite/sqlite3.h 2>/dev/null; ls build/flac/src/libFLAC/libFLAC.a 2>&1"
 sh_ build "cd '$HERE' && ls third_party 2>&1; echo FLACDIR=\${FLACDIR:-(default)}"

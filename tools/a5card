@@ -180,5 +180,5 @@ n=0; while [ ! -s "$DIR/ctl" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
     esac
   done ) &
 pids="$pids $!"
-say_ "running on $DEV; watch it with: a5shell $DIR"
+say_ "running on $DEV; watch it with: a5hell $DIR"
 wait $pipe

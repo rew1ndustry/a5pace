@@ -1,4 +1,4 @@
-/* a5shell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
+/* a5hell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
    press ? for all of them. if the space is not running it is started first (a5start; --no-start to not).
      space  safe / live     h  history: go back to a place     w  wipe the loop     a  mode: al ak a0 a1-9 ap
      u  undo the last take   U  the last iteration   x  export (a5export)   t  mixing
@@ -61,7 +61,7 @@ static int pretty( const char *line, char *out, size_t n )
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [u] undo  [t] mix  [x] export  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
+  printf( "\033[H\033[J a5hell: %s     [space] safe/live  [h] history  [u] undo  [t] mix  [x] export  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -70,7 +70,7 @@ static void draw( void )
 static void help( void )
   {
   printf( "\033[H\033[J"
-" a5shell: keys                                                  (any key to return)\n\n"
+" a5hell: keys                                                  (any key to return)\n\n"
 " recording\n"
 "   space   safe / live    safe: nothing is recorded, the loop keeps playing\n"
 "   r       sync again     play the sync tones again and re-measure the round trip\n"
@@ -113,18 +113,18 @@ static void help( void )
 int main( int argc, char **argv )
   {
   int nostart = argc == 3 && ! strcmp( argv[2], "--no-start" );
-  if( argc != 2 && ! nostart ) { fprintf( stderr, "usage: a5shell DIR [--no-start]\n" ); return 2; }
+  if( argc != 2 && ! nostart ) { fprintf( stderr, "usage: a5hell DIR [--no-start]\n" ); return 2; }
   int cmd = ctlc_connect( argv[1] ), ev;
   if( cmd < 0 && ! nostart )                                      /* not running: start it (how is a5start's business) */
     {
     char line[1300];
-    fprintf( stderr, "a5shell: %s is not running; starting it\n", argv[1] );
+    fprintf( stderr, "a5hell: %s is not running; starting it\n", argv[1] );
     snprintf( line, sizeof line, "a5start '%s'", argv[1] );
-    if( system( line ) ) { fprintf( stderr, "a5shell: could not start it\n" ); return 1; }
+    if( system( line ) ) { fprintf( stderr, "a5hell: could not start it\n" ); return 1; }
     cmd = ctlc_connect( argv[1] );
     }
   ev = cmd >= 0 ? ctlc_connect( argv[1] ) : -1;
-  if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
+  if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5hell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
   { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }
   struct termios raw;

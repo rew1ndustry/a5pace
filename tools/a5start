@@ -1,5 +1,5 @@
 #!/bin/bash
-# a5start DIR [--wait]: make sure the space DIR is running; start it if it is not. a5shell, a5control --start, the gui and
+# a5start DIR [--wait]: make sure the space DIR is running; start it if it is not. a5hell, a5control --start, the gui and
 # the backend all call this, so how a space is started is decided in one place.
 #
 # how, in order: the file DIR/start (lines "edge card|sim", "args ...", "release 1"), else the line "edge ..." in

@@ -15,7 +15,6 @@ Every tool and utility starts with `a5`.
   `a5create`, `a5cal`, `a5doctor`, `a5export`, `a5import`, `a5tune`, `a5start`, `a5play`.
 
 The rule is applied even where it reads badly, on purpose, because a convention with exceptions is not one. For a shell it gives
-`a5hell`, which looks wrong with that ending; but `a5shell` is worse, because the `5` is an S and it then reads "ass hell".
-So the shell's name under the rule is **`a5hell`**. (At the time of writing the program, its source, and these documents still
-say `a5shell`; renaming it is a mechanical change that has not been made yet.) A new tool follows the rule and does not invent
-another pattern.
+`a5hell`, which looks wrong with that ending; but `a5shell` is worse, because the `5` is an S and it then reads "ass hell". So the
+terminal shell is **`a5hell`** (it was called a5shell until 2026-10-29; `make install` puts a5hell in place, and an old a5shell
+left in a bin directory can be removed by hand). A new tool follows the rule and does not invent another pattern.

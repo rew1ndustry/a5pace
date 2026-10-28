@@ -32,7 +32,7 @@ a5pace profiles show NAME        what is in one
 a5pace profiles install          copy the examples that ship in profiles/ (never over yours)
 a5pace new DIR NAME SECS --profile violin-line
 a5pace run --profile bass-line DIR
-a5control DIR PROFILES | PROFILE name | SETTINGS      (and p in a5shell)
+a5control DIR PROFILES | PROFILE name | SETTINGS      (and p in a5hell)
 ```
 The sync keys apply at the next start; the gate keys, mono and automix are in force at once.
 

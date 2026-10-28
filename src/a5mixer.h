@@ -1,4 +1,4 @@
-/* a5mixer: the mixing screen of a5shell, and the little language typed on it.
+/* a5mixer: the mixing screen of a5hell, and the little language typed on it.
      [ITER[.TAKE]] [+N|-N] [/N|\\N] TERMINATOR
    ITER alone is every take that starts in that iteration; ITER.TAKE one take (TAKE is its offset, as in 7.3). the first
    dot after ITER is always the separator, so 123. waits for a take number or a terminator: 123.. is the whole iteration.

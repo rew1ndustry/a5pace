@@ -1,5 +1,5 @@
 #!/bin/sh
-# a space that is not running is started by a5shell, a5control --start and a5start; how is decided in one place.
+# a space that is not running is started by a5hell, a5control --start and a5start; how is decided in one place.
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); export A5PACE_CONFIG=$t/cfg; fail=0
@@ -12,10 +12,10 @@ chk "a5control --start starts it" "$here/bin/a5control --start $t/s STATE | grep
 chk "a5start says it is already running" "$here/tools/a5start $t/s | grep -q 'already running'"
 $here/bin/a5control $t/s QUIT > /dev/null
 n=0; while [ -f $t/s/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
-$here/bin/a5shell $t/s --no-start > $t/ns.out 2>&1 < /dev/null || true
-chk "a5shell --no-start does not start it" "grep -q 'not running' $t/ns.out && ! $here/bin/a5control $t/s LINE > /dev/null 2>&1"
-printf q | $here/bin/a5shell $t/s > $t/sh.out 2>&1 || true
-chk "a5shell starts it, shows it, and leaves it running" "grep -q 'starting it' $t/sh.out && grep -q 'a5shell: st' $t/sh.out && $here/bin/a5control $t/s LINE | grep -q ."
+$here/bin/a5hell $t/s --no-start > $t/ns.out 2>&1 < /dev/null || true
+chk "a5hell --no-start does not start it" "grep -q 'not running' $t/ns.out && ! $here/bin/a5control $t/s LINE > /dev/null 2>&1"
+printf q | $here/bin/a5hell $t/s > $t/sh.out 2>&1 || true
+chk "a5hell starts it, shows it, and leaves it running" "grep -q 'starting it' $t/sh.out && grep -q 'a5hell: st' $t/sh.out && $here/bin/a5control $t/s LINE | grep -q ."
 $here/bin/a5control $t/s QUIT > /dev/null
 n=0; while [ -f $t/s/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 # the edge comes from the session's start file, then the defaults, then the environment wins
