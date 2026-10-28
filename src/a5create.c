@@ -24,7 +24,7 @@ static int usage( void )
 
 int main( int argc, char **argv )
   {
-  if( argc < 4 ) return usage();
+  if( argc < 4 || argv[1][0] == '-' ) { if( argc >= 2 && ( ! strcmp( argv[1], "--help" ) || ! strcmp( argv[1], "-h" ) ) ) { usage(); return 0; } return usage(); }   /* an option is never a folder name */
   const char *dir = argv[1], *name = argv[2], *from = NULL, *profile = NULL, *pan = "c", *styles[8];
   double secs = 0; AspMeter m = { 0, 0, 0, 0 };
   int ns = 0, noclick = 0, level = 1, musical = 0;

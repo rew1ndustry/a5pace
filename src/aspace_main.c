@@ -128,6 +128,7 @@ static int usage( void )
 static int cmd_new( int argc, char **argv )
   {
   if( argc != 5 && argc != 7 ) return usage();
+  if( argv[2][0] == '-' ) return usage();                          /* an option is never a folder name */
   char err[ASP_ERR], desc[400], tp[1100], settings[1100];
   const char *profile = argc == 7 && ! strcmp( argv[5], "--profile" ) ? argv[6] : NULL;
   if( argc == 7 && ! profile ) return usage();
