@@ -9,6 +9,7 @@ Status: work in progress, running on Linux/ALSA (a Steinberg UR22C), with a simu
 plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been built so far.
 
 ## Parts
+(Names: the project is `rew1ndustry/a5pace`; every tool is `a5` + its name, and a name that starts with s lets the `5` be that S. See docs/NAMING.md.)
 - `aspace` the runner: a pipe (raw s32 stereo 48 kHz on stdin/stdout) or a simulated card, and a control port
 - `a5shell` a terminal shell: status line, events and a few keys (safe/live, mixing screen, undo, history, export, automix, profile; docs/SHELL.md)
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)

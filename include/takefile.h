@@ -33,7 +33,7 @@ typedef struct AspTakeW AspTakeW;
 AspTakeW *asp_tw_open( const char *path, const unsigned char artist[ASP_ARTIST], int channels, int rate, int input );
 int  asp_tw_put( AspTakeW *w, const int32_t *pcm, unsigned frames );    /* interleaved; 0 ok */
 void asp_tw_active( AspTakeW *w, unsigned mask );                       /* this tick, these channels (bit n) were heard */
-int  asp_tw_close( AspTakeW *w, int damaged, AspHdr *out );             /* ends the codec, patches the header, fdatasync; 0 ok */
+int  asp_tw_close( AspTakeW *w, int damaged, AspHdr *out );             /* ends the codec, patches the header; 0 ok. not synced: see asp_take_adopt */
 void asp_tw_abort( AspTakeW *w );                                       /* closes the file as it stands, header unfinished */
 
 typedef struct AspTakeR AspTakeR;

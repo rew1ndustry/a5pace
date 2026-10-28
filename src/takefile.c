@@ -116,8 +116,7 @@ int asp_tw_close( AspTakeW *w, int damaged, AspHdr *out )
   unsigned char b[ASP_HDR_SIZE];
   w->h.finished = ! bad; w->h.damaged = damaged;
   hdr_put( b, &w->h );
-  if( pwrite( w->fd, b, ASP_HDR_SIZE, 0 ) != ASP_HDR_SIZE ) bad = 1;
-  if( fdatasync( w->fd ) ) bad = 1;
+  if( pwrite( w->fd, b, ASP_HDR_SIZE, 0 ) != ASP_HDR_SIZE ) bad = 1;              /* not synced: whoever adopts the take settles it */
   if( close( w->fd ) ) bad = 1;
   if( out ) *out = w->h;
   free( w );

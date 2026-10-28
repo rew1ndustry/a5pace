@@ -10,6 +10,7 @@
 #include "aspstore.h"
 #include "codec.h"
 #include "takefile.h"
+#include "keeper.h"
 #include "plat.h"
 #include "schema_sql.h"
 
@@ -21,6 +22,7 @@ struct AspStore
   int readonly;
   unsigned char artist[ASP_ARTIST];      /* who is recording here: takes this store writes carry it */
   char artist_hex[2 * ASP_ARTIST + 1];
+  AspKeeper *keeper;
   };
 
 static void seterr( char *err, const char *what, const char *more )
@@ -82,12 +84,6 @@ static void load_artist( AspStore *s, int create )
   {
   asp_artist_local( s->artist, create );                 /* zero until there is one */
   for( int i = 0; i < ASP_ARTIST; i++ ) sprintf( s->artist_hex + 2 * i, "%02x", s->artist[i] );
-  }
-
-static void fsync_path( const char *path )
-  {
-  int fd = open( path, O_RDONLY );
-  if( fd >= 0 ) { fsync( fd ); close( fd ); }
   }
 
 static AspStore *opendb( const char *dir, int flags, char *err )
@@ -159,11 +155,35 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
 void asp_close( AspStore *s )
   {
   if( ! s ) return;
+  asp_keeper_stop( s->keeper );                                    /* lets it finish what it was given */
   if( ! s->readonly ) sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
   sqlite3_close( s->db );
   free( s );
   }
 const char *asp_session_id( AspStore *s ) { return s->id; }
+int asp_store_keeper( AspStore *s )
+  {
+  char db[1100];
+  if( s->readonly || s->keeper ) return -1;
+  snprintf( db, sizeof db, "%s/session.db", s->dir );
+  s->keeper = asp_keeper_start( db, 30000 );
+  return s->keeper ? 0 : -1;
+  }
+
+int asp_store_poll( AspStore *s )
+  {
+  int64_t tag[16]; int n, total = 0;
+  if( ! s->keeper ) return 0;
+  while( ( n = asp_keeper_done( s->keeper, tag, 16 ) ) > 0 )
+    for( int i = 0; i < n; i++ )
+      {
+      char args[60]; snprintf( args, sizeof args, "{\"take\":%lld}", (long long)tag[i] );
+      asp_log( s, "store", "take_durable", args, -1 );
+      total++;
+      }
+  return total;
+  }
+
 const char *asp_dir( AspStore *s ) { return s->dir; }
 const char *asp_artist( AspStore *s ) { return s->artist_hex; }
 const unsigned char *asp_artist_id( AspStore *s ) { return s->artist; }
@@ -296,7 +316,7 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
   if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( part, dst ) ) return -1;       /* the part was synced when it was closed */
   tm[0] = ms_now() - t0; t0 = ms_now();
-  fsync_path( dir );
+  if( ! s->keeper ) asp_settle_now( dst );                           /* no servant: safe on the disk before there is a row */
   tm[1] = ms_now() - t0; t0 = ms_now();
 
   if( run( s, "begin immediate" ) ) return -1;
@@ -322,10 +342,11 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
   asp_take_set_state( s, id, state_json, "aspace", tick );
   if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
+  if( s->keeper ) asp_keeper_settle( s->keeper, id, dst );            /* the row is there; the keeper makes the file safe, and says when */
   tm[2] = ms_now() - t0;
   if( tm[0] + tm[1] + tm[2] > 20 )                                    /* where a slow adopt went, ms */
     {
-    snprintf( args, sizeof args, "{\"rename\":%.0f,\"fsync_dir\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2] );
+    snprintf( args, sizeof args, "{\"rename\":%.0f,\"settle\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2] );
     asp_log( s, "aspace", "adopt_slow", args, tick );
     }
   return asp_take_get( s, id, out );

@@ -538,6 +538,7 @@ static int cmd_run( int argc, char **argv )
   char err[ASP_ERR], tp[1100], ctlp[1100];
   r.store = asp_open( dir, 0, err );
   if( ! r.store ) { fprintf( stderr, "%s\n", err ); return 1; }
+  asp_store_keeper( r.store );                       /* what waits on the disk is the keeper's, not the loop's */
   { /* the session's settings, then a chosen profile, then what was said on the command line */
     Stored sv; memset( &sv, 0, sizeof sv ); asp_fold( r.store, -1, stored_cb, &sv );
     snprintf( stored, sizeof stored, "%s", sv.settings ); snprintf( pname, sizeof pname, "%s", sv.profile );
@@ -608,6 +609,7 @@ static int cmd_run( int argc, char **argv )
       tape_tap( &r, in, out );
       if( write_tick( out ) ) break;
       }
+    asp_store_poll( r.store );
     if( ctl_watchers( r.ctl ) || ( r.sim.tickn % 25 ) == 0 )
       last = asp_log_since( r.store, last, ev_cb, &r );
     }
