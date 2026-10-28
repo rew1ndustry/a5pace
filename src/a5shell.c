@@ -1,7 +1,9 @@
 /* a5shell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
    press ? for all of them. if the space is not running it is started first (a5start; --no-start to not).
-     space  safe / live     h  history: places to return to     w  wipe the loop     a  mode: al ak a0 a1-9 ap
-     r  sync again   l  relearn the floor   g/G  gate   p  profile   t  takes   ?  help   q  leave   Q  stop aspace
+     space  safe / live     h  history: go back to a place     w  wipe the loop     a  mode: al ak a0 a1-9 ap
+     u  undo the last take   U  the last iteration   x  export (a5export)   t  mixing
+     r  sync again   l  relearn the floor   g/G  gate   p  profile   ?  help   q  leave   Q  stop aspace
+   the shell always starts the space in safe mode: space goes live.
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -11,6 +13,8 @@
 #include <termios.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include "ctlclient.h"
 #include "a5mixer.h"
 
@@ -47,6 +51,8 @@ static int pretty( const char *line, char *out, size_t n )
   else if( ! strcmp( t, "gate" ) ) { if( strstr( json, "learnt" ) ) snprintf( out, n, "the gate has learnt the noise floor" ); else return 0; }
   else if( ! strcmp( t, "edge_drop" ) || ! strcmp( t, "edge_starve" ) ) snprintf( out, n, "the sound card dropped samples: syncing again" );
   else if( ! strcmp( t, "error" ) ) snprintf( out, n, "error: %.200s", json );
+  else if( ! strcmp( t, "undo" ) ) snprintf( out, n, "undone: %d take(s) out, %d back in", (int)jfld( json, "takes", 0 ), (int)jfld( json, "back", 0 ) );
+  else if( ! strcmp( t, "restore" ) ) snprintf( out, n, "put back as at log point %d: %d take(s) changed", (int)jfld( json, "to", 0 ), (int)jfld( json, "changed", 0 ) );
   else if( ! strcmp( t, "click_added" ) ) snprintf( out, n, "click track added" );
   else return 0;                                                  /* wrap, top, new, relevel ...: not for this screen */
   return 1;
@@ -55,7 +61,7 @@ static int pretty( const char *line, char *out, size_t n )
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [w] wipe  [t] mix  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
+  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [u] undo  [t] mix  [x] export  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -73,17 +79,21 @@ static void help( void )
 "   g / G   gate           more / less sensitive, 3 dB a press\n"
 "   p       profile        choose a gate profile made with a5cal\n\n"
 " the loop\n"
+"   u / U   undo           the last take / every take of the last iteration: out of the loop, and anything\n"
+"                          the automix took out because of it comes back. heard from the next start.\n"
+"                          no effect in keep mode, where m / M mix or mute the most recent take instead\n"
+"   x       export         a5export: a all takes, m the mix, l the loop, into DIR/export\n"
 "   w       wipe           y = the recorded takes out of the loop, c = everything\n"
 "                          including clicks. nothing is deleted\n"
-"   h       history        the moments the loop changed, newest first. go back to a\n"
-"                          row, or to a take by iteration.offset such as 7.3\n"
+"   h       history        the moments the loop changed, newest first. up / down to a row,\n"
+"                          .  puts the loop back as it was then, from each take's next start,  !  at once\n"
 "   t       mixing         iterations x takes: mute, play, gain and pan (below)\n"
 "   T       takes          every take and its state, as text\n\n"
 " mixing (t; ESC to leave)\n"
 "   arrows move, shift+arrows select; the left column is a whole iteration\n"
 "   [ITER[.TAKE]] [+N|-N] [/N|\\N] then  .  queue   !  now   m p  mute / play   M P  now\n"
-"   123.15-2/20.   take 123.15, gain -2 dB, pan 20% right, from its next start\n"
-"   123.15\\90!    pan 90% left, at once       123m  mute all of iteration 123\n"
+"   123.15-2/20.   take 123.15, gain -2 dB, pan 20%% right, from its next start\n"
+"   123.15\\90!    pan 90%% left, at once       123m  mute all of iteration 123\n"
 "   123..          toggle every take of 123      m  p  .  on what is selected\n"
 "   gain and pan are absolute; a sign or slash with no number keeps the current value.\n"
 "   a take given a gain or pan is left alone by the automix. A shows muted iterations.\n\n"
@@ -116,10 +126,12 @@ int main( int argc, char **argv )
   ev = cmd >= 0 ? ctlc_connect( argv[1] ) : -1;
   if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
+  ctlc_cmd( cmd, "SAFE", quiet, NULL );                           /* always safe to start: space goes live */
+  snprintf( events[nev++ % 8], 220, "safe: nothing is recorded until you press space" );
   { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }
   struct termios raw;
   if( isatty( 0 ) ) { tcgetattr( 0, &saved ); raw = saved; raw.c_lflag &= ~(tcflag_t)( ICANON | ECHO ); raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; tcsetattr( 0, TCSANOW, &raw ); atexit( restore ); }
-  int amode = 0, amount = 4, each = 0, live = 1; (void)each; (void)amount;
+  int amode = 0, amount = 4, each = 0, live = 1, xfd = -1; pid_t xpid = 0; (void)each; (void)amount;
   for( ;; )
     {
     ctlc_cmd( cmd, "LINE", keep, NULL );
@@ -127,8 +139,14 @@ int main( int argc, char **argv )
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
     draw();
-    struct pollfd p[2] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 } };
-    if( poll( p, 2, 250 ) <= 0 ) continue;
+    struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
+    if( poll( p, 3, 250 ) <= 0 ) continue;
+    if( xfd >= 0 && ( p[2].revents & ( POLLIN | POLLHUP ) ) )          /* the export reports, then ends */
+      {
+      char b[400]; ssize_t k = read( xfd, b, sizeof b - 1 );
+      if( k > 0 ) { b[k] = 0; for( char *q = b; *q; q++ ) if( *q == '\n' ) *q = ' '; snprintf( events[nev++ % 8], 220, "export: %.200s", b ); }
+      else { close( xfd ); xfd = -1; if( xpid ) waitpid( xpid, NULL, 0 ); xpid = 0; }
+    }
     if( p[1].revents & POLLIN )
       {
       char b[1200];
@@ -162,12 +180,35 @@ int main( int argc, char **argv )
           }
         case 't': a5mixer( cmd, ev, space ); break;
         case 'T': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
-        case 'u':
+        case 'u': case 'U':
+          if( amode == 1 ) { snprintf( events[nev++ % 8], 220, "keep mode: undo has no effect (m / M mix or mute the most recent take)" ); break; }
+          snprintf( c, sizeof c, "UNDO %s", k == 'u' ? "TAKE" : "ITER" );
+          break;
+        case 'm': case 'M':                                           /* keep mode: mix or mute the most recent take, queued / now */
+          if( amode != 1 ) break;
+          strcpy( c, k == 'm' ? "LASTMIX" : "LASTMIX NOW" );
+          break;
+        case 'x':
           {
-          char l[40] = "";
-          restore(); printf( "\nrevert to log point: " ); fflush( stdout );
-          if( fgets( l, sizeof l, stdin ) && atoll( l ) > 0 ) snprintf( c, sizeof c, "REVERT %lld", atoll( l ) );
-          tcsetattr( 0, TCSANOW, &raw );
+          char d = 0; int w = 0;
+          printf( "\033[H\033[J export:  a all takes   m the mix (takes in the loop)   l the loop as it sounds   anything else cancels" ); fflush( stdout );
+          while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
+          const char *what = d == 'a' ? "all" : d == 'm' ? "mix" : d == 'l' ? "loop" : NULL;
+          if( ! what ) break;
+          if( xfd >= 0 ) { snprintf( events[nev++ % 8], 220, "an export is still running" ); break; }
+          int pf[2];
+          if( pipe( pf ) ) break;
+          xpid = fork();
+          if( xpid == 0 )                                             /* the real work is a5export, which runs at low priority */
+            {
+            dup2( pf[1], 1 ); dup2( pf[1], 2 ); close( pf[0] ); close( pf[1] ); close( ev ); close( cmd );
+            execlp( "a5export", "a5export", argv[1], what, (char *)NULL );
+            printf( "could not run a5export\n" ); _exit( 127 );
+            }
+          close( pf[1] );
+          if( xpid < 0 ) { close( pf[0] ); xpid = 0; break; }
+          xfd = pf[0];
+          snprintf( events[nev++ % 8], 220, "exporting (%s)...", what );
           break;
           }
         case 'p':
@@ -194,29 +235,33 @@ int main( int argc, char **argv )
           }
         case 'h':
           {
-          /* the places to return to, newest first. choose a row, or an iteration and offset (7.3), and the loop goes back to
-             how it was just after that take; it needs safe, so it goes safe first and asks before going live again */
-          char rows[40][300]; long long seqs[40]; int nr = 0, r;
-          printf( "\033[H\033[J history (newest first), the loop as it was after each:\n\n" );
+          /* the places to return to, newest first. up / down to a row, . to put the loop back as it was then (each take's change
+             waits for its next start), ! at once. nothing is rebuilt and it works live; esc leaves */
+          char rows[40][300]; long long seqs[40]; int nr = 0, r, cur = 0, done = 0;
           { char b[400]; snprintf( b, sizeof b, "HISTORY 30\n" ); if( send( cmd, b, strlen( b ), 0 ) > 0 )
               while( ( r = ctlc_readline( cmd, b, sizeof b, 3000 ) ) > 0 && strcmp( b, "OK" ) && strncmp( b, "ERR", 3 ) )
-                if( nr < 40 ) { char *t1 = strchr( b, '\t' ); if( ! t1 ) continue; seqs[nr] = atoll( t1 + 1 ); char *t2 = strchr( t1 + 1, '\t' ); snprintf( rows[nr], 300, "%.*s  %s", (int)( t1 - b ), b, t2 ? t2 + 1 : "" ); printf( "  %s\n", rows[nr] ); nr++; } }
-          if( ! nr ) printf( "  (nothing yet)\n" );
-          char l[60] = "";
-          restore(); printf( "\n go back to: a row number, or iteration.offset such as 7.3 (enter cancels): " ); fflush( stdout );
-          if( fgets( l, sizeof l, stdin ) && nr )
+                if( nr < 40 ) { char *t1 = strchr( b, '\t' ); if( ! t1 ) continue; seqs[nr] = atoll( t1 + 1 ); char *t2 = strchr( t1 + 1, '\t' ); snprintf( rows[nr], 300, "%.*s  %s", (int)( t1 - b ), b, t2 ? t2 + 1 : "" ); nr++; } }
+          while( ! done )
             {
-            int a = 0, o = 0;
-            if( strchr( l, '.' ) && sscanf( l, "%d.%d", &a, &o ) == 2 ) snprintf( c, sizeof c, "REVERT TAKE %d %d", a, o );
-            else if( atoi( l ) >= 1 && atoi( l ) <= nr ) snprintf( c, sizeof c, "REVERT %lld", seqs[atoi( l ) - 1] );
-            }
-          tcsetattr( 0, TCSANOW, &raw );
-          if( c[0] )
-            {
-            if( live ) ctlc_cmd( cmd, "SAFE", quiet, NULL );
-            ctlc_cmd( cmd, c, quiet, NULL );
-            snprintf( events[nev++ % 8], 220, "went back (%s). safe is on: press space to go live", c );
-            c[0] = 0;
+            printf( "\033[H\033[J history (newest first), the loop as it was after each:\n\n" );
+            for( int i = 0; i < nr; i++ ) printf( "%s %s%s\n", i == cur ? "\033[7m>" : " ", rows[i], i == cur ? "\033[0m" : "" );
+            if( ! nr ) printf( "  (nothing yet)\n" );
+            printf( "\n up/down choose    .  put the loop back to this, from each take's next start    !  at once    esc  leave" ); fflush( stdout );
+            char d = 0; 
+            while( read( 0, &d, 1 ) != 1 ) usleep( 50000 );
+            if( d == '\033' )
+              {
+              char e1 = 0, e2 = 0; usleep( 30000 );
+              if( read( 0, &e1, 1 ) == 1 && e1 == '[' && read( 0, &e2, 1 ) == 1 ) { if( e2 == 'A' && cur > 0 ) cur--; else if( e2 == 'B' && cur < nr - 1 ) cur++; }
+              else done = 1;
+              }
+            else if( ( d == '.' || d == '!' ) && nr )
+              {
+              snprintf( c, sizeof c, "RESTORE %lld%s", seqs[cur], d == '!' ? " NOW" : "" );
+              snprintf( events[nev++ % 8], 220, "putting the loop back as at row %d%s", cur + 1, d == '!' ? " (now)" : " (from each take's next start)" );
+              done = 1;
+              }
+            else if( d == 'q' ) done = 1;
             }
           break;
           }

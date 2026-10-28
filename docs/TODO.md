@@ -26,10 +26,7 @@ restores them), the defaults file copied in by `a5pace new`. Profiles for gate a
 ## Create tool
 Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Click for a running space is done (`CLICK ADD` / `CLICK CLEAR`). Still open: resampling other rates on import; mp3 and other formats; swing and odd groupings (7/8 as 2+2+3); a count-in; a click that follows a tempo map.
 
-## Shell starts in safe mode, always (user)
-`a5shell` should start its session in SAFE (no takes recorded) every time, however it was started, and say so; `l` goes live.
-
-## `a5export` (built, awaiting the user's test)
+## `a5export`: done and tested by the user
 Done: `a5export DIR [loop|mixed|all] [--to FOLDER]`, see docs/EXPORT.md. Still open: a shell key for it, a take that
 overlaps itself in the iteration sum (summed with saturation for now), a `--since` to export only newer iterations.
 
@@ -38,10 +35,8 @@ Every generated track (clicks, imported files) gets an iteration of 90001, 90002
 labels them so (negative n becomes 90000 - n). Still to do: store them so, in a5click, a5create, the core's CLICK ADD and
 the mixing screen, and a migration for sessions that have negative iterations. `generated` stays the marker in the state.
 
-## Undo in the shell (user)
-Replace the undo dialog (log point, needs SAFE). `u` undoes the last take, `U` the whole last iteration. An absolute undo
-is chosen from the history: up/down to a point, `.` to action it (at the next start), `!` now, as with mixing.
-In keep mode `u`/`U` do nothing. In keep mode `m`/`M` toggle (mix or mute) the most recent take (`m` queued, `M` now).
+## Undo in the shell: done
+`u`, `U`, history with `.` / `!`, keep-mode `m` / `M`, safe-start and `x` export are in (docs/SHELL.md). Open: an undo of an undo (redo) and a "what would change" preview in the history.
 
 ## Envelopes (to map out with the user)
 A take's gain and pan are one constant value across the whole take for now (`lev`). Envelopes replace it: points over

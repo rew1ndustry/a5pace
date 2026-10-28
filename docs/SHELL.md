@@ -29,6 +29,7 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `TAKES` | every take with its state |
 | `WIPE [ALL]` | take the recorded takes out of the loop (`ALL`: the generated ones too, clicks and an imported file); they stay in the store |
 | `HISTORY [n]` | the moments the loop changed, newest first: each a place to return to, with how many takes were in the loop after it |
+| `UNDO TAKE\|ITER [NOW]`, `RESTORE seq [NOW]`, `LASTMIX [NOW]` | undo the last take / iteration; put the mix back as at a log point; toggle the most recent take (keep mode). changes trail the head unless NOW |
 | `REVERT TAKE iter off` | go back to how the loop was just after the take with that iteration and offset (needs SAFE) |
 | `REVERT seq` | go back to a log point (only while SAFE); the loop is rebuilt from the store |
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
@@ -76,10 +77,14 @@ bits. When that shift changes, the output fades from the old scale to the new on
 the change is a ramp and not a step.
 
 ### The shell's keys (`a5shell DIR`; press `?` in it)
-The top line names the space. `space` safe/live, `h` history (places to return to; pick a row or type an iteration and
-offset such as `7.3`: it goes safe first and asks you to press space when you want to be live again), `w` wipe (asks),
-`a` the mode (a short list; overlap asks how many, swap asks about each), `r` sync again, `l` relearn the gate floor,
-`g`/`G` gate more/less sensitive, `p` choose a profile, `t` list takes, `?` help, `q` leave (aspace carries on), `Q` stop
+The shell always puts the space in safe mode when it starts (nothing is recorded until you press `space`).
+The top line names the space. `space` safe/live. `u` undoes the last take and `U` every take of the last iteration: they go
+out of the loop, and takes the automix removed because of them come back; it is heard from each take's next start, and does
+nothing in keep mode (where `m` / `M` mix or mute the most recent take, queued / now). `h` history: up/down to a row, `.`
+puts the loop back as it was then (from each take's next start), `!` at once, esc leaves; no rebuild and no safe mode needed.
+`x` export: `a` all takes, `m` the mix, `l` the loop, by running `a5export` at low priority (docs/EXPORT.md). `t` the mixing
+screen, `T` takes as text, `w` wipe (asks), `a` the mode (a short list), `r` sync again, `l` relearn the gate floor,
+`g`/`G` gate more/less sensitive, `p` choose a profile, `?` help, `q` leave (aspace carries on), `Q` stop
 aspace. Under it, in words, what has just happened; the status line shows the mode as `loop`, `keep`, `overlap 4` or `swap each`.
 
 ## Mono
