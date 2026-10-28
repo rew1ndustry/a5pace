@@ -52,40 +52,24 @@ Smaller arecord / aplay buffers to shrink the 0.63 s round trip (the loop stays 
 - GitHub: copyright holder's name in LICENSE, install notes per platform, `a5doctor` in the issue template.
 - Publisher and hub (later, as planned).
 
-## Stability on a cubieboard with an SD card (user: stability is everything)
-- Soak test with injected storage stalls (a slow write of 200-500 ms) and see what the edge's buffers do.
-- Take commit does fsync + a sqlite commit on the tick thread: measure on the board; options are `synchronous=NORMAL`,
-  doing the commit on an idle tick, or a writer thread in the runner (the core stays single-threaded).
-- The loop file on tmpfs (`--tank`) is in place; measure the rebuild time after a reboot on the board.
+## Stability on a cubieboard (user: stability is everything)
+Done 2026-10-29, see docs/CUBIE.md and docs/STORE-DESIGN.md: nothing in the loop waits for the disk (sqlite never syncs in the tick, a keeper
+thread places and syncs takes and makes the next take's file ahead of time), the gate runs 2.7 times faster on the A8, takes encode at
+flac level 2, the loop lives in `/dev/shm`. Measured on echo (a cubieboard1 on an SD card): the average tick is about 110 ms of 200.
+Still to do, on the dedicated board with its real card and drive:
+- A soak test: hours, with a real instrument, a long take, and the buffer sizes of the rewritten driver.
+- The rebuild time after a reboot (a loop of many takes).
+- Occasional multi-second stalls were seen on echo in phases that touch no disk (gate, take write); echo is a busy single-core server, so
+  look again on a board that does nothing else.
 - Keep the default buffers; shrinking them is opt-in (`A5CARD_BUFFER_MS`) and only after the soak test.
 
-## `.a5p`: a session file you can click on (user)
-Take over the `.a5p` extension. A session is a directory, so the clickable thing is a small text file, `NAME.a5p`, that
-points at it: the session directory (relative or absolute), the profile to use, and how to run it (the sound card
-through `a5card`, or a simulated card). Opening it starts the session in a terminal with `a5hell`. Needs: a MIME type
-(`application/x-a5p`) and a `.desktop` handler on Linux, a file association on macOS and Windows, `a5pace new` writing
-the file beside the session, and `a5card`/`a5hell` taking a `.a5p` in place of a directory. Make it one file you can
-copy to another machine along with the session directory.
-
-## Next: tracks in/out, level and pan mixing (design conversation, not built)
-- `input` (auto|left|right|stereo) is the two-channel case of a general rule: which recorded channels become which loop
-  tracks and where they sit in the stereo loop. N-track cards (four-track and up) keep a stereo loop.
-- Rules to design: channel -> track map; 1+3 hard left and 2+4 hard right; spread across the mix; per-track pan and level
-  as envelopes (a perceived linear drop over a take); one gate per channel or a shared one; per-channel tape; how the
-  calibration (`a5cal`/`a5tune`) detects which channels are in use and writes the rule to a profile.
-- Mandolin case: passive pickup on one channel and room mic on the other = a stereo config, chosen by the profile.
-- `a5cal` should detect the used channel from the G windows and write `input` (done by hand in `violin` for now).
-- Test gap: loop identical pass after pass after a long fixed-mono take is checked only by the stored mono/centre/no-job state.
-
-## Undo, next (user liked these)
-- **Redo**: undo of an undo (`r`?), kept as the same kind of mix change; the log already records `undo` and `restore` events.
-- **Preview** in the history: before `.` or `!`, show what a row would change (takes going out, coming back, mixes restored).
-
-## a5import, next (user)
-- Import an export folder over the original takes, replacing them in the loop and in storage (`a5export` names carry the
-  iteration and offset, so a file maps back to its take). Other options to design: resample, trim, place at an offset.
-
-## Remove the session NAME (user)
-`a5create DIR NAME` and `a5pace new DIR NAME` store a name in the descriptor. Nothing uses it except the shell header and
-the `name` field of STATE (a5export no longer reads it). Remove the argument, stop writing it, show the DIR's name (not the whole path) in the shell
-header, drop `name` from STATE; old descriptors that have one are just ignored. A session must not care what its folder is called.
+## The take store: what is built, what follows
+Built: docs/STORE-DESIGN.md (takes as header + codec stream, streaming jobs, keeper), docs/RECOVER.md (crash noticing, `a5recover`).
+Not built:
+- **astream on the same codec module** (`include/codec.h`), on its own branch of the astream repository, last of all.
+- **Several artists in a session, and p2p**: the artist id, the per-artist folders and the key `(artist, iter, off)` are in; the rest is not.
+- **More than two channels** in the core (tick buffers, gate, tank, sync). The take file and the codec already allow up to eight.
+- **A job budget by time** instead of by frames (the moves cost about 33 ms a tick on an A8 while one runs).
+- **The offline tools** `a5tune` and `gateprobe` still load whole files (they analyse captures, not takes).
+- **A verification of the newest takes at open** after a hard power cut (`a5recover` finds what a dead run left, but nothing checks every file).
+- **Other platforms**: see docs/PORTABILITY.md.

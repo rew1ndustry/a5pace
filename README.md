@@ -5,8 +5,8 @@ It measures the round trip of your sound card (a coded tone out, read back), lin
 every take as an immutable file (FLAC by default) and every action as an event in a log, so any earlier state of a session can be
 rebuilt or returned to.
 
-Status: work in progress, running on Linux/ALSA (a Steinberg UR22C), with a simulated card for testing. The core is
-plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been built so far.
+Status: working, running on Linux/ALSA (a Steinberg UR22C), with a simulated card for testing, and on a cubieboard. The core is
+plain C99 plus one servant thread, meant to build on Linux, macOS, Windows and AIX; only Linux has been built so far (x86-64 and armv7).
 
 ## Parts
 (Names: the project is `rew1ndustry/a5pace`; every tool is `a5` + its name, and a name that starts with s lets the `5` be that S. See docs/NAMING.md.)
@@ -16,6 +16,7 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 - `a5create` makes a space (seconds, bars, or an audio file); `a5click` makes metronome tracks and `a5import` brings in an audio file as a track, for a space that is closed or running (docs/CREATE.md)
 - `a5recover` after a run that died: finds the takes it left behind and puts them back (docs/RECOVER.md)
 - `a5export` takes the audio out as flac: every take, the takes in the loop, or the loop itself (docs/EXPORT.md)
+- `tickbench` (in `tools/`, `make bin/tickbench`) times the parts of a tick on this machine
 - `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
 - `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
 - `a5doctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
@@ -38,7 +39,9 @@ bin/a5control /tmp/demo TAKES
 bin/a5hell /tmp/demo
 ```
 ## Read next
-`docs/SHELL.md` (running it), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` (the store),
-`docs/PROFILES.md` (defaults and gate profiles), `docs/LESSONS.md`, `docs/TODO.md`.
+`docs/SHELL.md` (running it), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` and `docs/STORE-DESIGN.md` (the store: how a take is kept, the
+codec seam, the keeper thread, measurements), `docs/RECOVER.md` (when a run dies, `a5recover`), `docs/CUBIE.md` (running on a cubieboard),
+`docs/CREATE.md`, `docs/EXPORT.md`, `docs/CALIBRATION.md`, `docs/PROFILES.md`, `docs/PORTABILITY.md`, `docs/NAMING.md` (why the tools are called what they are),
+`docs/LESSONS.md`, `docs/TODO.md`.
 
 MIT licence. The idea and the method are by James Knight; the implementation was written with Claude (Anthropic).
