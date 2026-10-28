@@ -77,3 +77,7 @@ copy to another machine along with the session directory.
 - Mandolin case: passive pickup on one channel and room mic on the other = a stereo config, chosen by the profile.
 - `a5cal` should detect the used channel from the G windows and write `input` (done by hand in `violin` for now).
 - Test gap: loop identical pass after pass after a long fixed-mono take is checked only by the stored mono/centre/no-job state.
+
+## Undo, next (user liked these)
+- **Redo**: undo of an undo (`r`?), kept as the same kind of mix change; the log already records `undo` and `restore` events.
+- **Preview** in the history: before `.` or `!`, show what a row would change (takes going out, coming back, mixes restored).
