@@ -155,6 +155,13 @@ int main( void )
   CHECK( asp_tw_open( "/nonexistent/dir/x.a5t", ART, 2, 48000, 0 ) == NULL );
   snprintf( p, sizeof p, "%s/a.a5t", dir );
   CHECK( asp_tw_open( p, ART, 2, 48000, 0 ) == NULL );    /* never over an existing take */
+  CHECK( access( p, F_OK ) == 0 && asp_take_header( p, &g ) == 0 && g.finished );      /* and the take it refused is still there */
+  {                                                       /* but an empty file is fine: a spare made ahead of time */
+  snprintf( p, sizeof p, "%s/spare.part", dir );
+  FILE *f = fopen( p, "wb" ); fclose( f );
+  AspTakeW *w = asp_tw_open( p, ART, 2, 48000, 0 );
+  CHECK( w && asp_tw_put( w, pcm, 100 ) == 0 && asp_tw_close( w, 0, &g ) == 0 && g.frames == 100 );
+  }
 
   free( pcm );
   { char cmd[300]; snprintf( cmd, sizeof cmd, "rm -rf %s", dir ); if( system( cmd ) ) {} }

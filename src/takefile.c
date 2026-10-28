@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include "takefile.h"
 #include "codec.h"
@@ -83,7 +84,10 @@ AspTakeW *asp_tw_open( const char *path, const unsigned char artist[ASP_ARTIST],
   snprintf( w->h.codec, sizeof w->h.codec, "%.4s", asp_codec_name() );
   w->h.channels = channels; w->h.rate = rate; w->h.bits = 32; w->h.input = input; w->h.ident = channels > 1;
   memcpy( w->h.artist, artist, ASP_ARTIST );
-  w->fd = open( path, O_WRONLY | O_CREAT | O_EXCL, 0644 );
+  /* a file that is not there is made; one that is there must be empty (a spare the keeper made ahead of time): never over a take */
+  struct stat sb;
+  w->fd = open( path, O_WRONLY | O_CREAT, 0644 );
+  if( w->fd >= 0 && ( fstat( w->fd, &sb ) || sb.st_size != 0 ) ) { close( w->fd ); free( w ); return NULL; }
   unsigned char b[ASP_HDR_SIZE];
   hdr_put( b, &w->h );
   if( w->fd < 0 || tw_sink( b, ASP_HDR_SIZE, 0, 0, w ) || ! ( w->enc = asp_enc_new( channels, rate, ASP_TICK, 1, tw_sink, w ) ) )

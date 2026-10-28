@@ -29,6 +29,12 @@ int main( void )
   for( int i = 0; i < got; i++ ) CHECK( tags[i] == 100 + i );
   CHECK( asp_keeper_done( k, tags, 32 ) == 0 );
   asp_keeper_settle( k, 7, "/nonexistent/file" );                      /* a file that is gone is done all the same */
+  /* spares: a file made ahead of time, in a folder made if need be, handed over once */
+  snprintf( p, sizeof p, "%s/newdir/spare1", dir ); asp_keeper_spare( k, p );
+  char got1[1200]; spins = 0; int have = 0;
+  while( ! have && spins++ < 500 ) { have = asp_keeper_spare_get( k, got1, sizeof got1 ); if( ! have ) usleep( 10000 ); }
+  CHECK( have && ! strcmp( got1, p ) && access( p, F_OK ) == 0 );
+  CHECK( asp_keeper_spare_get( k, got1, sizeof got1 ) == 0 );
   asp_keeper_stop( k );                                                /* stopping lets it finish: no crash, no leak of the queue */
 
   /* in a store: adopt returns at once, the row appears when the keeper has the file in its place and safe (on poll) */
@@ -41,6 +47,11 @@ int main( void )
   t0 = now_ms();
   CHECK( asp_take_add_d32( s, 1, 0, d32, 2, 48000, "off", 0, &t ) == 0 );
   CHECK( now_ms() - t0 < 200 );
+  { char cmd2[500]; int n = 0;                                          /* two spares kept ready (one was used, another asked for) */
+    snprintf( cmd2, sizeof cmd2, "ls %s/tmp | grep -c spare_", p );
+    for( int tries = 0; tries < 200 && n != 2; tries++ )
+      { FILE *ls = popen( cmd2, "r" ); n = 0; if( ls ) { if( fscanf( ls, "%d", &n ) != 1 ) n = 0; pclose( ls ); } if( n != 2 ) usleep( 10000 ); }
+    CHECK( n == 2 ); }
   char tp[400]; CHECK( asp_take_path( s, &t, tp, sizeof tp ) == 0 );
   CHECK( access( tp, F_OK ) == 0 );                                    /* wherever it is just now (its part, or its place), it is readable */
   int n = 0; spins = 0;
@@ -53,6 +64,7 @@ int main( void )
   CHECK( asp_take_find( s, 1, 0, &back ) == 0 && back.id == t.id && back.frames == 40000 );   /* the row is there once the file is */
   { char bp[400]; CHECK( asp_take_path( s, &back, bp, sizeof bp ) == 0 && access( bp, F_OK ) == 0 ); }
   asp_close( s );
+  { char cmd2[500]; snprintf( cmd2, sizeof cmd2, "ls %s/s/tmp | grep -c spare_ > /dev/null", dir ); CHECK( system( cmd2 ) != 0 ); }   /* none left behind */
 
   /* the checkpoints: the keeper folds the log into the database on a connection of its own, now and then */
   snprintf( p, sizeof p, "%s/s2", dir );

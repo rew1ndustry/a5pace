@@ -9,6 +9,11 @@
 #   A5CARD_BUFFER_MS  alsa buffer for both directions (default: alsa's 500). stability comes before latency: under
 #                   about 600 ms (three ticks) a stall of the storage can become a dropout; a warning says so
 #   A5CARD_DRY=1   check everything, start nothing
+#   A5CARD_RELEASE=1  when only pipewire/wireplumber hold the card, switch its profile to "off" for the run and put it
+#                      back afterwards (nothing is killed). if any other program holds it (Audacity, Reaper...) a5card says so
+#                      and leaves it alone. 0 (the default) does not even do that. a machine where a5 comes first sets 1 in
+#                      $XDG_CONFIG_HOME/aspace/a5card.conf (shell, read first)
+#   A5CARD_DRY=1   check everything, start nothing
 #   A5CARD_RELEASE   0 (default) never takes the card from anyone. 1: when only pipewire/wireplumber hold it, switch its
 #                      profile to "off" for the run and put it back afterwards (nothing is killed). 2: as 1, and any other
 #                      program of yours still holding the card is ended (TERM, then KILL). a machine where a5 comes first
@@ -58,28 +63,10 @@ for o in d:
 }
 restore_pipewire() { [ -n "$PWDEV" ] && pw-cli set-param "$PWDEV" Profile "{ index: $PWOLD }" > /dev/null 2>&1 && say_ "pipewire has the card back (profile $PWOLD)"; }
 
-# by force: whoever still has the card, but never pipewire or wireplumber (they would only come back; their profile is the way)
-force_release() {
-  local p c
-  for pass in TERM KILL; do
-    for p in $(fuser /dev/snd/pcmC${CARDNO}D* 2>/dev/null); do
-      c=$(ps -o comm= -p "$p" 2>/dev/null); [ "$p" = "$$" ] && continue
-      case $c in pipewire*|wireplumber*|"") continue ;; esac
-      say_ "taking the card: $pass to $c ($p)"; kill -$pass "$p" 2>/dev/null
-    done
-    sleep 1
-    [ -z "$(holders)" ] && return 0
-  done
-  return 1
-}
-
 busy=$(holders)
 if [ -n "$busy" ] && [ "${A5CARD_RELEASE:-0}" -ge 1 ] && [ "${A5CARD_DRY:-0}" != 1 ] \
    && ! echo "$busy" | grep -qvi "pipewire\|wireplumber"; then
   release_pipewire; busy=$(holders)
-fi
-if [ -n "$busy" ] && [ "${A5CARD_RELEASE:-0}" -ge 2 ] && [ "${A5CARD_DRY:-0}" != 1 ]; then
-  release_pipewire; force_release; busy=$(holders)
 fi
 if [ -n "$busy" ]; then
   say_ "the sound card is in use, not starting:"; echo "$busy" >&2

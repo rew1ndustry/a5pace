@@ -10,7 +10,7 @@
 #include "sqlite3.h"
 #include "keeper.h"
 
-typedef struct Job { struct Job *next; int64_t tag; char path[1200], from[1200]; } Job;
+typedef struct Job { struct Job *next; int64_t tag; int spare; char path[1200], from[1200]; } Job;
 
 struct AspKeeper
   {
@@ -19,6 +19,7 @@ struct AspKeeper
   pthread_cond_t cv;
   Job *head, *tail;
   int64_t *done; int ndone, capdone;
+  char (*ready)[1200]; int nready, capready;                  /* spare files made and not yet taken */
   int stop, checkpoints, period_ms;
   char db[1200];
   };
@@ -68,6 +69,24 @@ static void *keep_main( void *u )
       Job *j = k->head;
       k->head = j->next; if( ! k->head ) k->tail = NULL;
       pthread_mutex_unlock( &k->mu );
+      if( j->spare )                                           /* an empty file, made ahead of time */
+        {
+        char d[1200], *sl; int fd;
+        snprintf( d, sizeof d, "%s", j->path );
+        if( ( sl = strrchr( d, '/' ) ) ) { *sl = 0; mkdir_p( d ); }
+        fd = open( j->path, O_WRONLY | O_CREAT | O_EXCL, 0644 );
+        if( fd >= 0 )
+          {
+          close( fd );
+          pthread_mutex_lock( &k->mu );
+          if( k->nready == k->capready ) { k->capready = k->capready ? 2 * k->capready : 4; k->ready = realloc( k->ready, k->capready * sizeof *k->ready ); }
+          snprintf( k->ready[k->nready++], 1200, "%s", j->path );
+          pthread_mutex_unlock( &k->mu );
+          }
+        free( j );
+        pthread_mutex_lock( &k->mu );
+        continue;
+        }
       if( j->from[0] )                                         /* a take to be put in its place first */
         {
         char d[1200], *sl;
@@ -113,6 +132,32 @@ AspKeeper *asp_keeper_start( const char *db, int period_ms )
   if( db ) snprintf( k->db, sizeof k->db, "%s", db );
   if( pthread_create( &k->th, NULL, keep_main, k ) ) { free( k ); return NULL; }
   return k;
+  }
+
+void asp_keeper_spare( AspKeeper *k, const char *path )
+  {
+  Job *j = calloc( 1, sizeof *j );
+  if( ! j ) return;
+  j->spare = 1; snprintf( j->path, sizeof j->path, "%s", path );
+  pthread_mutex_lock( &k->mu );
+  if( k->tail ) k->tail->next = j; else k->head = j;
+  k->tail = j;
+  pthread_cond_signal( &k->cv );
+  pthread_mutex_unlock( &k->mu );
+  }
+
+int asp_keeper_spare_get( AspKeeper *k, char *path, size_t n )
+  {
+  int got = 0;
+  pthread_mutex_lock( &k->mu );
+  if( k->nready > 0 )
+    {
+    snprintf( path, n, "%s", k->ready[0] );
+    memmove( k->ready, k->ready + 1, ( --k->nready ) * sizeof *k->ready );
+    got = 1;
+    }
+  pthread_mutex_unlock( &k->mu );
+  return got;
   }
 
 void asp_keeper_place( AspKeeper *k, int64_t tag, const char *from, const char *to )
@@ -162,4 +207,4 @@ void asp_keeper_stop( AspKeeper *k )
   }
 
 void asp_keeper_free( AspKeeper *k )
-  { if( k ) { free( k->done ); free( k ); } }
+  { if( k ) { free( k->done ); free( k->ready ); free( k ); } }

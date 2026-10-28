@@ -27,6 +27,7 @@ struct AspStore
      the database, so no other program is ever shown a take whose file is not where it should be */
   struct Pending { AspTake t; char part[1200]; } *pend; int npend;
   int64_t next_id;
+  int spare_n;
   };
 
 static void seterr( char *err, const char *what, const char *more )
@@ -163,19 +164,24 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
 void asp_close( AspStore *s )
   {
   if( ! s ) return;
-  if( s->keeper ) { asp_keeper_stop( s->keeper ); asp_store_poll( s ); asp_keeper_free( s->keeper ); s->keeper = NULL; }   /* it finishes what it was given, and we say so */
+  if( s->keeper ) { asp_keeper_stop( s->keeper ); asp_store_poll( s );
+    { char sp[1200]; while( asp_keeper_spare_get( s->keeper, sp, sizeof sp ) ) unlink( sp ); }          /* spares not used are not left */
+    asp_keeper_free( s->keeper ); s->keeper = NULL; }   /* it finishes what it was given, and we say so */
   free( s->pend );
   if( ! s->readonly ) sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
   sqlite3_close( s->db );
   free( s );
   }
 const char *asp_session_id( AspStore *s ) { return s->id; }
+static void spare_request( AspStore *s );
+
 int asp_store_keeper( AspStore *s )
   {
   char db[1100];
   if( s->readonly || s->keeper ) return -1;
   snprintf( db, sizeof db, "%s/session.db", s->dir );
   s->keeper = asp_keeper_start( db, 30000 );
+  if( s->keeper ) { spare_request( s ); spare_request( s ); }
   return s->keeper ? 0 : -1;
   }
 
@@ -412,10 +418,20 @@ int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_pa
   return 0;
   }
 
+/* with a keeper, the next take's file is already made: asked for ahead of time, so the loop never makes one (on a card, making a
+   file can wait behind a sync). two are kept ready */
+static void spare_request( AspStore *s )
+  {
+  char p[1200];
+  snprintf( p, sizeof p, "%s/tmp/spare_%d_%d.part", s->dir, (int)getpid(), s->spare_n++ );
+  asp_keeper_spare( s->keeper, p );
+  }
+
 int asp_tmp_path( AspStore *s, char *buf, size_t n )
   {
   static int serial;
   char dir[1200];
+  if( s->keeper && asp_keeper_spare_get( s->keeper, buf, n ) ) { spare_request( s ); return 0; }
   snprintf( dir, sizeof dir, "%s/tmp", s->dir );
   mkdir_p( dir );
   return snprintf( buf, n, "%s/%d_%d.part", dir, (int)getpid(), serial++ ) < (int)n ? 0 : -1;
