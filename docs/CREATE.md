@@ -38,5 +38,21 @@ from the end as the first from the start.
 **Signatures and tempo.** `bpm` counts quarter notes a minute. In 6/8, 9/8 and 12/8 a beat is a dotted quarter (so 6/8 has
 two beats a bar); in other signatures a beat is the note named by the lower number (7/8 has seven eighth-note beats).
 
-The clicks are generated takes with a negative iteration (-1, -2, ...), kept in the log like everything else, and
+The clicks are generated takes in the 90000 series (90001, 90002, ...), kept in the log like everything else, and
 a revert can bring a cleared click back.
+
+## a5import: bring an audio file in as a track
+```
+a5import DIR guide.flac                     kept as a take, not in the loop
+a5import DIR guide.flac --play              and into the loop
+a5import DIR guide.wav --play --level 2 --pan l
+```
+wav or flac, 48 kHz, one or two channels (anything else: convert first, for example with `sox`). The track starts at the
+loop's start, whatever its length, and is a generated track in the next free place of the 90000 series (90001, 90002 ...,
+the same series the clicks use; `a5export` writes it as `loop_90001_00000.flac`). `--level N` is a right shift, 6 dB a step;
+the default is 1 for a mono file (centred at 0 dB, like a recorded mono take) and 0 for a stereo one. It works on a closed
+session and on a running one (the track joins the loop behind the play head, like any mix change).
+Planned: importing an export folder over the original takes (see docs/TODO.md).
+
+Generated tracks (clicks, imported files) are numbered in the 90000 series; sessions made before that have negative
+iterations (-1, -2 ...), which still read and which `a5export` shows as 90001 and up.

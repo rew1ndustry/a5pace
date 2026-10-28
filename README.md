@@ -10,9 +10,10 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 
 ## Parts
 - `aspace` the runner: a pipe (raw s32 stereo 48 kHz on stdin/stdout) or a simulated card, and a control port
-- `a5shell` a terminal shell: status line, events and a few keys (safe/live, profile, automix, revert)
+- `a5shell` a terminal shell: status line, events and a few keys (safe/live, mixing screen, undo, history, export, automix, profile; docs/SHELL.md)
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
-- `a5create` makes a space (seconds, bars, or an audio file) and `a5click` puts metronome tracks into any space (docs/CREATE.md)
+- `a5create` makes a space (seconds, bars, or an audio file); `a5click` makes metronome tracks and `a5import` brings in an audio file as a track, for a space that is closed or running (docs/CREATE.md)
+- `a5export` takes the audio out as flac: every take, the takes in the loop, or the loop itself (docs/EXPORT.md)
 - `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
 - `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
 - `a5doctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
