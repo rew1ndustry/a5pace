@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include "aspstore.h"
 
@@ -86,8 +87,26 @@ int main( void )
   CHECK( s && asp_take_add_d32( s, 9, 9, pcm, 2, 48000, "mix", 0, NULL ) != 0 );
   asp_close( s );
   s = asp_open( p, 0, e );
-  CHECK( s && asp_log_last( s ) == r2 );
+  CHECK( s && asp_log_last( s ) > r2 && ! asp_store_crashed( s, NULL ) );          /* a clean close and reopen: no crash (the marks are in the log) */
   asp_close( s );
+
+  /* a writer that dies without closing is found out by the next one, once; a writer still alive is not a crash */
+  {
+  pid_t kid = fork();
+  if( kid == 0 ) { AspStore *k = asp_open( p, 0, e ); _exit( k ? 0 : 1 ); }          /* opens, never closes */
+  int st = 0; waitpid( kid, &st, 0 );
+  CHECK( WIFEXITED( st ) && WEXITSTATUS( st ) == 0 );
+  int64_t pid = 0;
+  s = asp_open( p, 0, e );
+  CHECK( s && asp_store_crashed( s, &pid ) == 1 && pid == kid );
+  CHECK( asp_log_last( s ) > r2 );
+  asp_close( s );
+  s = asp_open( p, 0, e );
+  CHECK( s && ! asp_store_crashed( s, NULL ) );                                     /* it has been told; the close since cleared it */
+  AspStore *s2 = asp_open( p, 0, e );                                               /* a second writer while the first is open: alive, so not a crash */
+  CHECK( s2 && ! asp_store_crashed( s2, NULL ) );
+  asp_close( s2 ); asp_close( s );
+  }
 
   snprintf( cmd, sizeof cmd, "rm -rf %s", dir ); system( cmd );
   printf( fails ? "%d FAILED\n" : "all store tests passed\n", fails );

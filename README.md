@@ -2,7 +2,7 @@
 
 A looper with **measured zero latency**, built so that several people can play into the same loop over a network.
 It measures the round trip of your sound card (a coded tone out, read back), lines every take up to the sample, keeps
-every take as an immutable FLAC file and every action as an event in a log, so any earlier state of a session can be
+every take as an immutable file (FLAC by default) and every action as an event in a log, so any earlier state of a session can be
 rebuilt or returned to.
 
 Status: work in progress, running on Linux/ALSA (a Steinberg UR22C), with a simulated card for testing. The core is
@@ -14,6 +14,7 @@ plain C99 meant to build on Linux, macOS, Windows and AIX; only Linux has been b
 - `a5hell` a terminal shell: status line, events and a few keys (safe/live, mixing screen, undo, history, export, automix, profile; docs/SHELL.md)
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
 - `a5create` makes a space (seconds, bars, or an audio file); `a5click` makes metronome tracks and `a5import` brings in an audio file as a track, for a space that is closed or running (docs/CREATE.md)
+- `a5recover` after a run that died: finds the takes it left behind and puts them back (docs/RECOVER.md)
 - `a5export` takes the audio out as flac: every take, the takes in the loop, or the loop itself (docs/EXPORT.md)
 - `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
 - `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting

@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <signal.h>
 #include "sqlite3.h"
 #include "aspstore.h"
 #include "codec.h"
@@ -28,6 +29,7 @@ struct AspStore
   struct Pending { AspTake t; char part[1200]; } *pend; int npend;
   int64_t next_id;
   int spare_n;
+  int crashed; int64_t crash_pid;     /* the last run of a writer here did not close; its pid */
   };
 
 static void seterr( char *err, const char *what, const char *more )
@@ -110,6 +112,30 @@ static AspStore *opendb( const char *dir, int flags, char *err )
   return s;
   }
 
+/* a writer opens and closes the store with a mark in the log each time; an open with no close after it is a run that died. a writer
+   still alive (kill 0) is not a crash, whatever its marks say: it is somebody else working here */
+static void note_open( AspStore *s )
+  {
+  char a[60]; snprintf( a, sizeof a, "{\"pid\":%d}", (int)getpid() );
+  asp_log( s, "store", "store_open", a, -1 );
+  }
+
+static void detect_crash( AspStore *s )
+  {
+  sqlite3_stmt *q;
+  if( sqlite3_prepare_v2( s->db, "select type, coalesce(json_extract(args_json,'$.pid'),0) from log where type in ('store_open','store_closed') order by seq desc limit 1", -1, &q, NULL ) == SQLITE_OK
+      && sqlite3_step( q ) == SQLITE_ROW && ! strcmp( (const char *)sqlite3_column_text( q, 0 ), "store_open" ) )
+    {
+    int64_t pid = sqlite3_column_int64( q, 1 );
+    if( ! ( pid > 0 && kill( (pid_t)pid, 0 ) == 0 ) ) { s->crashed = 1; s->crash_pid = pid; }
+    }
+  sqlite3_finalize( q );
+  note_open( s );
+  }
+
+int asp_store_crashed( AspStore *s, int64_t *pid )
+  { if( pid ) *pid = s->crash_pid; return s->crashed; }
+
 AspStore *asp_create( const char *dir, const char *descriptor_json, char err[ASP_ERR] )
   {
   char sub[1100];
@@ -138,6 +164,7 @@ AspStore *asp_create( const char *dir, const char *descriptor_json, char err[ASP
   sqlite3_finalize( q );
   if( rc != SQLITE_DONE ) { seterr( err, "session row", sqlite3_errmsg( s->db ) ); asp_close( s ); return NULL; }
   asp_log( s, "store", "session_created", "{}", 0 );
+  note_open( s );
   return s;
   }
 
@@ -151,13 +178,14 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
     { seterr( err, "not a session", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
   snprintf( s->id, sizeof s->id, "%s", (const char *)sqlite3_column_text( q, 0 ) );
   sqlite3_finalize( q );
-  if( sqlite3_prepare_v2( s->db, "select coalesce(max(id),0)+1 from takes", -1, &q, NULL ) == SQLITE_OK && sqlite3_step( q ) == SQLITE_ROW )
+  if( sqlite3_prepare_v2( s->db, "select max((select coalesce(max(id),0) from takes), (select coalesce(max(json_extract(args_json,'$.take')),0) from log where type='take_pending'))+1", -1, &q, NULL ) == SQLITE_OK && sqlite3_step( q ) == SQLITE_ROW )
     s->next_id = sqlite3_column_int64( q, 0 );
   sqlite3_finalize( q );
   if( sqlite3_prepare_v2( s->db, "select schema_version from session limit 1", -1, &q, NULL ) != SQLITE_OK
       || sqlite3_step( q ) != SQLITE_ROW || sqlite3_column_int( q, 0 ) != 2 )
     { seterr( err, "a session of an older aspace (takes are kept in another way now)", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
   sqlite3_finalize( q );
+  if( ! s->readonly ) detect_crash( s );
   return s;
   }
 
@@ -168,7 +196,12 @@ void asp_close( AspStore *s )
     { char sp[1200]; while( asp_keeper_spare_get( s->keeper, sp, sizeof sp ) ) unlink( sp ); }          /* spares not used are not left */
     asp_keeper_free( s->keeper ); s->keeper = NULL; }   /* it finishes what it was given, and we say so */
   free( s->pend );
-  if( ! s->readonly ) sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
+  if( ! s->readonly )
+    {
+    char a[60]; snprintf( a, sizeof a, "{\"pid\":%d}", (int)getpid() );
+    asp_log( s, "store", "store_closed", a, -1 );                  /* the mark of a run that ended as it should */
+    sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
+    }
   sqlite3_close( s->db );
   free( s );
   }
@@ -382,6 +415,9 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
     s->pend = realloc( s->pend, ( s->npend + 1 ) * sizeof *s->pend );
     s->pend[s->npend].t = t; snprintf( s->pend[s->npend].part, sizeof s->pend[0].part, "%s", part ); s->npend++;
     asp_take_set_state( s, t.id, state_json, "aspace", tick );
+    { char a[1400]; const char *nm = strrchr( part, '/' );          /* what a recovery needs to find the take again if the row is never made */
+      snprintf( a, sizeof a, "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"part\":\"%s\"}", (long long)t.id, (long long)iter, (long long)off, nm ? nm + 1 : part );
+      asp_log( s, "aspace", "take_pending", a, tick ); }
     asp_keeper_place( s->keeper, t.id, part, dst );
     *out = t;
     return 0;
@@ -391,6 +427,27 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   asp_settle_now( dst );                                             /* safe on the disk before there is a row */
   if( commit_take( s, &t, state_json, status, tick ) ) return -1;
   return asp_take_find( s, iter, off, out );
+  }
+
+/* a take that was in flight when a run died: its file (at its place, or still at its part), its id and its slot, from the log */
+int asp_take_restore( AspStore *s, int64_t id, int64_t iter, int64_t off, const char *file, const char *status )
+  {
+  char dst[1200], dir[1200];
+  AspHdr h;
+  AspTake t, dummy;
+  if( s->readonly || ! asp_take_get( s, id, &dummy ) || ! asp_take_find( s, iter, off, &dummy ) ) return -1;
+  if( asp_take_header( file, &h ) || ! h.finished || memcmp( h.artist, s->artist, ASP_ARTIST ) ) return -1;
+  memset( &t, 0, sizeof t );
+  t.id = id; t.iter = iter; t.off = off; snprintf( t.artist, sizeof t.artist, "%s", s->artist_hex );
+  t.frames = (int64_t)h.frames; t.rate = h.rate; t.channels = h.channels; t.bits = h.bits; snprintf( t.status, sizeof t.status, "%s", status );
+  if( asp_take_path( s, &t, dst, sizeof dst ) ) return -1;
+  if( strcmp( file, dst ) )
+    {
+    snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
+    if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( file, dst ) ) return -1;
+    }
+  asp_settle_now( dst );
+  return commit_take( s, &t, NULL, status, -1 );
   }
 
 int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,

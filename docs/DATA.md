@@ -1,6 +1,7 @@
 # asp5 data store
 
-Status: agreed design, no code yet. Decided 2026-10-26.
+Status: built (2026-10-29). Decided 2026-10-26; the take format and the store since then are in docs/STORE-DESIGN.md, and what happens
+when a run dies is in docs/RECOVER.md.
 
 ## Layout: one session = one directory
 
@@ -11,7 +12,8 @@ Status: agreed design, no code yet. Decided 2026-10-26.
 ```
 
 - `.d64` stays as the hot loop ("tank"). It is a derived cache, never the source of truth.
-- Takes are immutable and written once. FLAC at the take's native bit depth, MD5 in the header.
+- Takes are immutable and written once: a fixed header of facts about the recording (artist, channels, peak and activity per channel), then the
+  codec's bytes, 32 bit, FLAC by default (a build can choose another lossless codec). Integrity is the codec's own (FLAC checks every frame).
 - aspace is the single writer ("aspace keeps the books"). aspface, the shell, aspview, prod tools
   and remote clients go through aspace's control service, or open session.db read-only. Nothing
   parses filenames for state any more.
@@ -25,7 +27,7 @@ Status: agreed design, no code yet. Decided 2026-10-26.
 | state | fragile (extension = state, renames race) | transactional | transactional | transactional |
 | network / p2p | rsync-shaped, no conflict model | single-writer file | native but needs a server | replicate log + fetch takes by artist/iter/offset |
 | contributor install | none | one file | heavy | one directory |
-| integrity | none | WAL | yes | blob name is its hash; FLAC carries an MD5 |
+| integrity | none | WAL | yes | every FLAC frame carries a CRC; the log says when each take became safe |
 
 Facts (takes, passes, gains, pans, envelopes, cues, notes) are small, relational, changing:
 SQL. Audio is large, immutable, sequential: files. Measured on a 5 min stereo 24-bit take:

@@ -240,23 +240,14 @@ Level 2 is used for takes on every machine (one format, whatever the box), verif
 
 ## Order of work
 
-(2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps
-`takes.<artist12>/<iter>/<off>.a5t`, schema v2 (no blob_sha/md5, `UNIQUE(artist, iter, off)`), an artist id made on first
-use in `$XDG_CONFIG_HOME/aspace/artist`; the core writes every take through the writer, stereo as heard, and decides mono
-from the header when the take ends, so `take_end_` reads nothing back; jobs take a view (`src`) per side. Whole `make test`
-passes with `CODEC=flac` and `CODEC=raw`. A session made before this is refused with a message. Not yet converted:
-`tools/verify.py` and `tools/import_asp4.py` still speak the old layout - step 4.)
+Status 2026-10-29 (all of it committed in the repository, all tests passing, `CODEC=flac` and `CODEC=raw`):
 
-1. DONE 2026-10-28: `codec.h`, `codec_flac.c`, `codec_raw.c`, `test_codec` (round trips at 1/2/4 channels, no-header decode, 7-byte-at-a-time source, truncated stream, damaged block, bad args). Still to do here: check that finalized (old) flac files decode through `asp_dec_*` once the take reader exists.
-2. Take writer/reader on the store (`asp_take_adopt` = fdatasync, rename, row); mono as metadata; tests: store, core.
-3. Streaming `AspJob`; rebuild; tests: mix, job, tank, core (exact-sum tests already exist).
-4. Importers/exporters and `a5doctor`, `verify.py` to the new paths; old sessions keep working (path fallback).
-5. Timing run; sqlite pragmas; helper thread only if needed.
-6. astream moves to the same module (its own branch; your decision, last).
+1. DONE: the codec seam (`codec.h`, `codec_flac.c`, `codec_raw.c`, `test_codec`).
+2. DONE: the take file (`takefile`), the store, the artist id, mono from the header.
+3. DONE: streaming jobs, rebuild, discard and imports; nothing reads a whole take (the offline tools `a5tune` and `gateprobe` still load whole files).
+4. DONE: exporters, importers and `a5doctor` on the new layout; the tools that upgraded from asp4 sessions were removed.
+5. DONE: sqlite pragmas, the keeper thread (sync, placement, spares, checkpoints), the gate on the cortex-a8, encoder level, timing.
+6. NOT DONE: astream on the same module (its own branch, last).
+7. DONE: crash noticing and `a5recover` (docs/RECOVER.md).
 
-## Open questions
-
-1. Artist ID: 128 random bits made on first run and kept in the user's config (below).
-2. FLAC for takes: level 5, verify ON in the store (about +20% of 0.3% CPU), off on the wire as astream has it.
-3. Header metrics: peak, clipped samples, active ticks per channel, identical flag. Anything else worth keeping (rms, first/last active tick)?
-4. astream onto the same module: last, on its own branch.
+Not built: several artists in one session, p2p, more than two channels in the core, a job budget by time.

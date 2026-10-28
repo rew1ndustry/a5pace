@@ -54,6 +54,12 @@ void asp_settle_now( const char *path )
     }
   }
 
+static void pause_ms( const char *var )
+  {
+  const char *v = getenv( var );
+  if( v && atoi( v ) > 0 ) { struct timespec t = { atoi( v ) / 1000, ( atoi( v ) % 1000 ) * 1000000L }; nanosleep( &t, NULL ); }
+  }
+
 static void *keep_main( void *u )
   {
   AspKeeper *k = u;
@@ -87,6 +93,7 @@ static void *keep_main( void *u )
         pthread_mutex_lock( &k->mu );
         continue;
         }
+      pause_ms( "ASP_KEEPER_PAUSE_BEFORE_MS" );                /* (for tests: hold a take before it is placed, to kill the run there) */
       if( j->from[0] )                                         /* a take to be put in its place first */
         {
         char d[1200], *sl;
@@ -94,7 +101,8 @@ static void *keep_main( void *u )
         if( ( sl = strrchr( d, '/' ) ) ) { *sl = 0; mkdir_p( d ); }
         if( rename( j->from, j->path ) ) j->tag = -j->tag;       /* told as a negative tag: it did not get there */
         }
-      asp_settle_now( j->path );                               /* may take seconds on a card; nobody waits for it */
+      asp_settle_now( j->path );
+      if( j->from[0] ) pause_ms( "ASP_KEEPER_PAUSE_AFTER_MS" );  /* (for tests: placed and synced, not yet reported) */                               /* may take seconds on a card; nobody waits for it */
       pthread_mutex_lock( &k->mu );
       if( k->ndone == k->capdone ) { k->capdone = k->capdone ? 2 * k->capdone : 16; k->done = realloc( k->done, k->capdone * sizeof *k->done ); }
       k->done[k->ndone++] = j->tag;

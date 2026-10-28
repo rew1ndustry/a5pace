@@ -677,7 +677,8 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
     }
   take_put( c, c->cur + 2 * scan, ASP_TICK - scan );
   c->born = c->tick;
-  logf_( c, "new", "{\"iter\":%lld,\"off\":%lld,\"wrapped\":%d}", (long long)c->t_iter, (long long)c->t_off, wrapped );
+  { const char *nm = strrchr( c->part, '/' );                        /* the part is named so a recovery can find a take that never ended */
+    logf_( c, "new", "{\"iter\":%lld,\"off\":%lld,\"wrapped\":%d,\"part\":\"%s\"}", (long long)c->t_iter, (long long)c->t_off, wrapped, nm ? nm + 1 : c->part ); }
   return 0;
   }
 

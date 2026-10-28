@@ -538,6 +538,13 @@ static int cmd_run( int argc, char **argv )
   char err[ASP_ERR], tp[1100], ctlp[1100];
   r.store = asp_open( dir, 0, err );
   if( ! r.store ) { fprintf( stderr, "%s\n", err ); return 1; }
+  { int64_t cpid;                                    /* said once, plainly, and in the log where a5hell shows it */
+    if( asp_store_crashed( r.store, &cpid ) )
+      {
+      char ca[80]; snprintf( ca, sizeof ca, "{\"pid\":%lld}", (long long)cpid );
+      asp_log( r.store, "aspace", "crash_detected", ca, -1 );
+      fprintf( stderr, "aspace: the last run (pid %lld) did not close properly. a5recover %s looks for the takes it left behind\n", (long long)cpid, dir );
+      } }
   asp_store_keeper( r.store );                       /* what waits on the disk is the keeper's, not the loop's */
   { /* the session's settings, then a chosen profile, then what was said on the command line */
     Stored sv; memset( &sv, 0, sizeof sv ); asp_fold( r.store, -1, stored_cb, &sv );

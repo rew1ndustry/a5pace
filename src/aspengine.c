@@ -276,6 +276,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
     {
     AspTakeState *st = &l.e[i].st;
     if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* take 0 holds settings, not a take; or not in the loop */
+    { AspTake k; if( asp_take_get( s, l.e[i].id, &k ) ) continue; }     /* a state with no take: one a dead run never got to store (see a5recover) */
     rc = asp_move_take( t, s, l.e[i].id, st->mono ? st->src : -1, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gdb, st->pan, st->mixed } );
     }
   free( l.e );

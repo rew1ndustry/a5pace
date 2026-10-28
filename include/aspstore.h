@@ -52,6 +52,11 @@ int  asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_p
    other program ever finds a row without its file, and a power cut loses only takes that were not yet safe. asp_store_poll, called
    now and then from the loop, makes those rows. without a keeper (the offline tools) adopt does it all itself, before it returns. */
 int  asp_store_keeper( AspStore *s );
+/* a writer marks the log when it opens and closes the store. 1 if the last writer opened and never closed (it died; its pid in *pid),
+   0 otherwise (also if that writer is still alive). for a store opened read write only */
+int  asp_store_crashed( AspStore *s, int64_t *pid );
+/* put back a take a dead run left (see a5recover): the file at file (its place or its part), under its old id and slot; 0 if done */
+int  asp_take_restore( AspStore *s, int64_t id, int64_t iter, int64_t off, const char *file, const char *status );
 int  asp_store_poll( AspStore *s );
 /* a finished take already written at part (see asp_tmp_path, asp_tw_open): rename it to its place, row and events in one
    transaction. state_json NULL gives {"status":status}. on failure the part file is left alone. */
