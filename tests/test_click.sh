@@ -83,7 +83,7 @@ pid=$!
 n=0; while [ ! -f $t/r1/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 $B/a5click $t/r1 --sig 4/4 --bars 2 --style beats > $t/c5.out; $B/a5click $t/r1 --sig 4/4 --bars 2 --style offbeat --insert > $t/c6.out
 $B/a5control $t/r1 STEP 60 > /dev/null
-chk "running: the kept click is not in the loop, the inserted one is" "$B/a5control $t/r1 GRID | awk '\$1==-1{a=\$4} \$1==-2{b=\$4} END{exit !(a==0 && b==1)}'"
+chk "running: the kept click is not in the loop, the inserted one is" "$B/a5control $t/r1 GRID | awk '\$1==90001{a=\$4} \$1==90002{b=\$4} END{exit !(a==0 && b==1)}'"
 $B/a5click $t/r1 --clear > /dev/null; $B/a5control $t/r1 STEP 120 > /dev/null
 chk "running: clear takes the inserted click out" "$B/a5control $t/r1 GRID | awk '\$4==1{n++} END{exit n>0}'"
 $B/a5control $t/r1 QUIT > /dev/null; wait $pid || true
