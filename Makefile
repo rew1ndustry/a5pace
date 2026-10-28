@@ -8,7 +8,7 @@ INC       = -Iinclude -Isrc
 
 ifneq ($(FLACDIR),)
 FLAC_CFLAGS = -I$(FLACDIR)/include
-FLAC_LIBS   = $(FLACLIB) -lm
+FLAC_LIBS   = $(FLACLIB) -lm -lpthread
 FLAC_DEP    = $(FLACLIB)
 else
 FLAC_CFLAGS = $(shell pkg-config --cflags flac)
