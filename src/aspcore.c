@@ -322,30 +322,33 @@ void asp_core_settings( AspCore *c, const char *profile, const char *text )
 const char *asp_core_profile( const AspCore *c ) { return c->profile; }
 const char *asp_core_settings_text( const AspCore *c ) { return c->settings; }
 
-/* a click made by a5click for a space that is running: the flac (the loop long, mono) was written under blobs/tmp. it is
-   kept as a take of its own; in puts it into the loop as well (behind the head, like any other change) */
-int64_t asp_core_click_add( AspCore *c, int64_t *iter, const char *part, const char *style, int ll, int lr, int in )
+/* a generated track for a space that is running (a5click, a5import): the flac was written under blobs/tmp. it is kept as a
+   take of its own, in the 90000 series (90001, 90002 ... : the next one free, the old negative iterations counting as
+   90000 - n); in puts it into the loop as well (behind the head, like any other change). a click is the loop long and mono */
+int64_t asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in )
   {
-  char path[1300], st[500]; AspTake k; uint64_t fr = 0; int ch = 0, rate = 0, bits = 0;
+  char path[1300], st[500]; AspTake k; uint64_t fr = 0; int ch = 0, rate = 0, bits = 0, click = ! strcmp( kind, "click" );
   snprintf( path, sizeof path, "%s/blobs/tmp/%s", asp_dir( c->store ), part );
-  if( strchr( part, '/' ) || asp_flac_info( path, NULL, &fr, &ch, &rate, &bits ) || (int64_t)fr != c->size || ch != 1 ) return -1;
-  if( *iter >= 0 )                                          /* the next free generated iteration */
-    for( *iter = -1; ; (*iter)-- )
+  if( strchr( part, '/' ) || asp_flac_info( path, NULL, &fr, &ch, &rate, &bits ) || ch < 1 || ch > 2 || rate != RATE ) return -1;
+  if( click && ( (int64_t)fr != c->size || ch != 1 ) ) return -1;
+  if( *iter <= 0 )
+    for( *iter = 90001; ; (*iter)++ )
       {
       int used = 0;
-      for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter == *iter && c->lt[i].off == 0 ) used = 1;
+      for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].off == 0 && ( c->lt[i].iter == *iter || c->lt[i].iter == 90000 - *iter ) ) used = 1;
       if( ! used ) break;
       }
   LoopTake lt; memset( &lt, 0, sizeof lt );
-  lt.iter = *iter; lt.len = c->size; lt.mono = 1; lt.peak = -1; lt.gen = 1; lt.in = in;
+  lt.iter = *iter; lt.len = (int64_t)fr; lt.mono = ch == 1; lt.peak = -1; lt.gen = 1; lt.in = in;
   lt.now = lt.base = (AspPlace){ ll, lr, 0, 0, 0, 0 };
-  snprintf( lt.gtail, sizeof lt.gtail, ",\"generated\":\"click\",\"style\":\"%.20s\"", style );
+  snprintf( lt.gtail, sizeof lt.gtail, ",\"generated\":\"%.8s\"%s%.20s%s", kind, click ? ",\"style\":\"" : "", click ? style : "", click ? "\"" : "" );
   state_json( &lt, in ? "mix" : "off", st, sizeof st );
   if( asp_take_adopt( c->store, *iter, 0, path, in ? "mix" : "off", st, c->tick, &k ) ) return -1;
   if( asp_take_peak( c->store, k.id, &lt.peak ) ) lt.peak = 0;
   lt.id = k.id;
   LoopTake *t = lt_add( c ); *t = lt;
-  logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
+  if( click ) logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
+  else logf_( c, "take_imported", "{\"take\":%lld,\"iter\":%lld,\"len\":%lld,\"mono\":%d,\"in\":%d}", (long long)k.id, (long long)*iter, (long long)fr, ch == 1, in );
   if( in && c->cfg.feed ) queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1 );
   return k.id;
   }

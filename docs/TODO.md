@@ -81,3 +81,14 @@ copy to another machine along with the session directory.
 ## Undo, next (user liked these)
 - **Redo**: undo of an undo (`r`?), kept as the same kind of mix change; the log already records `undo` and `restore` events.
 - **Preview** in the history: before `.` or `!`, show what a row would change (takes going out, coming back, mixes restored).
+
+## a5import, next (user)
+- `--play`: an option to play the imported track (not clear yet whether this means audition it through the speakers or put it
+  into the loop straight away; today it goes into the loop unless `--mute`). Ask before building.
+- Import an export folder over the original takes, replacing them in the loop and in storage (`a5export` names carry the
+  iteration and offset, so a file maps back to its take). Other options to design: resample, trim, place at an offset.
+
+## Remove the session NAME (user)
+`a5create DIR NAME` and `a5pace new DIR NAME` store a name in the descriptor. Nothing uses it except the shell header and
+the `name` field of STATE (a5export no longer reads it). Remove the argument, stop writing it, show the path in the shell
+header, drop `name` from STATE; old descriptors that have one are just ignored. A session must not care what its folder is called.

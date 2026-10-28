@@ -347,6 +347,7 @@ static void handle( void *u, int cl, const char *line )
       "TAKES                                every take and its state",
       "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (dB) and pan (-100..100), absolute; mute takes it out of the loop",
       "UNDO TAKE|ITER [NOW] | RESTORE seq [NOW] | LASTMIX [NOW]   undo the last take / iteration; the mix at a history point; toggle the latest take",
+      "IMPORT file l r IN|KEEP   a track for a5import (file under blobs/tmp)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (file under blobs/tmp); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
@@ -401,7 +402,7 @@ static void handle( void *u, int cl, const char *line )
     else if( ! strcmp( w[1], "ADD" ) && n > 7 )
       {
       int64_t it = atoll( w[2] ); int ll = atoi( w[5] ), lr = atoi( w[6] );
-      int64_t id = asp_core_click_add( r->core, &it, w[3], w[4], ll, lr, ! strcasecmp( w[7], "IN" ) );
+      int64_t id = asp_core_gen_add( r->core, &it, w[3], "click", w[4], ll, lr, ! strcasecmp( w[7], "IN" ) );
       if( id < 0 ) ctl_err( c, cl, "that click does not fit this loop" ); else { ctl_say( c, cl, "%lld %lld", (long long)id, (long long)it ); ctl_ok( c, cl ); }
       }
     else ctl_err( c, cl, "CLICK ADD iter file style l r IN|KEEP | CLICK CLEAR" );
@@ -419,6 +420,11 @@ static void handle( void *u, int cl, const char *line )
     { ctl_say( c, cl, "%d take(s) changed", asp_core_restore( r->core, atoll( w[1] ), n > 2 && ! strcasecmp( w[2], "NOW" ) ) ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LASTMIX" ) )               /* LASTMIX [NOW]: toggle the most recent take in or out (keep mode) */
     { if( asp_core_toggle_last( r->core, n > 1 && ! strcasecmp( w[1], "NOW" ) ) ) ctl_err( c, cl, "no take yet" ); else ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "IMPORT" ) && n > 4 )       /* IMPORT file l r IN|KEEP (a5import's flac under blobs/tmp): the next 90000 slot */
+    {
+    int64_t it = 0, id = asp_core_gen_add( r->core, &it, w[1], "file", "", atoi( w[2] ), atoi( w[3] ), ! strcasecmp( w[4], "IN" ) );
+    if( id < 0 ) ctl_err( c, cl, "that file cannot be imported (48 kHz flac, one or two channels)" ); else { ctl_say( c, cl, "%lld %lld", (long long)id, (long long)it ); ctl_ok( c, cl ); }
+    }
   else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
     { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }

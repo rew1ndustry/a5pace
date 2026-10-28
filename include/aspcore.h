@@ -87,8 +87,9 @@ int      asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m
 typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gdb, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
 int      asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u );
 int      asp_core_pending( const AspCore *c, int64_t id );
-/* clicks for a space that is running (a5click). part is the file name under blobs/tmp. *iter >= 0 picks the next free negative one */
-int64_t  asp_core_click_add( AspCore *c, int64_t *iter, const char *part, const char *style, int ll, int lr, int in );
+/* generated tracks for a space that is running (a5click, a5import). part is the file name under blobs/tmp; kind "click" (the
+   loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */
+int64_t  asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in );
 int      asp_core_click_clear( AspCore *c );
 /* undo, as mix changes (no rebuild, no safe mode): the last recorded take goes out of the loop (or all the takes of its
    iteration) and the takes automix took out because of it come back. now: heard at once, else from the next start.

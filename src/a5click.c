@@ -114,7 +114,7 @@ int main( int argc, char **argv )
   AspClickEv *ev = malloc( sizeof *ev * 20000 );
   for( int k = 0; k < ns; k++ )
     {
-    int64_t iter = -1, id;
+    int64_t iter = 0, id;
     int ne = asp_click_events( &m, styles[k], loop, ev, 20000 );
     if( ne < 0 ) { fprintf( stderr, "a5click: no style \"%s\" (%s)\n", styles[k], asp_click_styles ); return 2; }
     int32_t *pcm = asp_click_render( ev, ne, loop, &sn );
@@ -130,8 +130,7 @@ int main( int argc, char **argv )
       }
     else
       {
-      AspTake tk;
-      while( ! asp_take_find( s, iter, 0, &tk ) ) iter--;                  /* generated takes have negative iterations */
+      iter = asp_gen_next_iter( s );                                      /* generated takes are in the 90000 series */
       char meta[200]; snprintf( meta, sizeof meta, "\"sig\":\"%s\",\"bpm\":%.3f,\"bars\":%d,\"effective_bpm\":%.3f,\"clicks\":%d", sigs, m.bpm, m.bars, eff, ne );
       id = asp_click_insert( s, t, iter, pcm, loop, styles[k], ll, lr, meta, insert );
       }

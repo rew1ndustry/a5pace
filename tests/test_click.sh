@@ -22,7 +22,7 @@ starts=[o for k,o in enumerate(on) if k==0 or o-on[k-1]>2000]
 if len(starts)!=16 or any(abs(s-24000*k)>40 for k,s in enumerate(starts)): print("FAIL click places",starts[:5],len(starts)); ok=False
 pk=[abs(a[s:s+400]).max() for s in starts]
 if not (pk[0]>pk[1]*1.3 and pk[4]>pk[5]*1.3 and abs(pk[1]-pk[2])<pk[1]*0.05): print("FAIL accent",pk[:6]); ok=False
-if iter_>=0: print("FAIL generated iteration should be negative",iter_); ok=False
+if iter_<90001: print("FAIL generated iteration should be in the 90000 series",iter_); ok=False
 sys.exit(0 if ok else 1)
 PY
 # --- 3/4 and 6/8, other lengths

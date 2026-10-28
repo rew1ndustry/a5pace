@@ -178,20 +178,30 @@ int asp_audio_read( const char *path, int32_t **pcm, int64_t *frames, int *chann
 /* --- into a session -------------------------------------------------------------------------------------- */
 static void lev_s( int l, char *b ) { if( l == ASP_LEV_OFF ) strcpy( b, "-" ); else sprintf( b, "%d", l ); }
 
-int asp_click_write_part( const char *dir, const int32_t *mono, int64_t frames, char *name, size_t n )
+int asp_pcm_write_part( const char *dir, const int32_t *pcm, int64_t frames, int channels, char *name, size_t n )
   {
   static int serial;
   char path[1300];
   snprintf( path, sizeof path, "%s/blobs", dir ); mkdir( path, 0777 );
   snprintf( path, sizeof path, "%s/blobs/tmp", dir ); mkdir( path, 0777 );
-  snprintf( name, n, "click_%d_%d.part", (int)getpid(), serial++ );
+  snprintf( name, n, "gen_%d_%d.part", (int)getpid(), serial++ );
   snprintf( path, sizeof path, "%s/blobs/tmp/%s", dir, name );
-  AspFlacEnc *e = asp_flac_enc_open( path, 1, RATE );
+  AspFlacEnc *e = asp_flac_enc_open( path, channels, RATE );
   if( ! e ) return -1;
   for( int64_t i = 0; i < frames; i += 4096 )
-    asp_flac_enc_write( e, mono + i, (unsigned)( frames - i < 4096 ? frames - i : 4096 ) );
+    asp_flac_enc_write( e, pcm + i * channels, (unsigned)( frames - i < 4096 ? frames - i : 4096 ) );
   if( asp_flac_enc_close( e ) ) { unlink( path ); return -1; }
   return 0;
+  }
+int asp_click_write_part( const char *dir, const int32_t *mono, int64_t frames, char *name, size_t n )
+  { return asp_pcm_write_part( dir, mono, frames, 1, name, n ); }
+
+/* the next free place in the 90000 series (the old negative iterations count as 90000 - n) */
+int64_t asp_gen_next_iter( AspStore *s )
+  {
+  AspTake tk; int64_t it = 90001;
+  while( ! asp_take_find( s, it, 0, &tk ) || ! asp_take_find( s, 90000 - it, 0, &tk ) ) it++;
+  return it;
   }
 
 int64_t asp_click_insert( AspStore *s, AspTank *t, int64_t iter, int32_t *mono, int64_t frames, const char *style, int lev_l, int lev_r, const char *meta, int in )
@@ -243,4 +253,27 @@ int asp_click_clear( AspStore *s, AspTank *t )
   if( t ) asp_tank_set_seq( t, (uint64_t)asp_log_last( s ) );
   free( g );
   return cleared;
+  }
+
+/* an audio file as a take of its own in a session that is not running (pcm interleaved, channels 1 or 2). in puts it into the loop */
+int64_t asp_import_insert( AspStore *s, AspTank *t, int64_t iter, const int32_t *pcm, int64_t frames, int channels, int lev_l, int lev_r, int in )
+  {
+  char tmp[1300], st[500], l[8], r[8], args[300];
+  AspTake k; int64_t pk = 0;
+  if( asp_tmp_path( s, tmp, sizeof tmp ) ) return -1;
+  AspFlacEnc *e = asp_flac_enc_open( tmp, channels, RATE );
+  if( ! e ) return -1;
+  for( int64_t i = 0; i < frames; i += 4096 )
+    asp_flac_enc_write( e, pcm + i * channels, (unsigned)( frames - i < 4096 ? frames - i : 4096 ) );
+  if( asp_flac_enc_close( e ) ) return -1;
+  for( int64_t i = 0; i < frames * channels; i++ ) { int64_t v = pcm[i] < 0 ? -(int64_t)pcm[i] : pcm[i]; if( v > pk ) pk = v; }
+  lev_s( lev_l, l ); lev_s( lev_r, r );
+  snprintf( st, sizeof st, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":0,\"mono\":%d,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"file\"}",
+            in ? "mix" : "off", l, r, channels == 1, (long long)frames, (long long)pk );
+  if( asp_take_adopt( s, iter, 0, tmp, in ? "mix" : "off", st, 0, &k ) ) return -1;
+  snprintf( args, sizeof args, "{\"take\":%lld,\"iter\":%lld,\"len\":%lld,\"mono\":%d,\"in\":%d}", (long long)k.id, (long long)iter, (long long)frames, channels == 1, in );
+  asp_log( s, "click", "take_imported", args, 0 );
+  if( in && t && asp_move_take( t, s, k.id, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev_l, lev_r, 0 } ) ) return -1;
+  if( t ) asp_tank_set_seq( t, (uint64_t)asp_log_last( s ) );
+  return k.id;
   }
