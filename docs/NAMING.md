@@ -14,7 +14,8 @@ Every tool and utility starts with `a5`.
 - Any tool whose name does **not** begin with an `s` is simply `a5` followed by the name: `a5card`, `a5click`, `a5control`,
   `a5create`, `a5cal`, `a5doctor`, `a5export`, `a5import`, `a5tune`, `a5start`, `a5play`.
 
-The rule is applied even where it reads badly, on purpose, because a convention with exceptions is not one. It reads fine for
-`a5pace`. For a shell it would give `a5hell`; the shell is therefore still written `a5shell` in these documents (the `s`
-kept, so as not to read "ass hell"), and the rule's own answer, `a5hell`, is the name to use if it is ever renamed.
-Whatever the decision, a new tool follows the rule and does not invent a third pattern.
+The rule is applied even where it reads badly, on purpose, because a convention with exceptions is not one. For a shell it gives
+`a5hell`, which looks wrong with that ending; but `a5shell` is worse, because the `5` is an S and it then reads "ass hell".
+So the shell's name under the rule is **`a5hell`**. (At the time of writing the program, its source, and these documents still
+say `a5shell`; renaming it is a mechanical change that has not been made yet.) A new tool follows the rule and does not invent
+another pattern.
