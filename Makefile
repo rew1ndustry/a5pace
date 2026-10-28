@@ -223,7 +223,7 @@ install: bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click
 	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
 	bin/a5pace profiles install
-	@echo "installed a5pace a5control a5hell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5import a5flac in $(PREFIX)/bin"
+	@echo "installed a5pace a5control a5hell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5import a5recover a5flac in $(PREFIX)/bin"
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
 .PHONY: all test clean gate-diff install
