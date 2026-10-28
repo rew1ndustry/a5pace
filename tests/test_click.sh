@@ -32,12 +32,14 @@ $B/a5create $t/m3 m3 --sig 6/8 --bpm 60 --bars 2 --click bars --click beats > $t
 $B/a5create $t/s1 s1 --seconds 7.25 > $t/s1.out; chk "seconds with decimals" "grep -q '348000 frames' $t/s1.out && ! grep -q click $t/s1.out"
 $B/a5create $t/s1b s1b 7.25 > /dev/null; chk "and bare, as a5create DIR NAME 7.25" "[ -d $t/s1b ]"
 # --- the metronome inserter on another space: fits, warns, adds styles, clears
-$B/a5click $t/s1 --sig 4/4 --bpm 100 --bars 4 > $t/c1.out
+$B/a5click $t/s1 --sig 4/4 --bpm 100 --bars 4 --insert > $t/c1.out
 chk "it says when the loop does not fit and what tempo does" "grep -q 'do not fit' $t/c1.out && grep -q '4 bars of 4/4' $t/c1.out"
 chk "a strict fit refuses" "! $B/a5click $t/s1 --sig 4/4 --bpm 100 --bars 4 --strict > /dev/null 2>&1"
-$B/a5click $t/s1 --sig 4/4 --bpm 33.103 --bars 2 --style eighths --style offbeat --pan l --level 0 > $t/c2.out
+$B/a5click $t/s1 --sig 4/4 --bpm 33.103 --bars 2 --style eighths --style offbeat --pan l --level 0 --insert > $t/c2.out
 chk "two more tracks in their own takes" "grep -q 'eighths .* 16 clicks' $t/c2.out && grep -q 'offbeat .* 8 clicks' $t/c2.out"
-chk "a running session is not touched" "true"
+$B/a5create $t/s3 s3 --seconds 6.25 > /dev/null
+$B/a5click $t/s3 --sig 4/4 --bars 2 --style offbeat > $t/c4.out
+chk "without --insert a click is only kept" "grep -q 'kept, not in the loop' $t/c4.out"
 $B/a5click $t/s1 --clear > $t/c3.out; chk "clear takes them out" "grep -q '3 click track' $t/c3.out"
 # --- an audio file becomes the loop
 python3 -I - $t <<'PY'
@@ -74,7 +76,19 @@ chk "it starts and has the click in the loop" "$B/a5control $t/m1 STATE | grep -
 $B/a5control $t/m1 QUIT > /dev/null; wait $pid || true
 $B/asptank rebuild $t/m1 $t/reb.d64 384000
 chk "the loop file is exactly what the store says" "$B/asptank diff $t/m1/cache/loop.d64 $t/reb.d64 | grep -q '^0 of'"
-chk "a session that is running is not changed by a5click" "true"
+# --- a5click on a space that is running: told, not written behind its back; kept unless --insert; clear works
+$B/a5create $t/r1 r1 --seconds 6.25 > /dev/null
+$B/a5pace run -q -S 7002 --step $t/r1 2> /dev/null &
+pid=$!
+n=0; while [ ! -f $t/r1/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+$B/a5click $t/r1 --sig 4/4 --bars 2 --style beats > $t/c5.out; $B/a5click $t/r1 --sig 4/4 --bars 2 --style offbeat --insert > $t/c6.out
+$B/a5control $t/r1 STEP 60 > /dev/null
+chk "running: the kept click is not in the loop, the inserted one is" "$B/a5control $t/r1 GRID | awk '\$1==-1{a=\$4} \$1==-2{b=\$4} END{exit !(a==0 && b==1)}'"
+$B/a5click $t/r1 --clear > /dev/null; $B/a5control $t/r1 STEP 120 > /dev/null
+chk "running: clear takes the inserted click out" "$B/a5control $t/r1 GRID | awk '\$4==1{n++} END{exit n>0}'"
+$B/a5control $t/r1 QUIT > /dev/null; wait $pid || true
+$B/asptank rebuild $t/r1 $t/reb1.d64 300000
+chk "running: the loop file is what the store says" "$B/asptank diff $t/r1/cache/loop.d64 $t/reb1.d64 | grep -q '^0 of'"
 rm -rf $t
 [ $fail = 0 ] && echo "all create and click tests passed"
 exit $fail

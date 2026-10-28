@@ -20,10 +20,11 @@ typedef struct
   int64_t id, iter, off, len, peak;
   AspPlace now, base;             /* where it is (decided); where it was put when recorded */
   int in, mono, src, overlaps, gen;
+  char gtail[96];                 /* ,"generated":"click","style":"beats" as the store has it, kept through every state rewrite */
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
-typedef struct { AspJob *job; int64_t start, span, waited; } Move;
+typedef struct { AspJob *job; int64_t id, s0, S; int now; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
 
 struct AspCore
   {
@@ -61,6 +62,7 @@ struct AspCore
   char     profile[64], settings[1100];
   int      started;
   int      out_shift;               /* how far the last output tick was brought down to fit */
+  int      mix_now;                 /* the change being made is to be heard at once, not at the take's next start */
 
   /* level moves, run in order, a slice a tick */
   Move *mv; int nmv, capmv;
@@ -91,8 +93,10 @@ static void state_json( const LoopTake *t, const char *status, char *buf, size_t
   {
   char l[8], r[8];
   lev_str( t->now.l, l ); lev_str( t->now.r, r );
-  snprintf( buf, n, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":%d,\"mono\":%d,\"src\":%d,\"len\":%lld,\"gone\":0,\"peak\":%lld}",
-            status, l, r, t->now.flip, t->mono, t->src, (long long)t->len, (long long)t->peak );
+  char mx[60] = "";
+  if( t->now.mixed ) snprintf( mx, sizeof mx, ",\"mixed\":1,\"gdb\":%d,\"pan\":%d", t->now.gdb, t->now.pan );
+  snprintf( buf, n, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":%d,\"mono\":%d,\"src\":%d,\"len\":%lld,\"gone\":0,\"peak\":%lld%s%s}",
+            status, l, r, t->now.flip, t->mono, t->src, (long long)t->len, (long long)t->peak, mx, t->gtail );
   }
 
 static LoopTake *lt_add( AspCore *c )
@@ -139,8 +143,15 @@ static void load_cb( int64_t id, const char *json, void *u )
   if( asp_take_get( c->store, id, &k ) ) return;
   LoopTake *t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
-  t->now = t->base = (AspPlace){ st.l, st.r, st.flip };
+  t->now = t->base = (AspPlace){ st.l, st.r, st.flip, st.gdb, st.pan, st.mixed };
   t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
+  if( t->gen )                                             /* the marker has to survive the state being rewritten */
+    {
+    const char *g = strstr( json, "\"generated\":\"" ), *y = strstr( json, "\"style\":\"" );
+    int gl = g ? (int)strcspn( g + 13, "\"" ) : 0, yl = y ? (int)strcspn( y + 9, "\"" ) : 0;
+    if( gl > 12 ) gl = 12; if( yl > 24 ) yl = 24;
+    snprintf( t->gtail, sizeof t->gtail, ",\"generated\":\"%.*s\"%s%.*s%s", gl, g ? g + 13 : "", yl ? ",\"style\":\"" : "", yl, y ? y + 9 : "", yl ? "\"" : "" );
+    }
   if( t->in && t->peak < 0 && asp_take_peak( c->store, id, &t->peak ) ) t->peak = 0;
   }
 
@@ -189,52 +200,80 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
 
 /* --- level moves --- */
 
-static void mv_add( AspCore *c, AspJob *j )
+/* the first position of the loop the head has not yet read, counted on from the start (the head laps the loop) */
+static int64_t unread( const AspCore *c ) { return (int64_t)c->pass * c->size + c->outpos + ASP_TICK; }
+
+/* a take is only changed behind the head. the change starts once the head has played the start of the take, and
+   follows it along, a position being touched only after the head has gone past it; so whatever the head is playing
+   is whole, and the next time it comes round it plays the new. S is the last time the head passed the take's start */
+static int64_t last_start( const AspCore *c, int64_t s0 )
+  {
+  int64_t u = unread( c ), back = ( ( u - s0 ) % c->size + c->size ) % c->size;
+  return u - back;
+  }
+
+static void mv_add( AspCore *c, AspJob *j, int64_t id )
   {
   if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return; }
   if( c->nmv == c->capmv ) { c->capmv = c->capmv ? 2 * c->capmv : 16; c->mv = realloc( c->mv, c->capmv * sizeof *c->mv ); }
   Move *m = c->mv + c->nmv++;
-  m->job = j; m->start = asp_job_pos0( j ) % c->size; m->span = asp_job_span( j ); m->waited = 0;
-  m->start = ( asp_job_pos0( j ) + 0 ) % c->size;
-  }
-
-/* a move starts when the playhead is not in the take and will not be for as long as the move takes, so the
-   change is never heard part way; a take that fills the loop waits one pass, then goes */
-static int mv_ready( AspCore *c, Move *m )
-  {
-  int64_t dur = ( m->span + BUDGET - 1 ) / BUDGET * ASP_TICK + ASP_TICK;
-  int64_t ph = ( c->outpos + ASP_TICK ) % c->size;
-  int64_t inside = ( ph - m->start + c->size ) % c->size, ahead = ( m->start - ph + c->size ) % c->size;
-  if( m->span < c->size && inside >= m->span && ahead >= dur ) return 1;
-  return m->waited >= 1;
+  m->job = j; m->id = id; m->now = c->mix_now;
+  m->s0 = asp_job_pos0( j ) % c->size; m->S = last_start( c, m->s0 );
   }
 
 static void mv_run( AspCore *c )
   {
-  int64_t budget = BUDGET;
-  while( c->nmv && budget > 0 )
+  int64_t budget = BUDGET, head = (int64_t)c->pass * c->size + c->outpos;       /* this tick's position is read after this */
+  for( int i = 0; i < c->nmv; )
     {
-    Move *m = c->mv;
-    if( ! m->job ) { memmove( c->mv, c->mv + 1, --c->nmv * sizeof *c->mv ); continue; }
-    if( asp_job_span( m->job ) > 0 && ! mv_ready( c, m ) ) break;
-    int r = asp_job_step( m->job, c->tank, budget );
-    budget = 0;
+    Move *m = c->mv + i; int r = 0;
+    int64_t lim = m->now ? -1 : head - m->S;
+    if( budget > 0 && ( lim != 0 ) && ( lim > 0 || m->now ) )
+      {
+      int64_t before = asp_job_cursor( m->job );
+      r = asp_job_step_to( m->job, c->tank, budget, lim );
+      budget -= asp_job_cursor( m->job ) - before;
+      }
     if( r != 0 )
       {
       if( r < 0 ) logf_( c, "error", "{\"what\":\"level move failed\"}" );
       asp_job_free( m->job );
-      memmove( c->mv, c->mv + 1, --c->nmv * sizeof *c->mv );
-      budget = BUDGET / 2;                                    /* the next may start with what is left */
+      memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv );
+      continue;
       }
+    i++;
     }
+  }
+
+int asp_core_pending( const AspCore *c, int64_t id )
+  {
+  for( int i = 0; i < c->nmv; i++ ) if( c->mv[i].id == id ) return c->mv[i].now ? 2 : 1;
+  return 0;
   }
 
 static void queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int in_from, int in_to )
   {
   AspPlace f = in_from ? from : (AspPlace)ASP_PLACE_OFF, g = in_to ? to : (AspPlace)ASP_PLACE_OFF;
-  if( f.l == g.l && f.r == g.r && f.flip == g.flip ) return;
-  mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, g ) );
-}
+  for( int i = c->nmv - 1; i >= 0; i-- )                /* not begun yet: it goes to the new place instead */
+    {
+    Move *m = c->mv + i;
+    if( m->id != t->id ) continue;
+    if( asp_job_cursor( m->job ) == 0 )
+      {
+      int r = asp_job_retarget( m->job, g );
+      if( r >= 0 )
+        {
+        if( c->mix_now ) m->now = 1;
+        if( r == 1 ) { asp_job_free( m->job ); memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv ); }
+        else m->S = last_start( c, m->s0 );
+        return;
+        }
+      }
+    break;
+    }
+  if( asp_place_eq( f, g ) ) return;
+  mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, g ), t->id );
+  }
 
 /* --- automix --- */
 
@@ -245,8 +284,8 @@ static void change( AspCore *c, LoopTake *t, AspPlace to, int in, const char *wh
   t->now = to; t->in = in;
   state_json( t, in ? "mix" : "off", st, sizeof st );
   asp_take_set_state( c->store, t->id, st, "aspace", c->tick );
-  logf_( c, "relevel", "{\"take\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d}", (long long)t->id, why,
-         to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in );
+  logf_( c, "relevel", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d,\"mixed\":%d,\"gdb\":%d,\"pan\":%d}", (long long)t->id, (long long)t->iter, (long long)t->off, why,
+         to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in, to.mixed, to.gdb, to.pan );
   if( c->cfg.feed ) queue_move( c, t, from, to, was, in );
   }
 
@@ -265,7 +304,7 @@ static void automix_new( AspCore *c, LoopTake *nt )
   for( int i = 0; i < c->nlt; i++ )
     {
     LoopTake *t = c->lt + i;
-    if( t == nt || ! t->in || ! overlaps( c, t, nt ) ) continue;
+    if( t == nt || ! t->in || t->now.mixed || ! overlaps( c, t, nt ) ) continue;   /* a take with a mix of its own is left alone */
     if( ++t->overlaps >= n ) change( c, t, t->now, 0, "overlap" );
     }
   }
@@ -283,6 +322,48 @@ void asp_core_settings( AspCore *c, const char *profile, const char *text )
 const char *asp_core_profile( const AspCore *c ) { return c->profile; }
 const char *asp_core_settings_text( const AspCore *c ) { return c->settings; }
 
+/* a click made by a5click for a space that is running: the flac (the loop long, mono) was written under blobs/tmp. it is
+   kept as a take of its own; in puts it into the loop as well (behind the head, like any other change) */
+int64_t asp_core_click_add( AspCore *c, int64_t *iter, const char *part, const char *style, int ll, int lr, int in )
+  {
+  char path[1300], st[500]; AspTake k; uint64_t fr = 0; int ch = 0, rate = 0, bits = 0;
+  snprintf( path, sizeof path, "%s/blobs/tmp/%s", asp_dir( c->store ), part );
+  if( strchr( part, '/' ) || asp_flac_info( path, NULL, &fr, &ch, &rate, &bits ) || (int64_t)fr != c->size || ch != 1 ) return -1;
+  if( *iter >= 0 )                                          /* the next free generated iteration */
+    for( *iter = -1; ; (*iter)-- )
+      {
+      int used = 0;
+      for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter == *iter && c->lt[i].off == 0 ) used = 1;
+      if( ! used ) break;
+      }
+  LoopTake lt; memset( &lt, 0, sizeof lt );
+  lt.iter = *iter; lt.len = c->size; lt.mono = 1; lt.peak = -1; lt.gen = 1; lt.in = in;
+  lt.now = lt.base = (AspPlace){ ll, lr, 0, 0, 0, 0 };
+  snprintf( lt.gtail, sizeof lt.gtail, ",\"generated\":\"click\",\"style\":\"%.20s\"", style );
+  state_json( &lt, in ? "mix" : "off", st, sizeof st );
+  if( asp_take_adopt( c->store, *iter, 0, path, in ? "mix" : "off", st, c->tick, &k ) ) return -1;
+  if( asp_take_peak( c->store, k.id, &lt.peak ) ) lt.peak = 0;
+  lt.id = k.id;
+  LoopTake *t = lt_add( c ); *t = lt;
+  logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
+  if( in && c->cfg.feed ) queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1 );
+  return k.id;
+  }
+
+/* every click a5click made goes out of the loop (they stay in the store as takes) */
+int asp_core_click_clear( AspCore *c )
+  {
+  int n = 0;
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    LoopTake *t = c->lt + i;
+    if( ! t->in || ! strstr( t->gtail, "\"click\"" ) ) continue;
+    change( c, t, t->now, 0, "clear" ); n++;
+    }
+  logf_( c, "click_cleared", "{\"takes\":%d}", n );
+  return n;
+  }
+
 int asp_core_wipe( AspCore *c, int all )
   {
   int n = 0;
@@ -295,6 +376,48 @@ int asp_core_wipe( AspCore *c, int all )
     }
   logf_( c, "wipe", "{\"takes\":%d,\"all\":%d}", n, all );
   return n;
+  }
+
+/* a person's change to the mix of takes: gain and pan are absolute; a mute takes the take out of the loop (its mix is kept
+   and can still be changed); play puts it back at its mix. a take with an explicit gain or pan is then left alone by the automix */
+int asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m )
+  {
+  int hit = 0;
+  c->mix_now = m->now;
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    LoopTake *t = c->lt + i;
+    if( t->iter != iter || ( off >= 0 && t->off != off ) ) continue;
+    hit++;
+    AspPlace to = t->now; int in = t->in;
+    if( m->set_gain || m->set_pan )
+      {
+      int g, p;
+      asp_place_to_mix( t->now, t->mono, &g, &p );
+      if( m->set_gain == 1 ) g = m->gdb;                    /* 2: keep what it has, now as a mix of its own */
+      if( m->set_pan == 1 ) p = m->pan;
+      g = g < ASP_GDB_MIN ? ASP_GDB_MIN : g > ASP_GDB_MAX ? ASP_GDB_MAX : g; p = p < -100 ? -100 : p > 100 ? 100 : p;
+      to = (AspPlace){ 0, 0, 0, g, p, 1 };
+      }
+    if( m->act == ASP_MIX_MUTE ) in = 0; else if( m->act == ASP_MIX_PLAY ) in = 1; else if( m->act == ASP_MIX_TOGGLE ) in = ! t->in;
+    if( asp_place_eq( to, t->now ) && in == t->in && ! m->now ) continue;
+    change( c, t, to, in, "mix" );
+    }
+  c->mix_now = 0;
+  return hit;
+  }
+
+int asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u )
+  {
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    const LoopTake *t = c->lt + i; AspCoreTake o;
+    o.id = t->id; o.iter = t->iter; o.off = t->off; o.len = t->len; o.in = t->in; o.mono = t->mono; o.mixed = t->now.mixed;
+    asp_place_to_mix( t->now, t->mono, &o.gdb, &o.pan );
+    o.pending = asp_core_pending( c, t->id );
+    cb( u, &o );
+    }
+  return c->nlt;
   }
 
 void asp_core_automix( AspCore *c, int mode, int n, int each )
@@ -369,7 +492,7 @@ static void take_end( AspCore *c, const int32_t *last )
     {
     int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
     if( c->t_feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == ( c->t_fix >= 0 ? 1 : 2 ) )   /* it was fed into the loop as it came: take it out again */
-      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, ch2, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, ch2, ASP_PLACE_OFF ) );
+      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, ch2, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, ch2, ASP_PLACE_OFF ), -1 );
     else free( sp );
     unlink( c->part );
     logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
@@ -442,11 +565,11 @@ static void take_end( AspCore *c, const int32_t *last )
         {
         int32_t *m = malloc( (size_t)sn * 4 );
         for( int64_t i = 0; i < sn; i++ ) m[i] = stereo[2*i+src];
-        mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, stereo, sn, 2, live, m, sn, 1, fin ) );
+        mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, stereo, sn, 2, live, m, sn, 1, fin ), -1 );
         stereo = NULL;
         }
       else if( fin.l != live.l || fin.r != live.r || fin.flip != live.flip )
-        mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, fin ) );
+        mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, fin ), tk.id );
       }
     free( stereo );
     logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
@@ -581,7 +704,6 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     {
     ++c->pass;
     logf_( c, "wrap", "{\"iter\":%llu,\"pass\":%lld}", (unsigned long long)c->iter, (long long)c->pass );
-    for( int i = 0; i < c->nmv; i++ ) c->mv[i].waited++;
     }
   mv_run( c );
   if( asp_tank_get( c->tank, outpos, ASP_TICK, mix ) ) memset( out, 0, sizeof( int32_t ) * 2 * ASP_TICK );

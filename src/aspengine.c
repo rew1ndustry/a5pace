@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <math.h>
 #include "aspengine.h"
 #include "flacio.h"
 
@@ -82,34 +83,89 @@ void asp_job_free( AspJob *j ) { if( j ) { free( j->op ); if( j->np ) free( j->n
 int64_t asp_job_span( const AspJob *j ) { return j->hi - j->lo; }
 int64_t asp_job_pos0( const AspJob *j ) { return j->pos0; }
 
+int asp_place_eq( AspPlace a, AspPlace b )
+  {
+  if( a.mixed != b.mixed ) return 0;
+  if( a.mixed ) return a.gdb == b.gdb && a.pan == b.pan;
+  return a.l == b.l && a.r == b.r && a.flip == b.flip;
+  }
+
+int64_t asp_gain( int64_t x, int64_t m ) { return ( x * m ) >> 24; }
+
+static int64_t gain_q24( int gdb )
+  {
+  static int64_t tab[ASP_GDB_MAX - ASP_GDB_MIN + 1]; static int done;
+  if( ! done ) { for( int i = 0; i < ASP_GDB_MAX - ASP_GDB_MIN + 1; i++ ) tab[i] = (int64_t)( pow( 10.0, ( i + ASP_GDB_MIN ) / 20.0 ) * 16777216.0 + 0.5 ); done = 1; }
+  if( gdb < ASP_GDB_MIN ) gdb = ASP_GDB_MIN;
+  if( gdb > ASP_GDB_MAX ) gdb = ASP_GDB_MAX;
+  return tab[gdb - ASP_GDB_MIN];
+  }
+
+void asp_place_mult( AspPlace p, int mono, int64_t *ml, int64_t *mr )
+  {
+  int64_t g = gain_q24( p.gdb ); int pan = p.pan < -100 ? -100 : p.pan > 100 ? 100 : p.pan;
+  if( mono ) { *ml = g * ( 100 - pan ) / 200; *mr = g * ( 100 + pan ) / 200; }
+  else { *ml = g; *mr = g; }                           /* pan on a stereo take is kept but does nothing yet */
+  }
+
+void asp_place_to_mix( AspPlace p, int mono, int *gdb, int *pan )
+  {
+  if( p.mixed ) { *gdb = p.gdb; *pan = p.pan; return; }
+  double l = p.l == ASP_LEV_OFF ? 0 : ldexp( 1.0, -p.l ), r = p.r == ASP_LEV_OFF ? 0 : ldexp( 1.0, -p.r ), g, pn;
+  if( mono ) { g = l + r; pn = g > 0 ? 100.0 * ( r - l ) / g : 0; }
+  else { g = l > r ? l : r; pn = g <= 0 ? 0 : r < l ? -100.0 * ( 1 - r / l ) : r > l ? 100.0 * ( 1 - l / r ) : 0; }
+  *gdb = g > 0 ? (int)lround( 20.0 * log10( g ) ) : 0; *pan = (int)lround( pn );
+  }
+
 static inline void contrib( const int32_t *p, int ch, AspPlace pl, int sign, int64_t *m )
   {
   int64_t a = p[0], b = ch > 1 ? p[1] : p[0];
+  if( pl.mixed )
+    {
+    int64_t ml, mr;
+    asp_place_mult( pl, ch == 1, &ml, &mr );
+    m[0] += sign * asp_gain( a, ml ); m[1] += sign * asp_gain( b, mr );
+    return;
+    }
   int64_t s0 = pl.flip ? b : a, s1 = pl.flip ? a : b;
   m[0] += sign * asp_level( s0, pl.l );
   m[1] += sign * asp_level( s1, pl.r );
   }
 
-int asp_job_step( AspJob *j, AspTank *t, int64_t budget )
+int64_t asp_job_cursor( const AspJob *j ) { return j->cursor; }
+
+int asp_job_retarget( AspJob *j, AspPlace to )
+  {
+  if( j->cursor > j->lo ) return -1;
+  j->to = to;
+  return asp_place_eq( j->from, j->to ) && ! j->np ? 1 : 0;
+  }
+
+/* d runs along the loop from where the take starts: frame d, d+loop, d+2 loop ... all land on one position */
+int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
   {
   const int32_t *np = j->np ? j->np : j->op;
-  int64_t nn = j->np ? j->nn : j->on, nch = j->np ? j->nch : j->och;
-  while( j->cursor < j->hi && budget > 0 )
+  int64_t nn = j->np ? j->nn : j->on, nch = j->np ? j->nch : j->och, size = asp_tank_frames( t );
+  int64_t end = j->hi - j->lo > size ? j->lo + size : j->hi;          /* positions to visit */
+  if( limit >= 0 && j->lo + limit < end ) end = j->lo + limit;
+  while( j->cursor < end && budget > 0 )
     {
-    int64_t k = j->hi - j->cursor, i, mix[2 * ASP_TICK];
+    int64_t k = end - j->cursor, i, mix[2 * ASP_TICK];
     if( k > ASP_TICK ) k = ASP_TICK;
     if( asp_tank_get( t, j->pos0 + j->cursor, k, mix ) ) return -1;
     for( i = 0; i < k; i++ )
-      {
-      int64_t f = j->cursor + i;
-      if( f < j->on ) contrib( j->op + f * j->och, j->och, j->from, -1, mix + 2 * i );
-      if( f < nn )    contrib( np + f * nch, (int)nch, j->to, 1, mix + 2 * i );
-      }
+      for( int64_t f = j->cursor + i; f < j->hi; f += size )
+        {
+        if( f < j->on ) contrib( j->op + f * j->och, j->och, j->from, -1, mix + 2 * i );
+        if( f < nn )    contrib( np + f * nch, (int)nch, j->to, 1, mix + 2 * i );
+        }
     if( asp_tank_put( t, j->pos0 + j->cursor, k, mix ) ) return -1;
     j->cursor += k; budget -= k;
     }
-  return j->cursor >= j->hi;
+  return j->cursor >= ( j->hi - j->lo > size ? j->lo + size : j->hi );
   }
+
+int asp_job_step( AspJob *j, AspTank *t, int64_t budget ) { return asp_job_step_to( j, t, budget, -1 ); }
 
 int asp_move_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, AspPlace to )
   {
@@ -152,7 +208,7 @@ static int64_t num_after( const char *j, const char *key, int64_t dflt )
 void asp_parse_state( const char *j, AspTakeState *st )
   {
   const char *p;
-  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = 0; st->gone = 0; st->peak = -1; st->len = -1;
+  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = 0; st->gone = 0; st->peak = -1; st->len = -1; st->gdb = st->pan = st->mixed = 0;
   if( ( p = strstr( j, "\"status\":\"" ) ) )
     {
     int n = 0; p += 10;
@@ -169,6 +225,7 @@ void asp_parse_state( const char *j, AspTakeState *st )
   st->mono = (int)num_after( j, "\"mono\":", 0 );
   st->peak = num_after( j, "\"peak\":", -1 );
   st->len = num_after( j, "\"len\":", -1 );
+  st->mixed = (int)num_after( j, "\"mixed\":", 0 ); st->gdb = (int)num_after( j, "\"gdb\":", 0 ); st->pan = (int)num_after( j, "\"pan\":", 0 );
   }
 
 typedef struct { int64_t id; AspTakeState st; } Ent;
@@ -192,7 +249,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
     {
     AspTakeState *st = &l.e[i].st;
     if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* take 0 holds settings, not a take; or not in the loop */
-    rc = asp_move_take( t, s, l.e[i].id, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip } );
+    rc = asp_move_take( t, s, l.e[i].id, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gdb, st->pan, st->mixed } );
     }
   free( l.e );
   return rc;

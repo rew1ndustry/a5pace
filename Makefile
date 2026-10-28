@@ -118,25 +118,29 @@ build/clicklib.o: src/clicklib.c include/clicklib.h include/aspstore.h include/a
 bin/a5create: src/a5create.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
-bin/a5click: src/a5click.c $(LIBOBJ) $(SQL_OBJ)
+bin/a5click: src/a5click.c src/ctlclient.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5click.c src/ctlclient.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-unused-function $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
-bin/a5shell: src/a5shell.c src/ctlclient.c
+bin/a5shell: src/a5shell.c src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/a5shell.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5shell.c src/a5mixer.c src/ctlclient.c
+
+bin/test_mixparse: tests/test_mixparse.c src/a5mixer.c src/a5mixer.h src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ tests/test_mixparse.c src/a5mixer.c src/ctlclient.c
 
 bin/test_gate: tests/test_gate.c build/gate.o
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< build/gate.o -lm
 
-test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job
+test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
 	bin/test_job
+	bin/test_mixparse
 	bin/test_gate
 	bin/test_mix
 	tests/test_runner.sh

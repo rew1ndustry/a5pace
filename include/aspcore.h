@@ -76,5 +76,19 @@ const char *asp_core_settings_text( const AspCore *c );
 int      asp_core_wipe( AspCore *c, int all );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lowcut < 0 keeps it; strict < 0 keeps it */
+/* the mix of takes, by hand. iter and off pick a take; off < 0 is every take that starts in that iteration.
+   gain (whole dB) and pan (-100 left .. 100 right) are absolute: set again, they replace, never add. a value not given
+   is left as the take has it. act mutes (out of the loop, whatever its mix), plays (back in at its mix) or toggles.
+   now: do it at once; otherwise a take is changed behind the head, and the change is heard from its next start.
+   returns how many takes matched. a take given a gain or pan is not touched by the automix again. */
+enum { ASP_MIX_NONE = 0, ASP_MIX_MUTE, ASP_MIX_PLAY, ASP_MIX_TOGGLE };
+typedef struct { int set_gain, gdb, set_pan, pan, act, now; } AspMixCmd;   /* set_*: 1 to the value, 2 keep the take's own value but as an explicit mix */
+int      asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m );
+typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gdb, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
+int      asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u );
+int      asp_core_pending( const AspCore *c, int64_t id );
+/* clicks for a space that is running (a5click). part is the file name under blobs/tmp. *iter >= 0 picks the next free negative one */
+int64_t  asp_core_click_add( AspCore *c, int64_t *iter, const char *part, const char *style, int ll, int lr, int in );
+int      asp_core_click_clear( AspCore *c );
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include "clicklib.h"
 #include "aspengine.h"
 #include "flacio.h"
@@ -176,7 +178,23 @@ int asp_audio_read( const char *path, int32_t **pcm, int64_t *frames, int *chann
 /* --- into a session -------------------------------------------------------------------------------------- */
 static void lev_s( int l, char *b ) { if( l == ASP_LEV_OFF ) strcpy( b, "-" ); else sprintf( b, "%d", l ); }
 
-int64_t asp_click_insert( AspStore *s, AspTank *t, int64_t iter, int32_t *mono, int64_t frames, const char *style, int lev_l, int lev_r, const char *meta )
+int asp_click_write_part( const char *dir, const int32_t *mono, int64_t frames, char *name, size_t n )
+  {
+  static int serial;
+  char path[1300];
+  snprintf( path, sizeof path, "%s/blobs", dir ); mkdir( path, 0777 );
+  snprintf( path, sizeof path, "%s/blobs/tmp", dir ); mkdir( path, 0777 );
+  snprintf( name, n, "click_%d_%d.part", (int)getpid(), serial++ );
+  snprintf( path, sizeof path, "%s/blobs/tmp/%s", dir, name );
+  AspFlacEnc *e = asp_flac_enc_open( path, 1, RATE );
+  if( ! e ) return -1;
+  for( int64_t i = 0; i < frames; i += 4096 )
+    asp_flac_enc_write( e, mono + i, (unsigned)( frames - i < 4096 ? frames - i : 4096 ) );
+  if( asp_flac_enc_close( e ) ) { unlink( path ); return -1; }
+  return 0;
+  }
+
+int64_t asp_click_insert( AspStore *s, AspTank *t, int64_t iter, int32_t *mono, int64_t frames, const char *style, int lev_l, int lev_r, const char *meta, int in )
   {
   char tmp[1300], st[500], l[8], r[8], args[600];
   AspTake k; int64_t pk = 0;
@@ -188,12 +206,12 @@ int64_t asp_click_insert( AspStore *s, AspTank *t, int64_t iter, int32_t *mono, 
   if( asp_flac_enc_close( e ) ) return -1;
   for( int64_t i = 0; i < frames; i++ ) { int64_t v = mono[i] < 0 ? -(int64_t)mono[i] : mono[i]; if( v > pk ) pk = v; }
   lev_s( lev_l, l ); lev_s( lev_r, r );
-  snprintf( st, sizeof st, "{\"status\":\"mix\",\"lev\":[\"%s\",\"%s\"],\"flip\":0,\"mono\":1,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"click\",\"style\":\"%s\"}",
-            l, r, (long long)frames, (long long)pk, style );
-  if( asp_take_adopt( s, iter, 0, tmp, "mix", st, 0, &k ) ) return -1;
-  snprintf( args, sizeof args, "{\"take\":%lld,\"style\":\"%s\",%s}", (long long)k.id, style, meta ? meta : "\"meta\":0" );
+  snprintf( st, sizeof st, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":0,\"mono\":1,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"click\",\"style\":\"%s\"}",
+            in ? "mix" : "off", l, r, (long long)frames, (long long)pk, style );
+  if( asp_take_adopt( s, iter, 0, tmp, in ? "mix" : "off", st, 0, &k ) ) return -1;
+  snprintf( args, sizeof args, "{\"take\":%lld,\"style\":\"%s\",\"in\":%d,%s}", (long long)k.id, style, in, meta ? meta : "\"meta\":0" );
   asp_log( s, "click", "click_added", args, 0 );
-  if( t && asp_move_take( t, s, k.id, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev_l, lev_r, 0 } ) ) return -1;
+  if( in && t && asp_move_take( t, s, k.id, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev_l, lev_r, 0 } ) ) return -1;
   if( t ) asp_tank_set_seq( t, (uint64_t)asp_log_last( s ) );
   return k.id;
   }

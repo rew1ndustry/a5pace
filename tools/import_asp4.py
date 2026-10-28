@@ -44,6 +44,8 @@ def main(src, name, dest):
     db = sqlite3.connect(os.path.join(dest, "session.db"))
     db.executescript(open(os.path.join(here, "schema.sql")).read())
     desc = {"v": 1, "name": name, "origin": "asp4-import"}
+    tank = os.path.join(src, name + ".d64")    # asp4's loop file: 16-byte header, 16 bytes a frame
+    if os.path.exists(tank): desc["loop"] = (os.path.getsize(tank) - 16) // 16
     sid = hashlib.sha256(json.dumps(desc, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     db.execute("insert into session values(?,?,?,?)", (sid, json.dumps(desc), 1, time.time()))
 

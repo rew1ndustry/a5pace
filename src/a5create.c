@@ -105,7 +105,7 @@ int main( int argc, char **argv )
       if( ne < 0 ) { fprintf( stderr, "a5create: no style \"%s\" (%s)\n", styles[k], asp_click_styles ); return 2; }
       int32_t *pcm = asp_click_render( ev, ne, frames, &sn );
       char meta[200]; snprintf( meta, sizeof meta, "\"sig\":\"%s\",\"bpm\":%.3f,\"bars\":%d,\"effective_bpm\":%.3f,\"clicks\":%d", sigs, m.bpm, m.bars, m.bpm, ne );
-      int64_t id = asp_click_insert( s, t, -( k + 1 ), pcm, frames, styles[k], ll, lr, meta );
+      int64_t id = asp_click_insert( s, t, -( k + 1 ), pcm, frames, styles[k], ll, lr, meta, 1 );
       free( pcm );
       if( id < 0 ) { fprintf( stderr, "a5create: could not make the %s click\n", styles[k] ); return 1; }
       printf( "  click %-10s %d clicks, take %lld\n", styles[k], ne, (long long)id );

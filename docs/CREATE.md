@@ -1,6 +1,6 @@
 # Making a space, and the metronome
 
-A session ("space") is a directory. Two tools make and fit one; neither works on a session that is running.
+A session ("space") is a directory. Two tools make and fit one. `a5create` makes a new space; `a5click` works on any space, closed or running.
 
 ## a5create: make a space
 ```
@@ -14,11 +14,16 @@ By music the loop is exactly `bars x beats x 60 / bpm` seconds (rounded to a sam
 (`--sig`, `--bpm`, `--bars`) too; or add it afterwards with `a5click`. Other audio formats: convert first (for example
 `sox in.mp3 -r 48000 out.wav`); aspace reads wav (16/24/32 bit, float) and flac, and does not use ffmpeg.
 
-## a5click: put click tracks into any space
+## a5click: make click tracks for any space
+By default a click is only *created*: kept as a take of its own (iteration -1, -2, ...) and not in the loop. `--insert`
+puts it into the loop as well. It works whether or not the space is running: a running one is told (`CLICK ADD`), and
+the click joins the loop behind the play head like any other mix change; a closed one is written to. `--bpm` can be left out:
+the tempo is then worked out from the loop length and the bars.
 ```
 a5click DIR --sig 4/4 --bpm 100 --bars 4                   the default: accent on the bar, a click on each beat
 a5click DIR --sig 3/4 --bpm 90 --bars 8 --style beats --style eighths --style offbeat --pan l
 a5click DIR --sig 4/4 --bpm 120 --bars 2 --accent hi.wav --beat lo.wav --sub tick.wav   your own sounds
+a5click DIR --sig 4/4 --bars 4 --insert                    guess the tempo from the loop, and play the click
 a5click DIR --clear                                         take the generated clicks out of the loop
 ```
 Each `--style` is a take of its own, so a loop can carry several. Styles: `beats` (accent on 1), `bars` (downbeats only),

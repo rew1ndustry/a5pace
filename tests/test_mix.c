@@ -219,6 +219,84 @@ int main( void )
   CHECK( matches( &r ) );
   rig_close( &r );
 
+  /* --- a change is made only behind the head: with the head in the middle of a take, what is ahead of it is not touched --- */
+  asp_core_defaults( &cfg );
+  rig_open( &r, &cfg, 60 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  sim_burst( &r.sim, base, 2, 0.1 );
+  sim_until( &r.sim, base + 48000 * 4 );
+  {
+  States s; states( &r, &s ); AspTake k0; AspCoreStatus st;
+  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &k0 ) == 0 );
+  int64_t st0 = ( k0.off * 48000 ) % LOOP, len = s.st[0].len;
+  static int64_t snap[2 * LOOP], now[2 * LOOP];
+  int64_t head;
+  do {                                                                  /* wait until the head is a third of the way along the take */
+    sim_step( &r.sim ); asp_core_status( r.c, &st );
+    head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;
+    } while( ( head - st0 + LOOP ) % LOOP < len / 3 || ( head - st0 + LOOP ) % LOOP > len / 2 );
+  CHECK( asp_tank_get( r.t, 0, LOOP, snap ) == 0 );
+  AspMixCmd m = { 1, -12, 0, 0, 0, 0 };
+  CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
+  int checked = 0, changed_behind = 0;
+  for( int i = 0; i < 40 && asp_core_pending( r.c, s.id[0] ); i++ )
+    {
+    sim_step( &r.sim ); asp_core_status( r.c, &st );
+    head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;      /* the first position not yet played */
+    int64_t ho = ( head - st0 + LOOP ) % LOOP;
+    CHECK( asp_tank_get( r.t, 0, LOOP, now ) == 0 );
+    if( ho < len )
+      {
+      for( int64_t o = ho; o < len; o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] || now[2*at+1] != snap[2*at+1] ) { CHECK( 0 ); break; } }
+      checked++;
+      }
+    for( int64_t o = 0; o < ( ho < len ? ho : len ); o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] ) { changed_behind = 1; break; } }
+    }
+  CHECK( checked >= 2 && changed_behind && ! asp_core_pending( r.c, s.id[0] ) );
+  CHECK( matches( &r ) );
+  }
+  rig_close( &r );
+
+  /* --- by hand: a mix of its own keeps a take out of the hold; gain and pan are absolute; changes trail the head --- */
+  asp_core_defaults( &cfg ); cfg.automix.mode = ASP_AUTOMIX_OVERLAP; cfg.automix.n = 2;
+  rig_open( &r, &cfg, 140 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  for( int i = 0; i < 5; i++ ) sim_burst( &r.sim, base + (int64_t)i * LOOP, 2, 0.1 );
+  sim_until( &r.sim, base + LOOP + 48000 * 3 );                    /* two takes are in */
+  {
+  States s; states( &r, &s ); AspTake k0;
+  CHECK( s.n == 2 && asp_take_get( r.s, s.id[0], &k0 ) == 0 );
+  AspMixCmd m = { 1, 7, 1, -30, 0, 0 };
+  CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
+  CHECK( asp_core_pending( r.c, s.id[0] ) == 1 );                  /* waiting for the head, not done in this call */
+  m.gdb = 5;                                                        /* a second value replaces, never adds */
+  CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
+  CHECK( asp_core_mix( r.c, 9999, -1, &m ) == 0 );
+  sim_until( &r.sim, base + LOOP * 4 + 48000 * 4 );
+  states( &r, &s );
+  printf( "by hand: %s(%d dB, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gdb, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
+  CHECK( s.n == 5 && ! strcmp( s.st[0].status, "mix" ) && s.st[0].mixed && s.st[0].gdb == 5 && s.st[0].pan == -30 );
+  CHECK( ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "off" ) );     /* the hold went on for the rest */
+  CHECK( asp_core_pending( r.c, s.id[0] ) == 0 );
+  CHECK( matches( &r ) );
+  /* mute takes it out whatever its mix, the mix can still be changed, play brings it back at that mix */
+  AspTake k4; CHECK( asp_take_get( r.s, s.id[4], &k4 ) == 0 );
+  AspMixCmd mu = { 0, 0, 0, 0, ASP_MIX_MUTE, 0 };
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &mu ) == 1 );
+  sim_until( &r.sim, base + LOOP * 6 );
+  states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "off" ) && ! s.st[4].mixed );
+  CHECK( matches( &r ) );
+  AspMixCmd g = { 1, -9, 0, 0, 0, 0 };
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &g ) == 1 );          /* muted, so only stored */
+  sim_until( &r.sim, base + LOOP * 7 );
+  mu.act = ASP_MIX_PLAY; mu.now = 1;
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &mu ) == 1 );
+  sim_until( &r.sim, base + LOOP * 9 );
+  states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "mix" ) && s.st[4].mixed && s.st[4].gdb == -9 );
+  CHECK( matches( &r ) );
+  }
+  rig_close( &r );
+
   printf( fails ? "%d FAILED\n" : "all mix tests passed\n", fails );
   return fails != 0;
   }

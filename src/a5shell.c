@@ -1,6 +1,6 @@
 /* a5shell DIR: a terminal shell for a running aspace. a status line, what has just happened in words, and a few keys;
    press ? for all of them. if the space is not running it is started first (a5start; --no-start to not).
-     space  safe / live     h  history: places to return to     w  wipe the loop     a  choose the mode
+     space  safe / live     h  history: places to return to     w  wipe the loop     a  mode: al ak a0 a1-9 ap
      r  sync again   l  relearn the floor   g/G  gate   p  profile   t  takes   ?  help   q  leave   Q  stop aspace
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
@@ -12,6 +12,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include "ctlclient.h"
+#include "a5mixer.h"
 
 static struct termios saved;
 static void restore( void ) { tcsetattr( 0, TCSANOW, &saved ); }
@@ -54,7 +55,7 @@ static int pretty( const char *line, char *out, size_t n )
 static void draw( void )
   {
   int n = nev < 8 ? nev : 8;
-  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [w] wipe  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
+  printf( "\033[H\033[J a5shell: %s     [space] safe/live  [h] history  [w] wipe  [t] mix  [a] mode  [?] help  [q] quit\n\n", space[0] ? space : "?" );
   for( int i = n; i > 0; i-- ) printf( "  %s\n", events[( nev - i ) % 8] );
   printf( "\n %s\n", status );
   fflush( stdout );
@@ -76,13 +77,22 @@ static void help( void )
 "                          including clicks. nothing is deleted\n"
 "   h       history        the moments the loop changed, newest first. go back to a\n"
 "                          row, or to a take by iteration.offset such as 7.3\n"
-"   t       takes          every take and its state\n\n"
-" mode (one at a time; a opens the choice)\n"
-"   loop      every take goes into the loop (the usual)\n"
-"   keep      takes are recorded and kept, but not put into the loop\n"
-"   overlap n a take leaves the loop when n newer takes have overlapped it\n"
-"   swap      successive takes swap channels (each = on every take, not only\n"
-"             between iterations)\n\n"
+"   t       mixing         iterations x takes: mute, play, gain and pan (below)\n"
+"   T       takes          every take and its state, as text\n\n"
+" mixing (t; ESC to leave)\n"
+"   arrows move, shift+arrows select; the left column is a whole iteration\n"
+"   [ITER[.TAKE]] [+N|-N] [/N|\\N] then  .  queue   !  now   m p  mute / play   M P  now\n"
+"   123.15-2/20.   take 123.15, gain -2 dB, pan 20% right, from its next start\n"
+"   123.15\\90!    pan 90% left, at once       123m  mute all of iteration 123\n"
+"   123..          toggle every take of 123      m  p  .  on what is selected\n"
+"   gain and pan are absolute; a sign or slash with no number keeps the current value.\n"
+"   a take given a gain or pan is left alone by the automix. A shows muted iterations.\n\n"
+" mode (one at a time; a, then one key)\n"
+"   al        loop         every take goes into the loop (the usual)\n"
+"   ak        keep         takes are recorded and kept, but not put into the loop\n"
+"   a0        hold off     same as al: takes stay in the loop\n"
+"   a1 - a9   hold n       a take leaves the loop when n newer takes have overlapped it\n"
+"   ap        ping-pong    successive takes swap channels (pan left, then right)\n\n"
 " q  leave this shell, aspace carries on       Q  stop aspace\n\n"
 " the status line: PLAY or SYNC, time, place in the loop, iteration, takes in the\n"
 " loop ((moving) while it adjusts them), REC while a take is open, live/SAFE, mode,\n"
@@ -109,7 +119,7 @@ int main( int argc, char **argv )
   { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }
   struct termios raw;
   if( isatty( 0 ) ) { tcgetattr( 0, &saved ); raw = saved; raw.c_lflag &= ~(tcflag_t)( ICANON | ECHO ); raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; tcsetattr( 0, TCSANOW, &raw ); atexit( restore ); }
-  int amode = 0, amount = 4, each = 0, live = 1; (void)each;
+  int amode = 0, amount = 4, each = 0, live = 1; (void)each; (void)amount;
   for( ;; )
     {
     ctlc_cmd( cmd, "LINE", keep, NULL );
@@ -140,33 +150,18 @@ int main( int argc, char **argv )
         case '?': help(); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
         case 'a':
           {
-          /* one mode at a time, chosen from a short list; overlap and swap ask their one question */
-          const char *nm[4] = { "loop", "keep", "overlap", "swap" };
-          char l[40] = "";
-          printf( "\033[H\033[J mode (one at a time).  now: %s\n\n   1  loop     every take goes into the loop\n   2  keep     takes are recorded and kept, but not put into the loop\n   3  overlap  a take leaves the loop when n newer takes have overlapped it\n   4  swap     successive takes swap channels\n", nm[amode] );
-          restore(); printf( "\n choose 1-4 (enter cancels): " ); fflush( stdout );
-          if( fgets( l, sizeof l, stdin ) )
-            {
-            int ch = atoi( l );
-            if( ch == 1 ) strcpy( c, "AUTOMIX LOOP" );
-            else if( ch == 2 ) strcpy( c, "AUTOMIX KEEP" );
-            else if( ch == 3 )
-              {
-              printf( " overlap: how many newer takes before an older one leaves the loop (now %d, enter keeps it): ", amount > 0 ? amount : 4 ); fflush( stdout );
-              if( fgets( l, sizeof l, stdin ) && atoi( l ) > 0 ) amount = atoi( l );
-              snprintf( c, sizeof c, "AUTOMIX OVERLAP %d", amount > 0 ? amount : 4 );
-              }
-            else if( ch == 4 )
-              {
-              printf( " swap on every take, not only between iterations? [y/N]: " ); fflush( stdout );
-              strcpy( c, "AUTOMIX SWAP" );
-              if( fgets( l, sizeof l, stdin ) && ( l[0] == 'y' || l[0] == 'Y' ) ) strcpy( c, "AUTOMIX SWAP each" );
-              }
-            }
-          tcsetattr( 0, TCSANOW, &raw );
+          /* a, then one key: l loop, k keep, 0 hold off (= loop), 1-9 hold n iterations (overlap), p ping-pong panning (swap) */
+          char d = 0; int w = 0;
+          printf( "\033[H\033[J mode:  l loop   k keep   0 hold off   1-9 hold n iterations   p ping-pong pan   (now: %s)", amode == 2 ? "hold" : amode == 3 ? "ping-pong" : amode == 1 ? "keep" : "loop" ); fflush( stdout );
+          while( read( 0, &d, 1 ) != 1 && w++ < 100 ) usleep( 100000 );
+          if( d == 'l' || d == '0' ) strcpy( c, "AUTOMIX LOOP" );
+          else if( d == 'k' ) strcpy( c, "AUTOMIX KEEP" );
+          else if( d == 'p' ) strcpy( c, "AUTOMIX SWAP" );
+          else if( d >= '1' && d <= '9' ) snprintf( c, sizeof c, "AUTOMIX OVERLAP %d", d - '0' );
           break;
           }
-        case 't': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
+        case 't': a5mixer( cmd, ev, space ); break;
+        case 'T': printf( "\033[H\033[J" ); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
         case 'u':
           {
           char l[40] = "";

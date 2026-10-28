@@ -164,6 +164,12 @@ static void fold_cb( int64_t id, const char *st, void *u )
   ctl_say( r->ctl, r->run, "take %lld iter %lld off %lld frames %lld ch %d %s", (long long)id, (long long)k.iter, (long long)k.off, (long long)k.frames, k.channels, st );
   }
 
+static void grid_cb( void *u, const AspCoreTake *t )
+  {
+  Run *r = u;
+  ctl_say( r->ctl, r->run, "%lld %lld %lld %d %d %d %d %d %d %lld", (long long)t->iter, (long long)t->off, (long long)t->id, t->in, t->mixed, t->gdb, t->pan, t->pending, t->mono, (long long)t->len );
+  }
+
 static const char *space_name( Run *r )
   {
   static char nm[100];
@@ -194,6 +200,15 @@ static void hist_cb( int64_t seq, int64_t tick, double wall, const char *actor, 
   Hist *h = u; HRow *r;
   (void)tick; (void)actor;
   if( ! strcmp( type, "relevel" ) && strstr( args, "\"why\":\"overlap\"" ) ) { if( h->n ) h->row[h->n-1].removed++; return; }
+  if( ! strcmp( type, "relevel" ) && strstr( args, "\"why\":\"mix\"" ) )
+    {
+    char b[120]; snprintf( b, sizeof b, "mix %lld.%lld: %s%s", (long long)jnum( args, "iter", 0 ), (long long)jnum( args, "off", 0 ),
+                           jnum( args, "in", 1 ) > 0 ? "in" : "muted" );
+    if( jnum( args, "mixed", 0 ) > 0 ) { size_t l = strlen( b ); snprintf( b + l, sizeof b - l, ", %+d dB, pan %d", (int)jnum( args, "gdb", 0 ), (int)jnum( args, "pan", 0 ) ); }
+    if( h->n == 400 ) { memmove( h->row, h->row + 1, 399 * sizeof *h->row ); h->n--; }
+    HRow *q = h->row + h->n++; memset( q, 0, sizeof *q ); q->seq = seq; q->wall = wall; q->iter = -1; snprintf( q->text, sizeof q->text, "%s", b );
+    return;
+    }
   if( ! strcmp( type, "end" ) )
     {
     if( h->n == 400 ) { memmove( h->row, h->row + 1, 399 * sizeof *h->row ); h->n--; }
@@ -330,6 +345,9 @@ static void handle( void *u, int cl, const char *line )
       "HISTORY [n]                          the moments the loop changed, newest first",
       "REVERT seq | REVERT TAKE iter off    go back to a log point / to just after a take (needs SAFE)",
       "TAKES                                every take and its state",
+      "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (dB) and pan (-100..100), absolute; mute takes it out of the loop",
+      "CLICK ADD iter file style l r IN|KEEP   a click for a5click (file under blobs/tmp); CLICK CLEAR takes them out",
+      "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
       "EDGE drop|starve frames              the audio edge reports lost samples",
@@ -358,6 +376,37 @@ static void handle( void *u, int cl, const char *line )
     q = asp_core_revert( r->core, q );
     if( q < 0 ) ctl_err( c, cl, "REVERT needs SAFE first" ); else { ctl_say( c, cl, "%lld", (long long)q ); ctl_ok( c, cl ); }
     }
+  else if( ! strcmp( w[0], "MIX" ) && n > 3 )          /* MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]: gain in dB, pan -100 left .. 100 right, both absolute */
+    {
+    AspMixCmd m; memset( &m, 0, sizeof m );
+    for( int i = 3; i < n; i++ )
+      {
+      for( char *q = w[i]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
+      if( w[i][0] == 'G' ) { m.set_gain = w[i][1] ? 1 : 2; m.gdb = atoi( w[i] + 1 ); }          /* G alone: keep its gain, as a mix of its own */
+      else if( w[i][0] == 'P' && strcmp( w[i], "PLAY" ) ) { m.set_pan = w[i][1] ? 1 : 2; m.pan = atoi( w[i] + 1 ); }
+      else if( ! strcmp( w[i], "MUTE" ) ) m.act = ASP_MIX_MUTE;
+      else if( ! strcmp( w[i], "PLAY" ) ) m.act = ASP_MIX_PLAY;
+      else if( ! strcmp( w[i], "TOGGLE" ) ) m.act = ASP_MIX_TOGGLE;
+      else if( ! strcmp( w[i], "NOW" ) ) m.now = 1;
+      else { ctl_err( c, cl, "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]" ); return; }
+      }
+    int k = asp_core_mix( r->core, atoll( w[1] ), w[2][0] == '*' ? -1 : atoll( w[2] ), &m );
+    if( ! k ) ctl_err( c, cl, "no such take" ); else { ctl_say( c, cl, "%d take(s)", k ); ctl_ok( c, cl ); }
+    }
+  else if( ! strcmp( w[0], "CLICK" ) && n > 1 )        /* CLICK ADD iter file style l r IN|KEEP (a5click's flac under blobs/tmp); CLICK CLEAR */
+    {
+    for( char *q = w[1]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
+    if( ! strcmp( w[1], "CLEAR" ) ) { ctl_say( c, cl, "%d click(s) taken out of the loop", asp_core_click_clear( r->core ) ); ctl_ok( c, cl ); }
+    else if( ! strcmp( w[1], "ADD" ) && n > 7 )
+      {
+      int64_t it = atoll( w[2] ); int ll = atoi( w[5] ), lr = atoi( w[6] );
+      int64_t id = asp_core_click_add( r->core, &it, w[3], w[4], ll, lr, ! strcasecmp( w[7], "IN" ) );
+      if( id < 0 ) ctl_err( c, cl, "that click does not fit this loop" ); else { ctl_say( c, cl, "%lld %lld", (long long)id, (long long)it ); ctl_ok( c, cl ); }
+      }
+    else ctl_err( c, cl, "CLICK ADD iter file style l r IN|KEEP | CLICK CLEAR" );
+    }
+  else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
+    { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {

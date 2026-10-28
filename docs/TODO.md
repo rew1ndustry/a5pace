@@ -24,7 +24,30 @@ Session-stored settings, new sessions inheriting a defaults set: stored as event
 restores them), the defaults file copied in by `a5pace new`. Profiles for gate and sync per setup.
 
 ## Create tool
-Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Still open: click for a space that is running (a control command); resampling other rates on import; mp3 and other formats; swing and odd groupings (7/8 as 2+2+3); a count-in; a click that follows a tempo map.
+Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Click for a running space is done (`CLICK ADD` / `CLICK CLEAR`). Still open: resampling other rates on import; mp3 and other formats; swing and odd groupings (7/8 as 2+2+3); a count-in; a click that follows a tempo map.
+
+## Shell starts in safe mode, always (user)
+`a5shell` should start its session in SAFE (no takes recorded) every time, however it was started, and say so; `l` goes live.
+
+## `a5export`: take the audio out (user)
+A standalone command, `a5export DIR [what] [--to FOLDER]`, working whether or not the loop is running (it reads the store,
+never the tank, and does not write to the session).
+- What: just the loop (the tank, as it sounds now), just the takes that are mixed (in the loop), or everything.
+- Where: a subfolder (default `DIR/export/`), brought up to date by every call: files that are no longer wanted go away,
+  changed ones are rewritten, unchanged ones left alone.
+- Takes, not the mix: each take is written whole, with no gain or pan applied. flac, one file per iteration.
+- Each file is padded with silence to fit the loop exactly; a take longer than the loop is padded to an exact multiple of
+  the loop length. (Several takes in one iteration: to settle, probably summed at their offsets within the iteration's file.)
+- Exporting the loop while the space runs: the tank is live and automix moves are in flight, so it must read only what the
+  moves have finished (a move trails the head; the export must trail it too, never overtake a move, or a take would be
+  half changed and click). If that proves hard, refuse to export the loop of a running space (takes and mixed takes are fine,
+  they come from the store). Run at low priority (`nice`/`ionice`, small reads) so the core's reads and writes are not choked.
+- Uses the take flac straight from the blobs where it can, so a long session exports without decoding it twice.
+
+## Undo in the shell (user)
+Replace the undo dialog (log point, needs SAFE). `u` undoes the last take, `U` the whole last iteration. An absolute undo
+is chosen from the history: up/down to a point, `.` to action it (at the next start), `!` now, as with mixing.
+In keep mode `u`/`U` do nothing. In keep mode `m`/`M` toggle (mix or mute) the most recent take (`m` queued, `M` now).
 
 ## Envelopes (to map out with the user)
 A take's gain and pan are one constant value across the whole take for now (`lev`). Envelopes replace it: points over

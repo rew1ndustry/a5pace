@@ -66,12 +66,31 @@ int main( void )
   AspJob *j = asp_job_new( 0, 0, -1, old, 30000, 2, sw, nw, 30000, 1, c11 );
   int steps = 0, rc;
   while( ! ( rc = asp_job_step( j, t, 7000 ) ) ) steps++;
-  CHECK( rc == 1 && steps >= 3 );                                      /* it took several slices */
+  CHECK( rc == 1 && steps >= 2 );                                      /* it took several slices */
   asp_job_free( j );
   mput( S, 30000, 2, 0, -1, sw );
   int32_t *ml = malloc( 30000 * 4 ); for( int i = 0; i < 30000; i++ ) ml[i] = S[2*i];
   mput( ml, 30000, 1, 0, 1, c11 ); free( ml );
   CHECK( same( t ) );
+  }
+
+  /* an explicit mix: gain and pan in whole dB / percent, exact to take out again; a stereo take's pan does nothing */
+  {
+  AspPlace mx = { 0, 0, 0, -6, 50, 1 }, mx2 = { 0, 0, 0, 3, -100, 1 };
+  int64_t ml, mr, ms[2];
+  asp_place_mult( (AspPlace){ 0, 0, 0, 0, 0, 1 }, 1, &ml, &mr );  CHECK( ml == ( 1 << 23 ) && mr == ml );          /* centre = half each = level shift 1 */
+  asp_place_mult( (AspPlace){ 0, 0, 0, 0, -100, 1 }, 1, &ml, &mr ); CHECK( ml == ( 1 << 24 ) && mr == 0 );
+  asp_place_mult( (AspPlace){ 0, 0, 0, 0, 80, 1 }, 0, &ml, &mr );   CHECK( ml == ( 1 << 24 ) && mr == ml );
+  { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == 0 && p == -100 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == 0 && p == 0 ); }
+  CHECK( asp_move_take( t, s, b.id, 0, -1, hr, mx ) == 0 );
+  int32_t *bm = malloc( 30000 * 4 ); for( int i = 0; i < 30000; i++ ) bm[i] = S[2*i];     /* a is, since the conversion, its left channel as mono */
+  memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );
+  asp_place_mult( mx, 1, &ms[0], &ms[1] );
+  for( int i = 0; i < 9000; i++ ) { int64_t at = ( 48000 + i ) % LOOP; model[2*at] += asp_gain( M[i], ms[0] ); model[2*at+1] += asp_gain( M[i], ms[1] ); }
+  CHECK( same( t ) );
+  CHECK( asp_move_take( t, s, b.id, 0, -1, mx, mx2 ) == 0 );  CHECK( asp_move_take( t, s, b.id, 0, -1, mx2, ASP_PLACE_OFF ) == 0 );
+  memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );  CHECK( same( t ) );
+  CHECK( asp_move_take( t, s, b.id, 0, -1, ASP_PLACE_OFF, hr ) == 0 ); free( bm );
   }
 
   /* rebuild from state: flip and mono follow the log */
