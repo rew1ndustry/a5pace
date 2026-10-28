@@ -79,9 +79,14 @@ build/flacio.o: src/flacio.c include/flacio.h $(FLAC_DEP)
 build/sha256.o: src/sha256.c include/aspstore.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+# the gate is mostly single precision fft: on a cortex-a8 (the cubieboard) the vfp is slow and neon is not used for floats
+# unless told it may reassociate; that is 2.5 times faster there. other machines are left alone.
+ifneq ($(filter armv7%,$(shell uname -m)),)
+GATE_CFLAGS = -O3 -mfpu=neon -funsafe-math-optimizations -fno-math-errno
+endif
 build/gate.o: src/gate.c include/gate.h include/asptank.h
 	@mkdir -p build
-	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
+	$(CC) $(CFLAGS) $(GATE_CFLAGS) $(INC) -c -o $@ $<
 build/settings.o: src/settings.c include/settings.h include/aspcore.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
@@ -137,6 +142,9 @@ bin/test_mix: tests/test_mix.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
 bin/a5pace: src/aspace_main.c src/ctlsrv.c src/simedge.h $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-unused-function $(INC) $(SQL_CFLAGS) -o $@ src/aspace_main.c src/ctlsrv.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/tickbench: tools/tickbench.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/gateprobe: tools/gateprobe.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)

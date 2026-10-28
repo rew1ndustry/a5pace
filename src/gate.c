@@ -178,26 +178,26 @@ static void gateFFT( float *re, float *im )
     }
   }
 
-/* one analysis frame, returns 1 if any band says sound */
-static int gateFrame( Gate *g, GateChan *c )
+/* the newest window of a channel, windowed, into re */
+static void gateWindow( const GateChan *c, float *re )
   {
-  float re[GATE_WIN], im[GATE_WIN], dev[GATE_BANDS];
+  int i;
+  for( i = 0; i < GATE_WIN; ++i ) re[i] = c->ring[( c->pos + i ) % GATE_WIN] * gateWin[i];
+  }
+
+/* one analysis frame from the power of each bin (below the half), returns 1 if any band says sound */
+static int gateFrame( Gate *g, GateChan *c, const float *pw )
+  {
+  float dev[GATE_BANDS];
   double a = ( (double)GATE_HOP / HZ ) / GATE_ADAPT;
   double rise = GATE_RISE * GATE_HOP / HZ;
   int i, b, many = 0, again = 0, hit = 0;
-
-  for( i = 0; i < GATE_WIN; ++i )
-    {
-    re[i] = c->ring[( c->pos + i ) % GATE_WIN] * gateWin[i];
-    im[i] = 0;
-    }
-  gateFFT( re, im );
 
   for( b = 0; b < gateBands; ++b )
     {
     double p = 0, ls, d, thr;
     int lo = gateEdge[b], hi = gateEdge[b+1];
-    for( i = lo; i < hi; ++i ) p += re[i] * re[i] + im[i] * im[i];
+    for( i = lo; i < hi; ++i ) p += pw[i];
     p /= hi - lo;
     /* two frames, about 10ms, steadies the estimate */
     ls = 10 * log10( ( p + c->last[b] ) / 2 + 1e-20 );
@@ -344,86 +344,128 @@ static void gateSwitchImpl( Gate *g, int32_t *pcm, int32_t *prev, int count, int
 /* feed one tick, stereo, return the offset of the earliest sound found
    in it, which may be before it (negative, from the previous tick) to
    keep what led up to the detection, or ASP_TICK when there is none */
+/* one sample of one channel: the filters, the click, the ring; 1 when this completes a hop, which wants a frame */
+static int gateSample( Gate *g, GateChan *c, int32_t pcm, int64_t top, int n, int64_t *best, double click, double ring )
+  {
+  double x = pcm, y = x, h;
+  int i;
+  for( i = 0; i < 4; ++i ) y = gateFilter( g->lob[i], c->lo[i], y );
+  h = y;
+  for( i = 0; i < 2; ++i ) h = gateFilter( gateHiB[i], c->hi[i], h );
+  double y30 = y;
+  if( g->lowcut > 30 ) { y30 = x; for( i = 0; i < 4; ++i ) y30 = gateFilter( gateLoB[i], c->lo30[i], y30 ); }
+
+  if( c->deaf ) --c->deaf;		/* SWITCH */
+  if( c->frames >= GATE_INIT && ! c->deaf && h * h > click * c->click )   /* a click so loud it needs no ring */
+    {
+    int64_t at = top + n - GATE_PRE;
+    if( at < *best ) *best = at;
+    c->hang = GATE_HANG;
+    c->why |= 1;
+    }
+  if( c->deaf ) c->blk = c->blkn = c->lit = 0;		/* SWITCH, silence is not the floor */
+  else if( c->frames < GATE_INIT )
+    {
+    c->click += h * h / ( GATE_HOP * GATE_INIT );
+    c->ybg += y * y / ( GATE_HOP * GATE_INIT );
+    c->heard += y * y; ++c->count;
+    }
+  else
+    {
+    if( c->hang ) { c->evin += y * y; c->evtot += y30 * y30; }
+    c->sum += h * h;
+    c->blk += y * y;
+    c->blk30 += y30 * y30;
+    c->hopy += y * y;
+    c->hop30 += y30 * y30;
+    if( ++c->blkn == GATE_BLK )
+      {
+      double p = c->blk / GATE_BLK;
+      int lit = p > ring * c->ybg, j = GATE_LITOF - 1;
+      if( lit && g->lowcut > 30 && p < g->dom * ( c->blk30 / GATE_BLK ) ) lit = 0;	/* a bump: most of it is below the range */
+      c->blk = 0; c->blkn = 0; c->blk30 = 0;
+      c->lit = ( ( c->lit << 1 ) | lit ) & ( ( 1 << GATE_LITOF ) - 1 );
+      if( popcount( c->lit ) >= GATE_LITN )
+        {
+        /* it rings: from the oldest of the blocks that is lit */
+        int64_t at;
+        while( ! ( ( c->lit >> j ) & 1 ) ) --j;
+        at = top + n + 1 - (int64_t)GATE_BLK * ( j + 1 ) - GATE_PRE;
+        if( at < *best ) *best = at;
+        c->hang = GATE_HANG;
+        c->why |= 2;
+        }
+      else if( ! lit && ! c->hang && p > c->ybg * 1e-3 )
+        c->ybg += ( p - c->ybg ) * ( (double)GATE_BLK / HZ ) / GATE_ADAPT;
+      }
+    }
+
+  c->ring[c->pos] = y;
+  c->pos = ( c->pos + 1 ) % GATE_WIN;
+  if( ++c->fill < GATE_HOP ) return 0;
+  c->fill = 0;
+  return 1;
+  }
+
+/* the frame of a channel is done: the hit may come from the previous frame, smoothed in, or from the one before that,
+   for a band found twice running */
+static void gateFrameDone( GateChan *c, int hit, int64_t top, int n, int64_t *best )
+  {
+  if( hit )
+    {
+    int64_t at = top + n + 1 - GATE_WIN - GATE_HOP * 2 - GATE_PRE;
+    if( at < *best ) *best = at;
+    }
+  c->sum = 0; c->hopy = c->hop30 = 0;
+  }
+
+/* the power of each bin of a lone channel's window */
+static void gatePower1( const float *re, const float *im, float *pw )
+  { for( int k = 0; k < GATE_WIN / 2; ++k ) pw[k] = re[k] * re[k] + im[k] * im[k]; }
+
+/* two real windows are one complex transform, the left in the real part and the right in the imaginary: the
+   spectrum of each is the half sum or difference of a bin and its mirror. half the transforms for the same powers */
+static void gatePower2( const float *re, const float *im, float *pl, float *pr )
+  {
+  for( int k = 1; k < GATE_WIN / 2; ++k )
+    {
+    int m = GATE_WIN - k;
+    float lr = ( re[k] + re[m] ) * 0.5f, li = ( im[k] - im[m] ) * 0.5f;
+    float rr = ( im[k] + im[m] ) * 0.5f, ri = ( re[m] - re[k] ) * 0.5f;
+    pl[k] = lr * lr + li * li; pr[k] = rr * rr + ri * ri;
+    }
+  pl[0] = re[0] * re[0]; pr[0] = im[0] * im[0];
+  }
+
 static int64_t gateScanImpl( Gate *g, int32_t *pcm, int count )
   {
   int64_t top = g->seen, best = top + count;
   double click = pow( 10, GATE_CLICK / 10 ), ring = pow( 10, g->ring / 10 );
   int ch, n;
+  static float re[GATE_WIN], im[GATE_WIN], pw[2][GATE_WIN / 2];
 
-  for( ch = 0; ch < 2; ++ch )
+  for( n = 0; n < count; ++n )
     {
-    GateChan *c = g->chan + ch;
-    if( ! ( g->chmask & ( 1 << ch ) ) ) continue;                 /* a channel that is not used does not open the gate */
-    for( n = 0; n < count; ++n )
+    int due[2] = { 0, 0 };
+    for( ch = 0; ch < 2; ++ch )
+      if( g->chmask & ( 1 << ch ) )                              /* a channel that is not used does not open the gate */
+        due[ch] = gateSample( g, g->chan + ch, pcm[n*2+ch], top, n, &best, click, ring );
+    if( due[0] && due[1] )                                       /* both are due together: one transform for the two */
       {
-      double x = pcm[n*2+ch], y = x, h;
-      int i;
-      for( i = 0; i < 4; ++i ) y = gateFilter( g->lob[i], c->lo[i], y );
-      h = y;
-      for( i = 0; i < 2; ++i ) h = gateFilter( gateHiB[i], c->hi[i], h );
-      double y30 = y;
-      if( g->lowcut > 30 ) { y30 = x; for( i = 0; i < 4; ++i ) y30 = gateFilter( gateLoB[i], c->lo30[i], y30 ); }
-
-      if( c->deaf ) --c->deaf;		/* SWITCH */
-      if( c->frames >= GATE_INIT && ! c->deaf && h * h > click * c->click )   /* a click so loud it needs no ring */
-	{
-	int64_t at = top + n - GATE_PRE;
-	if( at < best ) best = at;
-	c->hang = GATE_HANG;
-	c->why |= 1;
-	}
-      if( c->deaf ) c->blk = c->blkn = c->lit = 0;		/* SWITCH, silence is not the floor */
-      else if( c->frames < GATE_INIT )
-	{
-	c->click += h * h / ( GATE_HOP * GATE_INIT );
-	c->ybg += y * y / ( GATE_HOP * GATE_INIT );
-	c->heard += y * y; ++c->count;
-	}
-      else
-	{
-	if( c->hang ) { c->evin += y * y; c->evtot += y30 * y30; }
-	c->sum += h * h;
-	c->blk += y * y;
-	c->blk30 += y30 * y30;
-	c->hopy += y * y;
-	c->hop30 += y30 * y30;
-	if( ++c->blkn == GATE_BLK )
-	  {
-	  double p = c->blk / GATE_BLK;
-	  int lit = p > ring * c->ybg, j = GATE_LITOF - 1;
-	  if( lit && g->lowcut > 30 && p < g->dom * ( c->blk30 / GATE_BLK ) ) lit = 0;	/* a bump: most of it is below the range */
-	  c->blk = 0; c->blkn = 0; c->blk30 = 0;
-	  c->lit = ( ( c->lit << 1 ) | lit ) & ( ( 1 << GATE_LITOF ) - 1 );
-	  if( popcount( c->lit ) >= GATE_LITN )
-	    {
-	    /* it rings: from the oldest of the blocks that is lit */
-	    int64_t at;
-	    while( ! ( ( c->lit >> j ) & 1 ) ) --j;
-	    at = top + n + 1 - (int64_t)GATE_BLK * ( j + 1 ) - GATE_PRE;
-	    if( at < best ) best = at;
-	    c->hang = GATE_HANG;
-	    c->why |= 2;
-	    }
-	  else if( ! lit && ! c->hang && p > c->ybg * 1e-3 )
-	    c->ybg += ( p - c->ybg ) * ( (double)GATE_BLK / HZ ) / GATE_ADAPT;
-	  }
-	}
-
-      c->ring[c->pos] = y;
-      c->pos = ( c->pos + 1 ) % GATE_WIN;
-      if( ++c->fill == GATE_HOP )
-	{
-	c->fill = 0;
-	/* ring holds the newest window, starting at pos */
-	if( gateFrame( g, c ) )
-	  {
-	  /* the hit may come from the previous frame, smoothed in, or
-	     from the one before that, for a band found twice running */
-	  int64_t at = top + n + 1 - GATE_WIN - GATE_HOP * 2 - GATE_PRE;
-	  if( at < best ) best = at;
-	  }
-	c->sum = 0; c->hopy = c->hop30 = 0;
-	}
+      gateWindow( g->chan, re ); gateWindow( g->chan + 1, im );
+      gateFFT( re, im );
+      gatePower2( re, im, pw[0], pw[1] );
+      }
+    for( ch = 0; ch < 2; ++ch )
+      {
+      if( ! due[ch] ) continue;
+      if( ! ( due[0] && due[1] ) )
+        {
+        gateWindow( g->chan + ch, re ); memset( im, 0, sizeof im );
+        gateFFT( re, im );
+        gatePower1( re, im, pw[ch] );
+        }
+      gateFrameDone( g->chan + ch, gateFrame( g, g->chan + ch, pw[ch] ), top, n, &best );
       }
     }
 

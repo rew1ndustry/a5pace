@@ -100,6 +100,10 @@ static AspStore *opendb( const char *dir, int flags, char *err )
   if( sqlite3_open_v2( path, &s->db, flags, NULL ) != SQLITE_OK )
     { seterr( err, "cannot open", sqlite3_errmsg( s->db ) ); sqlite3_close( s->db ); free( s ); return NULL; }
   sqlite3_busy_timeout( s->db, 5000 );
+  /* the log is written from the tick loop and must never wait for the disk. NORMAL in WAL mode does not sync at a commit
+     (a power cut can lose the last moments of log, never corrupt it); and the log is folded back into the database only
+     here, at open and at close, not by a commit in the middle of a pass: a checkpoint on an sd card takes a second */
+  if( ! s->readonly ) { sqlite3_exec( s->db, "pragma synchronous=normal; pragma wal_autocheckpoint=0", NULL, NULL, NULL ); sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_PASSIVE, NULL, NULL ); }
   load_artist( s, ! s->readonly );
   return s;
   }
@@ -153,7 +157,12 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
   }
 
 void asp_close( AspStore *s )
-  { if( s ) { sqlite3_close( s->db ); free( s ); } }
+  {
+  if( ! s ) return;
+  if( ! s->readonly ) sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
+  sqlite3_close( s->db );
+  free( s );
+  }
 const char *asp_session_id( AspStore *s ) { return s->id; }
 const char *asp_dir( AspStore *s ) { return s->dir; }
 const char *asp_artist( AspStore *s ) { return s->artist_hex; }
