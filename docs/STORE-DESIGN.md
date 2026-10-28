@@ -220,10 +220,12 @@ So the core's own work now fits; the remaining stalls are the card. Nothing was 
 
 The keeper now puts each take in its place (folders, rename), syncs it, and checkpoints the log; the row of a take is made when
 its file is safe. Same 150 s run on the card: `take_end` median 508 -> 76 ms, p90 1.7 s -> 84 ms, worst 11 s -> 177 ms; the
-average tick 164 -> 123 ms. What is left of the card's stalls is the creation of the next take's file (`take_open`: two stalls
-of 1.3 s in 52 takes, the create waiting behind the keeper's journal commit). Ideas, not done: the keeper makes the next part
-file ahead of time; the encoder's verify (about 20% of the 34 ms a tick that recording costs there) off on slow machines; the
-job budget by time instead of by frames (`moves` takes 33 ms a tick while a job runs).
+average tick 164 -> 123 ms. What was left of the card's stalls was the creation of the next take's file (`take_open`: two stalls
+of 1.3 s in 52 takes, the create waiting behind the keeper's journal commit). So the keeper now makes the next part file ahead
+of time (`tmp/spare_*.part`, two kept ready, handed out by `asp_tmp_path`; `asp_tw_open` accepts an empty file but never one with
+anything in it); in two further runs `take_open` never took 20 ms. It is not a card-only measure: any storage is spared a
+create in the loop. Not done: the job budget by time instead of by frames (`moves` takes 33 ms a tick on the A8 while a job runs).
+The encoder is at level 2 (above), and with verify on.
 
 ### The encoder level (echo, 25 s of real takes, stereo, verify on)
 
