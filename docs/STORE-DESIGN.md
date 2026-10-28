@@ -188,7 +188,7 @@ Three ways to deal with it, in order of how much they ask:
    finished take, then a note to the core that it is durable; and the WAL checkpoint on its own connection. It shares no
    state with the core but a short mutex-guarded queue and a done flag per job; the core never waits for it (only
    `core_close` joins it). sqlite, the tank, the tick, the takes stay in the core thread. About 60 lines of pthread. A power
-   cut costs only what was not yet synced, and the log says exactly which takes were not (`take_durable` event).
+   cut costs only what was not yet synced, and no take is in the database before its file is in place and safe (its `take_added` event is the moment it became so).
 3. **Do the waiting between ticks, in the loop.** Right after the output tick is written the card has its fullest buffer. Fine
    on a disk (stalls of 20-100 ms), not on this card (seconds).
 

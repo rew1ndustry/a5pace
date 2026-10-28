@@ -10,9 +10,6 @@ static int fails;
 #define CHECK(x) do { if( ! (x) ) { fprintf( stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, #x ); fails++; } } while(0)
 static double now_ms( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
-static void count_cb( int64_t seq, int64_t tick, const char *actor, const char *type, const char *args, void *u )
-  { (void)seq; (void)tick; (void)actor; (void)args; if( ! strcmp( type, "take_durable" ) ) ++*(int *)u; }
-
 int main( void )
   {
   char dir[] = "/tmp/keeper_testXXXXXX", p[300], e[ASP_ERR];
@@ -34,7 +31,7 @@ int main( void )
   asp_keeper_settle( k, 7, "/nonexistent/file" );                      /* a file that is gone is done all the same */
   asp_keeper_stop( k );                                                /* stopping lets it finish: no crash, no leak of the queue */
 
-  /* in a store: the keeper checkpoints on its own connection, adopt returns at once, take_durable is logged on poll */
+  /* in a store: adopt returns at once, the row appears when the keeper has the file in its place and safe (on poll) */
   snprintf( p, sizeof p, "%s/s", dir );
   AspStore *s = asp_create( p, "{\"name\":\"k\"}", e );
   CHECK( s && asp_store_keeper( s ) == 0 && asp_store_keeper( s ) != 0 );
@@ -44,14 +41,17 @@ int main( void )
   t0 = now_ms();
   CHECK( asp_take_add_d32( s, 1, 0, d32, 2, 48000, "off", 0, &t ) == 0 );
   CHECK( now_ms() - t0 < 200 );
+  char tp[400]; CHECK( asp_take_path( s, &t, tp, sizeof tp ) == 0 );
+  CHECK( access( tp, F_OK ) == 0 );                                    /* wherever it is just now (its part, or its place), it is readable */
   int n = 0; spins = 0;
   while( ! n && spins++ < 500 ) { n = asp_store_poll( s ); if( ! n ) usleep( 10000 ); }
   CHECK( n == 1 );
+  CHECK( asp_take_path( s, &t, tp, sizeof tp ) == 0 && strstr( tp, "/takes." ) && access( tp, F_OK ) == 0 );   /* and now it is in its place */
   asp_close( s );
   s = asp_open( p, 1, e );
-  int durable = 0;
-  asp_log_since( s, 0, count_cb, &durable );
-  CHECK( durable == 1 );                                               /* and the log says so, once */
+  AspTake back;
+  CHECK( asp_take_find( s, 1, 0, &back ) == 0 && back.id == t.id && back.frames == 40000 );   /* the row is there once the file is */
+  { char bp[400]; CHECK( asp_take_path( s, &back, bp, sizeof bp ) == 0 && access( bp, F_OK ) == 0 ); }
   asp_close( s );
 
   /* the checkpoints: the keeper folds the log into the database on a connection of its own, now and then */

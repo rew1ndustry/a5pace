@@ -4,12 +4,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <pthread.h>
 #include "sqlite3.h"
 #include "keeper.h"
 
-typedef struct Job { struct Job *next; int64_t tag; char path[1200]; } Job;
+typedef struct Job { struct Job *next; int64_t tag; char path[1200], from[1200]; } Job;
 
 struct AspKeeper
   {
@@ -28,6 +29,14 @@ static void sync_fd_of( const char *path, int dir )
   if( fd < 0 ) return;
   if( dir ) fsync( fd ); else fdatasync( fd );
   close( fd );
+  }
+
+static void mkdir_p( const char *path )
+  {
+  char tmp[1200], *p;
+  snprintf( tmp, sizeof tmp, "%s", path );
+  for( p = tmp + 1; *p; p++ ) if( *p == '/' ) { *p = 0; mkdir( tmp, 0777 ); *p = '/'; }
+  mkdir( tmp, 0777 );
   }
 
 /* the file, the directory it is in, and the one above (a new directory is a new entry there) */
@@ -59,6 +68,13 @@ static void *keep_main( void *u )
       Job *j = k->head;
       k->head = j->next; if( ! k->head ) k->tail = NULL;
       pthread_mutex_unlock( &k->mu );
+      if( j->from[0] )                                         /* a take to be put in its place first */
+        {
+        char d[1200], *sl;
+        snprintf( d, sizeof d, "%s", j->path );
+        if( ( sl = strrchr( d, '/' ) ) ) { *sl = 0; mkdir_p( d ); }
+        if( rename( j->from, j->path ) ) j->tag = -j->tag;       /* told as a negative tag: it did not get there */
+        }
       asp_settle_now( j->path );                               /* may take seconds on a card; nobody waits for it */
       pthread_mutex_lock( &k->mu );
       if( k->ndone == k->capdone ) { k->capdone = k->capdone ? 2 * k->capdone : 16; k->done = realloc( k->done, k->capdone * sizeof *k->done ); }
@@ -99,6 +115,18 @@ AspKeeper *asp_keeper_start( const char *db, int period_ms )
   return k;
   }
 
+void asp_keeper_place( AspKeeper *k, int64_t tag, const char *from, const char *to )
+  {
+  Job *j = calloc( 1, sizeof *j );
+  if( ! j ) return;
+  j->tag = tag; snprintf( j->path, sizeof j->path, "%s", to ); snprintf( j->from, sizeof j->from, "%s", from );
+  pthread_mutex_lock( &k->mu );
+  if( k->tail ) k->tail->next = j; else k->head = j;
+  k->tail = j;
+  pthread_cond_signal( &k->cv );
+  pthread_mutex_unlock( &k->mu );
+  }
+
 void asp_keeper_settle( AspKeeper *k, int64_t tag, const char *path )
   {
   Job *j = calloc( 1, sizeof *j );
@@ -131,5 +159,7 @@ void asp_keeper_stop( AspKeeper *k )
   if( ! k ) return;
   pthread_mutex_lock( &k->mu ); k->stop = 1; pthread_cond_signal( &k->cv ); pthread_mutex_unlock( &k->mu );
   pthread_join( k->th, NULL );
-  free( k->done ); free( k );
   }
+
+void asp_keeper_free( AspKeeper *k )
+  { if( k ) { free( k->done ); free( k ); } }

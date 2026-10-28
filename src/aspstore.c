@@ -23,6 +23,10 @@ struct AspStore
   unsigned char artist[ASP_ARTIST];      /* who is recording here: takes this store writes carry it */
   char artist_hex[2 * ASP_ARTIST + 1];
   AspKeeper *keeper;
+  /* takes the keeper has not yet put in their place and made safe: known here, with their id, still at their part, and not yet in
+     the database, so no other program is ever shown a take whose file is not where it should be */
+  struct Pending { AspTake t; char part[1200]; } *pend; int npend;
+  int64_t next_id;
   };
 
 static void seterr( char *err, const char *what, const char *more )
@@ -101,6 +105,7 @@ static AspStore *opendb( const char *dir, int flags, char *err )
      here, at open and at close, not by a commit in the middle of a pass: a checkpoint on an sd card takes a second */
   if( ! s->readonly ) { sqlite3_exec( s->db, "pragma synchronous=normal; pragma wal_autocheckpoint=0", NULL, NULL, NULL ); sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_PASSIVE, NULL, NULL ); }
   load_artist( s, ! s->readonly );
+  s->next_id = 1;
   return s;
   }
 
@@ -145,6 +150,9 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
     { seterr( err, "not a session", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
   snprintf( s->id, sizeof s->id, "%s", (const char *)sqlite3_column_text( q, 0 ) );
   sqlite3_finalize( q );
+  if( sqlite3_prepare_v2( s->db, "select coalesce(max(id),0)+1 from takes", -1, &q, NULL ) == SQLITE_OK && sqlite3_step( q ) == SQLITE_ROW )
+    s->next_id = sqlite3_column_int64( q, 0 );
+  sqlite3_finalize( q );
   if( sqlite3_prepare_v2( s->db, "select schema_version from session limit 1", -1, &q, NULL ) != SQLITE_OK
       || sqlite3_step( q ) != SQLITE_ROW || sqlite3_column_int( q, 0 ) != 2 )
     { seterr( err, "a session of an older aspace (takes are kept in another way now)", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
@@ -155,7 +163,8 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
 void asp_close( AspStore *s )
   {
   if( ! s ) return;
-  asp_keeper_stop( s->keeper );                                    /* lets it finish what it was given */
+  if( s->keeper ) { asp_keeper_stop( s->keeper ); asp_store_poll( s ); asp_keeper_free( s->keeper ); s->keeper = NULL; }   /* it finishes what it was given, and we say so */
+  free( s->pend );
   if( ! s->readonly ) sqlite3_wal_checkpoint_v2( s->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL );
   sqlite3_close( s->db );
   free( s );
@@ -170,6 +179,8 @@ int asp_store_keeper( AspStore *s )
   return s->keeper ? 0 : -1;
   }
 
+static int commit_take( AspStore *s, const AspTake *t, const char *state_json, const char *status, int64_t tick );
+
 int asp_store_poll( AspStore *s )
   {
   int64_t tag[16]; int n, total = 0;
@@ -177,9 +188,17 @@ int asp_store_poll( AspStore *s )
   while( ( n = asp_keeper_done( s->keeper, tag, 16 ) ) > 0 )
     for( int i = 0; i < n; i++ )
       {
-      char args[60]; snprintf( args, sizeof args, "{\"take\":%lld}", (long long)tag[i] );
-      asp_log( s, "store", "take_durable", args, -1 );
-      total++;
+      int64_t id = tag[i] < 0 ? -tag[i] : tag[i];
+      for( int j = 0; j < s->npend; j++ )
+        if( s->pend[j].t.id == id )
+          {
+          AspTake t = s->pend[j].t;
+          s->pend[j] = s->pend[--s->npend];
+          if( tag[i] < 0 || commit_take( s, &t, NULL, t.status, -1 ) )
+            { char a[100]; snprintf( a, sizeof a, "{\"what\":\"take %lld not put in its place\"}", (long long)id ); asp_log( s, "store", "error", a, -1 ); }
+          else total++;
+          break;
+          }
       }
   return total;
   }
@@ -229,6 +248,7 @@ static void take_row( sqlite3_stmt *q, AspTake *t )
 
 int asp_take_get( AspStore *s, int64_t id, AspTake *out )
   {
+  for( int j = 0; j < s->npend; j++ ) if( s->pend[j].t.id == id ) { *out = s->pend[j].t; return 0; }
   sqlite3_stmt *q;
   int rc = -1;
   sqlite3_prepare_v2( s->db, "select " TAKE_COLS " from takes where id=?", -1, &q, NULL );
@@ -240,6 +260,7 @@ int asp_take_get( AspStore *s, int64_t id, AspTake *out )
 
 int asp_take_find( AspStore *s, int64_t iter, int64_t off, AspTake *out )
   {
+  for( int j = 0; j < s->npend; j++ ) if( s->pend[j].t.iter == iter && s->pend[j].t.off == off ) { *out = s->pend[j].t; return 0; }
   sqlite3_stmt *q;
   int rc = -1;
   sqlite3_prepare_v2( s->db, "select " TAKE_COLS " from takes where artist=? and iter=? and off=?", -1, &q, NULL );
@@ -253,7 +274,11 @@ int asp_take_find( AspStore *s, int64_t iter, int64_t off, AspTake *out )
 
 /* takes.<first 12 of the artist>/<iter>/<off>.a5t: the folder names the artist, the file name has no prefix; the header has all of it */
 int asp_take_path( AspStore *s, const AspTake *t, char *buf, size_t n )
-  { return snprintf( buf, n, "%s/takes.%.12s/%lld/%lld.a5t", s->dir, t->artist, (long long)t->iter, (long long)t->off ) < (int)n ? 0 : -1; }
+  {
+  for( int j = 0; j < s->npend; j++ )                              /* not yet in its place (unless the keeper has just put it there) */
+    if( s->pend[j].t.id == t->id && ! access( s->pend[j].part, F_OK ) ) return snprintf( buf, n, "%s", s->pend[j].part ) < (int)n ? 0 : -1;
+  return snprintf( buf, n, "%s/takes.%.12s/%lld/%lld.a5t", s->dir, t->artist, (long long)t->iter, (long long)t->off ) < (int)n ? 0 : -1;
+  }
 
 static int to_d32( const int32_t *pcm, unsigned frames, int ch, void *u )
   {
@@ -299,57 +324,67 @@ int64_t asp_take_set_state( AspStore *s, int64_t id, const char *state_json, con
   return seq;
   }
 
+/* the row of a take, its take_added event and (if given) its first state, in one transaction */
+static int commit_take( AspStore *s, const AspTake *t, const char *state_json, const char *status, int64_t tick )
+  {
+  char args[200];
+  if( run( s, "begin immediate" ) ) return -1;
+  sqlite3_stmt *q;
+  sqlite3_prepare_v2( s->db,
+    "insert into takes(id,artist,iter,off,frames,rate,channels,bits,status,t_start) values(?,?,?,?,?,?,?,?,?,?)", -1, &q, NULL );
+  if( t->id > 0 ) sqlite3_bind_int64( q, 1, t->id ); else sqlite3_bind_null( q, 1 );
+  sqlite3_bind_text( q, 2, t->artist, -1, SQLITE_STATIC );
+  sqlite3_bind_int64( q, 3, t->iter );
+  sqlite3_bind_int64( q, 4, t->off );
+  sqlite3_bind_int64( q, 5, t->frames );
+  sqlite3_bind_int( q, 6, t->rate );
+  sqlite3_bind_int( q, 7, t->channels );
+  sqlite3_bind_int( q, 8, t->bits );
+  sqlite3_bind_text( q, 9, status, -1, SQLITE_STATIC );
+  sqlite3_bind_double( q, 10, now() );
+  int rc = sqlite3_step( q );
+  sqlite3_finalize( q );
+  if( rc != SQLITE_DONE ) { run( s, "rollback" ); return -1; }
+  int64_t id = sqlite3_last_insert_rowid( s->db );
+  snprintf( args, sizeof args, "{\"take\":%lld,\"iter\":%lld,\"off\":%lld}", (long long)id, (long long)t->iter, (long long)t->off );
+  asp_log( s, "aspace", "take_added", args, tick );
+  if( state_json ) asp_take_set_state( s, id, state_json, "aspace", tick );
+  if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
+  return 0;
+  }
+
 int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, const char *status,
                     const char *state_json, int64_t tick, AspTake *out )
   {
-  char dst[1200], dir[1200], args[200], st[200];
+  char dst[1200], dir[1200], st[200];
   AspHdr h;
   AspTake dummy, t;
   if( s->readonly ) return -1;
   if( ! out ) out = &dummy;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;           /* takes are never overwritten */
-  double t0 = ms_now(), tm[3];
   if( asp_take_header( part, &h ) || ! h.finished || memcmp( h.artist, s->artist, ASP_ARTIST ) ) return -1;
   memset( &t, 0, sizeof t );
   t.iter = iter; t.off = off; snprintf( t.artist, sizeof t.artist, "%s", s->artist_hex );
+  t.frames = (int64_t)h.frames; t.rate = h.rate; t.channels = h.channels; t.bits = h.bits; snprintf( t.status, sizeof t.status, "%s", status );
   if( asp_take_path( s, &t, dst, sizeof dst ) ) return -1;
-  snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
-  if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( part, dst ) ) return -1;       /* the part was synced when it was closed */
-  tm[0] = ms_now() - t0; t0 = ms_now();
-  if( ! s->keeper ) asp_settle_now( dst );                           /* no servant: safe on the disk before there is a row */
-  tm[1] = ms_now() - t0; t0 = ms_now();
-
-  if( run( s, "begin immediate" ) ) return -1;
-  sqlite3_stmt *q;
-  sqlite3_prepare_v2( s->db,
-    "insert into takes(artist,iter,off,frames,rate,channels,bits,status,t_start) values(?,?,?,?,?,?,?,?,?)",
-    -1, &q, NULL );
-  sqlite3_bind_text( q, 1, s->artist_hex, -1, SQLITE_STATIC );
-  sqlite3_bind_int64( q, 2, iter );
-  sqlite3_bind_int64( q, 3, off );
-  sqlite3_bind_int64( q, 4, (int64_t)h.frames );
-  sqlite3_bind_int( q, 5, h.rate );
-  sqlite3_bind_int( q, 6, h.channels );
-  sqlite3_bind_int( q, 7, h.bits );
-  sqlite3_bind_text( q, 8, status, -1, SQLITE_STATIC );
-  sqlite3_bind_double( q, 9, now() );
-  int rc = sqlite3_step( q );
-  sqlite3_finalize( q );
-  if( rc != SQLITE_DONE ) { run( s, "rollback" ); return -1; }
-  int64_t id = sqlite3_last_insert_rowid( s->db );
-  snprintf( args, sizeof args, "{\"take\":%lld,\"iter\":%lld,\"off\":%lld}", (long long)id, (long long)iter, (long long)off );
-  asp_log( s, "aspace", "take_added", args, tick );
   if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
-  asp_take_set_state( s, id, state_json, "aspace", tick );
-  if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
-  if( s->keeper ) asp_keeper_settle( s->keeper, id, dst );            /* the row is there; the keeper makes the file safe, and says when */
-  tm[2] = ms_now() - t0;
-  if( tm[0] + tm[1] + tm[2] > 20 )                                    /* where a slow adopt went, ms */
+  if( s->keeper )
     {
-    snprintf( args, sizeof args, "{\"rename\":%.0f,\"settle\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2] );
-    asp_log( s, "aspace", "adopt_slow", args, tick );
+    /* the loop does not touch the card: the keeper puts the file in its place and makes it safe, and when it has, the row is
+       made (asp_store_poll). until then the take is known here, by the id it will have, and read from its part */
+    t.id = s->next_id++;
+    s->pend = realloc( s->pend, ( s->npend + 1 ) * sizeof *s->pend );
+    s->pend[s->npend].t = t; snprintf( s->pend[s->npend].part, sizeof s->pend[0].part, "%s", part ); s->npend++;
+    asp_take_set_state( s, t.id, state_json, "aspace", tick );
+    asp_keeper_place( s->keeper, t.id, part, dst );
+    *out = t;
+    return 0;
     }
-  return asp_take_get( s, id, out );
+  snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
+  if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( part, dst ) ) return -1;
+  asp_settle_now( dst );                                             /* safe on the disk before there is a row */
+  if( commit_take( s, &t, state_json, status, tick ) ) return -1;
+  return asp_take_find( s, iter, off, out );
   }
 
 int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,

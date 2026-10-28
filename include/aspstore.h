@@ -46,9 +46,11 @@ const char *asp_descriptor( AspStore *s );                                      
    take_added / take_state events in one transaction. a half-written take never has a row. */
 int  asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_path,
                        int channels, int rate, const char *status, int64_t tick, AspTake *out );
-/* a store of a running aspace starts a keeper (keeper.h): the sync of each adopted take, and the checkpoints of the log, happen in
-   its thread and the loop never waits for the disk. asp_store_poll, called now and then from the loop, logs take_durable for
-   each take the keeper has made safe. without a keeper (the offline tools) adopt syncs the take itself before the row. */
+/* a store of a running aspace starts a keeper (keeper.h): putting each adopted take in its place and making it safe on the disk, and
+   the checkpoints of the log, happen in its thread, and the loop never waits for the disk. an adopted take is known at once, by the id
+   it will have, and read from its part; its row (and take_added event) is made when the keeper has it in place and synced, so no
+   other program ever finds a row without its file, and a power cut loses only takes that were not yet safe. asp_store_poll, called
+   now and then from the loop, makes those rows. without a keeper (the offline tools) adopt does it all itself, before it returns. */
 int  asp_store_keeper( AspStore *s );
 int  asp_store_poll( AspStore *s );
 /* a finished take already written at part (see asp_tmp_path, asp_tw_open): rename it to its place, row and events in one
