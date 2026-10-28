@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
+#include <time.h>
 #include "aspcore.h"
 #include "aspengine.h"
 #include "gate.h"
@@ -74,6 +75,16 @@ static void logf_( AspCore *c, const char *type, const char *form, ... )
   va_list ap;
   va_start( ap, form ); vsnprintf( buf, sizeof buf, form, ap ); va_end( ap );
   asp_log( c->store, "aspace", type, buf, c->tick );
+  }
+
+/* timing: a phase of a tick that takes over SLOW_MS is logged (slow_phase), to find what starves the card */
+#define SLOW_MS 20
+static double now_ms( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+static void lap( AspCore *c, const char *what, double *t0 )
+  {
+  double t = now_ms();
+  if( t - *t0 > SLOW_MS ) logf_( c, "slow_phase", "{\"what\":\"%s\",\"ms\":%.0f,\"recpos\":%lld}", what, t - *t0, (long long)( ( ( c->tick - c->origin ) * ASP_TICK ) % c->size ) );
+  *t0 = now_ms();
   }
 
 static void gate_say( void *u, const char *line )
@@ -579,7 +590,7 @@ static void level_scan( AspCore *c, const int32_t *pcm, int64_t n )
 static double level_db( int64_t p ) { return p ? 20 * log10( p / 2147483648.0 ) : -200; }
 
 /* the take is over: decide mono and where it sits, store it, and bring the loop to match */
-static void take_end( AspCore *c, const int32_t *last )
+static void take_end_( AspCore *c, const int32_t *last )
   {
   AspTake tk;
   if( last ) { level_scan( c, last, ASP_TICK ); take_put( c, last, ASP_TICK ); }
@@ -763,10 +774,14 @@ static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
   c->sync_k = ( k + 1 ) % 5;
   }
 
+static void take_end( AspCore *c, const int32_t *last )
+  { double t = now_ms(); take_end_( c, last ); lap( c, "take_end", &t ); }
+
 static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   {
   int64_t rel = c->tick - c->origin, recpos = ( rel * ASP_TICK ) % c->size, scan = ASP_TICK;
   int track = c->enc != NULL;
+  double t0 = now_ms();
   memcpy( c->cur, in, sizeof c->cur );
 
   if( c->gate_relearn && ! track ) { c->gate_relearn = 0; c->gate_ready = 0; logf_( c, "gate_reset", "{}" ); }
@@ -778,6 +793,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     if( track ) { if( asp_gate_active( c->gate, 0 ) ) c->t_act[0]++; if( asp_gate_active( c->gate, 1 ) ) c->t_act[1]++; }
     }
   else c->gate_ready = 0;
+  lap( c, "gate", &t0 );
 
   /* the tick before went whole to the take that just ended; do not write any of it again */
   if( scan < 0 && c->gone && c->gone + 1 == c->tick ) scan = 0;
@@ -789,6 +805,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
     logf_( c, "top", "{\"iter\":%llu,\"peak\":%llu,\"take\":%d}", (unsigned long long)c->iter, (unsigned long long)c->peak, track );
     c->newt = track;
+    lap( c, "top", &t0 );
     }
 
   if( c->live && c->tick > c->hush && scan < ASP_TICK )
@@ -800,6 +817,8 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   else if( track && ++c->shh < HANG ) { level_scan( c, c->cur, ASP_TICK ); take_put( c, c->cur, ASP_TICK ); }
   else if( track ) take_end( c, c->cur );
 
+  lap( c, "take", &t0 );
+
   /* the loop goes out ahead of the recording by the round trip, so what is played against it lands back in place */
   {
   int64_t outpos = ( recpos + c->latency ) % c->size, mix[2 * ASP_TICK];
@@ -809,9 +828,12 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     ++c->pass;
     logf_( c, "wrap", "{\"iter\":%llu,\"pass\":%lld}", (unsigned long long)c->iter, (long long)c->pass );
     }
+  lap( c, "wrap", &t0 );
   mv_run( c );
+  lap( c, "moves", &t0 );
   if( asp_tank_get( c->tank, outpos, ASP_TICK, mix ) ) memset( out, 0, sizeof( int32_t ) * 2 * ASP_TICK );
   else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, c->cfg.gain, &c->out_shift );
+  lap( c, "tank", &t0 );
   }
   memcpy( c->prev, c->cur, sizeof c->prev );
   c->have_prev = 1;

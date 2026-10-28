@@ -37,6 +37,8 @@ static int mkdir_p( const char *path )
   return mkdir( tmp, 0777 ) == 0 || errno == EEXIST ? 0 : -1;
   }
 
+static double ms_now( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+
 static void fsync_path( const char *path )
   {
   int fd = open( path, O_RDONLY );
@@ -206,14 +208,19 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   if( s->readonly ) return -1;
   if( ! out ) out = &dummy;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;           /* takes are never overwritten */
+  double t0 = ms_now(), tm[5];
   fsync_path( part );
+  tm[0] = ms_now() - t0; t0 = ms_now();
   if( asp_sha256_file( part, sha ) || asp_flac_info( part, md5, &frames, &ch, &rt, &bits ) ) return -1;
+  tm[1] = ms_now() - t0; t0 = ms_now();
   snprintf( dir, sizeof dir, "%s/blobs/%.2s", s->dir, sha );
   mkdir_p( dir );
   snprintf( dst, sizeof dst, "%s/%s.flac", dir, sha );
   if( ! access( dst, F_OK ) ) unlink( part );                        /* identical blob already held */
   else if( rename( part, dst ) ) return -1;
+  tm[2] = ms_now() - t0; t0 = ms_now();
   fsync_path( dir );
+  tm[3] = ms_now() - t0; t0 = ms_now();
 
   char hex[33], args[200], st[200];
   for( int i = 0; i < 16; i++ ) sprintf( hex + 2 * i, "%02x", md5[i] );
@@ -241,6 +248,12 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
   asp_take_set_state( s, id, state_json, "aspace", tick );
   if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
+  tm[4] = ms_now() - t0;
+  if( tm[0] + tm[1] + tm[2] + tm[3] + tm[4] > 20 )                    /* where a slow adopt went, ms: fsync file, sha+info, rename, fsync dir, sql */
+    {
+    snprintf( args, sizeof args, "{\"fsync_file\":%.0f,\"sha_info\":%.0f,\"rename\":%.0f,\"fsync_dir\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2], tm[3], tm[4] );
+    asp_log( s, "aspace", "adopt_slow", args, tick );
+    }
   return asp_take_get( s, id, out );
   }
 
