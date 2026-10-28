@@ -27,7 +27,7 @@ SQL_LIBS   = -lsqlite3
 endif
 
 LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o
-all: bin/a5create bin/a5click bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5shell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
+all: bin/a5create bin/a5click bin/a5export bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5shell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -121,6 +121,9 @@ bin/a5create: src/a5create.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5click: src/a5click.c src/ctlclient.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5click.c src/ctlclient.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/a5export: src/a5export.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5export.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -Wno-unused-function $(INC) $(SQL_CFLAGS) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
@@ -146,6 +149,7 @@ test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job 
 	tests/test_runner.sh
 	tests/test_cal.sh
 	tests/test_click.sh
+	tests/test_export.sh
 	tests/test_start.sh
 	bin/test_store
 	bin/test_tank
@@ -154,14 +158,14 @@ test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job 
 gate-diff:
 	tests/gate_diff.sh $(FILES)
 PREFIX ?= $(HOME)
-install: bin/a5pace bin/a5control bin/a5shell bin/a5tune bin/a5create bin/a5click bin/aspflac
+install: bin/a5pace bin/a5control bin/a5shell bin/a5tune bin/a5create bin/a5click bin/a5export bin/aspflac
 	@mkdir -p $(PREFIX)/bin
 	install -m 755 bin/a5pace bin/a5control bin/a5shell $(PREFIX)/bin/
 	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
-	install -m 755 bin/a5tune bin/a5create bin/a5click $(PREFIX)/bin/
+	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
 	bin/a5pace profiles install
-	@echo "installed a5pace a5control a5shell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5flac in $(PREFIX)/bin"
+	@echo "installed a5pace a5control a5shell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5flac in $(PREFIX)/bin"
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
 .PHONY: all test clean gate-diff install

@@ -19,7 +19,7 @@ typedef struct
   {
   int64_t id, iter, off, len, peak;
   AspPlace now, base;             /* where it is (decided); where it was put when recorded */
-  int in, mono, src, overlaps, gen;
+  int in, mono, src, overlaps, gen, mark;
   char gtail[96];                 /* ,"generated":"click","style":"beats" as the store has it, kept through every state rewrite */
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
@@ -405,6 +405,107 @@ int asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m )
     }
   c->mix_now = 0;
   return hit;
+  }
+
+/* --- undo: no rebuild, no safe mode. each is a mix change like any other, so it trails the head (or is heard at once with now) --- */
+
+/* the most recent take that was recorded (not generated) and is still in the loop */
+static LoopTake *last_recorded( AspCore *c, int want_in )
+  {
+  LoopTake *b = NULL;
+  for( int i = 0; i < c->nlt; i++ ) { LoopTake *t = c->lt + i; if( ! t->gen && ( t->in || ! want_in ) && ( ! b || t->id > b->id ) ) b = t; }
+  return b;
+  }
+
+typedef struct { AspCore *c; int64_t iter[64], off[64]; int ns, active; int64_t back[64]; int nb; } Und;
+static void und_cb( int64_t seq, int64_t tick, const char *actor, const char *type, const char *args, void *u )
+  {
+  Und *d = u; (void)seq; (void)tick; (void)actor;
+  if( ! strcmp( type, "end" ) )
+    {
+    int64_t it = 0, of = 0; const char *p;
+    if( ( p = strstr( args, "\"iter\":" ) ) ) it = atoll( p + 7 );
+    if( ( p = strstr( args, "\"off\":" ) ) ) of = atoll( p + 6 );
+    d->active = 0;
+    for( int i = 0; i < d->ns; i++ ) if( d->iter[i] == it && d->off[i] == of ) d->active = 1;
+    return;
+    }
+  if( strcmp( type, "relevel" ) ) return;
+  const char *p = strstr( args, "\"take\":" ); if( ! p ) return;
+  int64_t id = atoll( p + 7 );
+  if( d->active && strstr( args, "\"why\":\"overlap\"" ) )
+    { if( d->nb < 64 ) d->back[d->nb++] = id; return; }
+  for( int i = 0; i < d->nb; i++ ) if( d->back[i] == id ) d->back[i] = -1;       /* changed by hand since: leave it as it is */
+  }
+
+/* the last take (or every take of the last iteration) goes out of the loop, and the takes the automix took out because
+   of it come back. returns how many takes went out; -1 if there is nothing to undo */
+int asp_core_undo( AspCore *c, int whole_iter, int now )
+  {
+  LoopTake *l = last_recorded( c, 1 );
+  if( ! l ) return -1;
+  Und *d = calloc( 1, sizeof *d ); d->c = c;
+  int64_t it = l->iter, id = l->id; int out = 0;
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    LoopTake *t = c->lt + i;
+    if( t->gen || ! t->in || ! ( whole_iter ? t->iter == it : t->id == id ) || d->ns == 64 ) continue;
+    d->iter[d->ns] = t->iter; d->off[d->ns] = t->off; d->ns++;
+    }
+  asp_log_since( c->store, 0, und_cb, d );
+  c->mix_now = now;
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    LoopTake *t = c->lt + i;
+    for( int k = 0; k < d->ns; k++ ) if( t->iter == d->iter[k] && t->off == d->off[k] ) { change( c, t, t->now, 0, "undo" ); out++; break; }
+    }
+  for( int k = 0; k < d->nb; k++ )
+    for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].id == d->back[k] && ! c->lt[i].in ) { change( c, c->lt + i, c->lt[i].now, 1, "undo" ); break; }
+  c->mix_now = 0;
+  logf_( c, "undo", "{\"takes\":%d,\"back\":%d,\"whole\":%d}", out, d->nb, whole_iter );
+  free( d );
+  return out;
+  }
+
+/* keep mode: mix or mute (toggle) the most recent take, whatever it is */
+int asp_core_toggle_last( AspCore *c, int now )
+  {
+  LoopTake *t = last_recorded( c, 0 );
+  if( ! t ) return -1;
+  c->mix_now = now;
+  change( c, t, t->now, ! t->in, "mix" );
+  c->mix_now = 0;
+  return 0;
+  }
+
+/* the loop's mix as it was at a log point, applied as changes: takes recorded since go out, the others take the place and
+   in/out state they had then. nothing is rebuilt and safe is not needed */
+typedef struct { AspCore *c; int changed; } Rst;
+static void rst_cb( int64_t id, const char *json, void *u )
+  {
+  Rst *r = u; AspTakeState st;
+  if( ! id ) return;
+  for( int i = 0; i < r->c->nlt; i++ )
+    {
+    LoopTake *t = r->c->lt + i;
+    if( t->id != id ) continue;
+    asp_parse_state( json, &st );
+    AspPlace to = { st.l, st.r, st.flip, st.gdb, st.pan, st.mixed }; int in = strcmp( st.status, "off" ) != 0;
+    t->mark = 1;
+    if( ! ( asp_place_eq( to, t->now ) && in == t->in ) ) { change( r->c, t, to, in, "undo" ); r->changed++; }
+    return;
+    }
+  }
+int asp_core_restore( AspCore *c, int64_t seq, int now )
+  {
+  Rst r = { c, 0 };
+  for( int i = 0; i < c->nlt; i++ ) c->lt[i].mark = 0;
+  c->mix_now = now;
+  asp_fold( c->store, seq, rst_cb, &r );
+  for( int i = 0; i < c->nlt; i++ ) if( ! c->lt[i].mark && c->lt[i].in ) { change( c, c->lt + i, c->lt[i].now, 0, "undo" ); r.changed++; }
+  c->mix_now = 0;
+  logf_( c, "restore", "{\"to\":%lld,\"changed\":%d}", (long long)seq, r.changed );
+  return r.changed;
   }
 
 int asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u )

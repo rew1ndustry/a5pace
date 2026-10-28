@@ -29,20 +29,14 @@ Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Clic
 ## Shell starts in safe mode, always (user)
 `a5shell` should start its session in SAFE (no takes recorded) every time, however it was started, and say so; `l` goes live.
 
-## `a5export`: take the audio out (user)
-A standalone command, `a5export DIR [what] [--to FOLDER]`, working whether or not the loop is running (it reads the store,
-never the tank, and does not write to the session).
-- What: just the loop (the tank, as it sounds now), just the takes that are mixed (in the loop), or everything.
-- Where: a subfolder (default `DIR/export/`), brought up to date by every call: files that are no longer wanted go away,
-  changed ones are rewritten, unchanged ones left alone.
-- Takes, not the mix: each take is written whole, with no gain or pan applied. flac, one file per iteration.
-- Each file is padded with silence to fit the loop exactly; a take longer than the loop is padded to an exact multiple of
-  the loop length. (Several takes in one iteration: to settle, probably summed at their offsets within the iteration's file.)
-- Exporting the loop while the space runs: the tank is live and automix moves are in flight, so it must read only what the
-  moves have finished (a move trails the head; the export must trail it too, never overtake a move, or a take would be
-  half changed and click). If that proves hard, refuse to export the loop of a running space (takes and mixed takes are fine,
-  they come from the store). Run at low priority (`nice`/`ionice`, small reads) so the core's reads and writes are not choked.
-- Uses the take flac straight from the blobs where it can, so a long session exports without decoding it twice.
+## `a5export` (built, awaiting the user's test)
+Done: `a5export DIR [loop|mixed|all] [--to FOLDER]`, see docs/EXPORT.md. Still open: a shell key for it, a take that
+overlaps itself in the iteration sum (summed with saturation for now), a `--since` to export only newer iterations.
+
+## Generated tracks are numbered in the 90000 series (user)
+Every generated track (clicks, imported files) gets an iteration of 90001, 90002 ... instead of -1, -2 ... . a5export already
+labels them so (negative n becomes 90000 - n). Still to do: store them so, in a5click, a5create, the core's CLICK ADD and
+the mixing screen, and a migration for sessions that have negative iterations. `generated` stays the marker in the state.
 
 ## Undo in the shell (user)
 Replace the undo dialog (log point, needs SAFE). `u` undoes the last take, `U` the whole last iteration. An absolute undo

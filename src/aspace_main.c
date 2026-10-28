@@ -346,6 +346,7 @@ static void handle( void *u, int cl, const char *line )
       "REVERT seq | REVERT TAKE iter off    go back to a log point / to just after a take (needs SAFE)",
       "TAKES                                every take and its state",
       "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (dB) and pan (-100..100), absolute; mute takes it out of the loop",
+      "UNDO TAKE|ITER [NOW] | RESTORE seq [NOW] | LASTMIX [NOW]   undo the last take / iteration; the mix at a history point; toggle the latest take",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (file under blobs/tmp); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
@@ -405,6 +406,19 @@ static void handle( void *u, int cl, const char *line )
       }
     else ctl_err( c, cl, "CLICK ADD iter file style l r IN|KEEP | CLICK CLEAR" );
     }
+  else if( ! strcmp( w[0], "UNDO" ) && n > 1 )         /* UNDO TAKE|ITER [NOW]: the last take, or all of the last iteration (not in keep mode) */
+    {
+    if( st.automix.mode == ASP_AUTOMIX_KEEP ) ctl_err( c, cl, "undo does nothing in keep mode" );
+    else
+      {
+      int k = asp_core_undo( r->core, ! strcasecmp( w[1], "ITER" ), n > 2 && ! strcasecmp( w[2], "NOW" ) );
+      if( k < 0 ) ctl_err( c, cl, "nothing to undo" ); else { ctl_say( c, cl, "%d take(s) out", k ); ctl_ok( c, cl ); }
+      }
+    }
+  else if( ! strcmp( w[0], "RESTORE" ) && n > 1 )     /* RESTORE seq [NOW]: the mix as it was at a log point (history) */
+    { ctl_say( c, cl, "%d take(s) changed", asp_core_restore( r->core, atoll( w[1] ), n > 2 && ! strcasecmp( w[2], "NOW" ) ) ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "LASTMIX" ) )               /* LASTMIX [NOW]: toggle the most recent take in or out (keep mode) */
+    { if( asp_core_toggle_last( r->core, n > 1 && ! strcasecmp( w[1], "NOW" ) ) ) ctl_err( c, cl, "no take yet" ); else ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
     { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }

@@ -297,6 +297,34 @@ int main( void )
   }
   rig_close( &r );
 
+  /* --- undo: the last take goes out and what its arrival took out comes back; again, and the one before; restore a log point --- */
+  asp_core_defaults( &cfg ); cfg.automix.mode = ASP_AUTOMIX_OVERLAP; cfg.automix.n = 1;
+  rig_open( &r, &cfg, 140 );
+  base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
+  for( int i = 0; i < 3; i++ ) sim_burst( &r.sim, base + (int64_t)i * LOOP, 2, 0.1 );
+  sim_until( &r.sim, base + LOOP * 2 + 48000 * 3 );                  /* three takes are in */
+  {
+  States s; states( &r, &s );
+  CHECK( s.n == 3 && ! strcmp( s.st[0].status, "off" ) && ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "mix" ) );
+  int64_t mark = asp_log_last( r.s );
+  CHECK( asp_core_undo( r.c, 0, 0 ) == 1 );
+  sim_until( &r.sim, base + LOOP * 4 );
+  states( &r, &s );
+  CHECK( ! strcmp( s.st[0].status, "off" ) && ! strcmp( s.st[1].status, "mix" ) && ! strcmp( s.st[2].status, "off" ) );
+  CHECK( matches( &r ) );
+  CHECK( asp_core_undo( r.c, 0, 1 ) == 1 );
+  sim_until( &r.sim, base + LOOP * 5 );
+  states( &r, &s );
+  CHECK( ! strcmp( s.st[0].status, "mix" ) && ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "off" ) );
+  CHECK( matches( &r ) );
+  CHECK( asp_core_restore( r.c, mark, 0 ) == 2 );                    /* back to how it was: only the last in */
+  sim_until( &r.sim, base + LOOP * 7 );
+  states( &r, &s );
+  CHECK( ! strcmp( s.st[0].status, "off" ) && ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "mix" ) );
+  CHECK( matches( &r ) );
+  }
+  rig_close( &r );
+
   printf( fails ? "%d FAILED\n" : "all mix tests passed\n", fails );
   return fails != 0;
   }

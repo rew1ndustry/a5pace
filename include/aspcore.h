@@ -90,5 +90,11 @@ int      asp_core_pending( const AspCore *c, int64_t id );
 /* clicks for a space that is running (a5click). part is the file name under blobs/tmp. *iter >= 0 picks the next free negative one */
 int64_t  asp_core_click_add( AspCore *c, int64_t *iter, const char *part, const char *style, int ll, int lr, int in );
 int      asp_core_click_clear( AspCore *c );
+/* undo, as mix changes (no rebuild, no safe mode): the last recorded take goes out of the loop (or all the takes of its
+   iteration) and the takes automix took out because of it come back. now: heard at once, else from the next start.
+   returns how many went out, -1 for nothing to undo */
+int      asp_core_undo( AspCore *c, int whole_iter, int now );
+int      asp_core_toggle_last( AspCore *c, int now );        /* mix or mute the most recent recorded take (keep mode) */
+int      asp_core_restore( AspCore *c, int64_t seq, int now );   /* the mix as it was at that log point; returns how many takes changed */
 void     asp_core_gate_relearn( AspCore *c );      /* learn the floor again, once no take is open */
 #endif
