@@ -195,6 +195,27 @@ Three ways to deal with it, in order of how much they ask:
 Recommendation: 1 now (needed whichever), 2 for the cubie. The loop stays serial; the keeper is an I/O servant like the
 kernel's writeback, not another place where decisions are made.
 
+### The cubieboard as the baseline: where a tick goes (echo, 2026-10-28)
+
+`tools/tickbench` times the parts of a tick; `bench.sh`-style runs (real-time simulated card, session on the sd card, loop in
+`/dev/shm`, 150 s, takes coming every 2.7 s, `AUTOMIX overlap 2` so jobs run) give the whole picture. A tick is 200 ms.
+
+| part of a tick | x86 | echo before | echo now |
+|---|---|---|---|
+| gate scan (filters + 75 transforms) | 1.2 ms | 115 ms | **43 ms** |
+| gate switch | 0.1 | 6.4 | 5.3 |
+| tank get / put / mix out, each | 0.03 | 1.2 | 1.0 |
+| whole tick, average (sim run) | | 304 ms | **164 ms** |
+
+What got the gate down: both channels in one transform (they are due together; the spectrum of each is recovered from the
+bin and its mirror: half the transforms), and `-mfpu=neon -funsafe-math-optimizations` for `gate.c` on armv7 (the A8's vfp
+is not pipelined). Its decisions are unchanged: `tests/gate_diff.sh` against asp4's own gate, 873 ticks on echo with the
+flags and 1374 here, 0 differences.
+
+What is left, from the `slow_phase` log of that run: `take_end` median 508 ms, p90 1.7 s, worst 11 s (the `fdatasync` of the
+finished take, see above); `gate` median 48 ms, p90 64 ms; `moves` median 35 ms (the job budget of 48000 frames a tick).
+So the core's own work now fits; the remaining stalls are the card. Nothing was run with the real audio device.
+
 ## Order of work
 
 (2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps
