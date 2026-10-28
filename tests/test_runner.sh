@@ -5,7 +5,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); d=$t/s; fail=0
 chk() { if ! eval "$2"; then echo "FAIL $1"; fail=1; fi; }
 $here/bin/a5pace new $d demo 6.25 > /dev/null
-$here/bin/a5pace run -q -S 7001 --fast $d 2> $t/err &
+$here/bin/a5pace run --live -q -S 7001 --fast $d 2> $t/err &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 c="$here/bin/a5control $d"
@@ -27,23 +27,23 @@ $c QUIT > /dev/null
 wait $pid || true
 chk "closed cleanly, control file removed" "[ ! -f $d/ctl ]"
 # open it again: it must not need a rebuild
-$here/bin/a5pace run -S 7001 --fast $d 2> $t/err2 &
+$here/bin/a5pace run --live -S 7001 --fast $d 2> $t/err2 &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "no rebuild after a clean close" "! grep -q rebuilding $t/err2"
 $c QUIT > /dev/null; wait $pid || true
 # a crash leaves the loop dirty, and the next start rebuilds it from the store
-$here/bin/a5pace run -q -S 7001 --fast $d 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast $d 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 sleep 0.3; kill -9 $pid; wait $pid 2>/dev/null || true; rm -f $d/ctl
-$here/bin/a5pace run -S 7001 --fast $d 2> $t/err3 &
+$here/bin/a5pace run --live -S 7001 --fast $d 2> $t/err3 &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "a crash is noticed and the loop rebuilt" "grep -q rebuilding $t/err3"
 $c QUIT > /dev/null; wait $pid || true
 # a declared latency starts playing at once, without the hunt
-$here/bin/a5pace run -q -S 7001 --fast --latency 4321 $d 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast --latency 4321 $d 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "declared latency plays at once" "$c STATE | grep -q '\"phase\":\"play\".*\"latency\":4321'"
@@ -54,7 +54,7 @@ $here/bin/a5pace profiles install > /dev/null
 chk "the shipped profiles are listed" "$here/bin/a5pace profiles | grep -q '^violin-line .*G3'"
 printf 'sync_max -40\n' > $t/cfg/defaults
 d2=$t/s2; $here/bin/a5pace new $d2 prof 6.25 --profile violin-line > /dev/null
-$here/bin/a5pace run -q -S 7001 --fast $d2 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast $d2 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 c2="$here/bin/a5control $d2"
@@ -68,14 +68,14 @@ chk "tick times are measured" "$c2 STATE | grep -q 'tick_ms_max'"
 $c2 SAFE > /dev/null; $c2 REVERT 3 > /dev/null
 chk "a revert brings back the settings of that time" "$c2 STATE | grep -q '\"profile\":\"violin-line\"'"
 $c2 QUIT > /dev/null; wait $pid || true
-$here/bin/a5pace run -q -S 7001 --fast --profile knocks-and-clicks $d2 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast --profile knocks-and-clicks $d2 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "a profile given at run is used and remembered" "$c2 STATE | grep -q '\"profile\":\"knocks-and-clicks\"' && $c2 STATE | grep -q '\"lowcut\":30'"
 $c2 QUIT > /dev/null; wait $pid || true
 # wipe, history, and going back to a take by iteration and offset
 d3=$t/s3; $here/bin/a5pace new $d3 hist 6.25 > /dev/null
-$here/bin/a5pace run -q -S 7001 --fast $d3 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast $d3 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d3/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 c3="$here/bin/a5control $d3"
@@ -111,7 +111,7 @@ chk "back to the plain loop" "$c3 LINE | grep -q 'automix loop'"
 $c3 QUIT > /dev/null; wait $pid || true
 # the tape: the input as it came, in flac; the loop as it went out only if asked
 d4=$t/s4; $here/bin/a5pace new $d4 tape 6.25 > /dev/null
-$here/bin/a5pace run -q -S 7001 --fast --tape $d4 2> /dev/null &
+$here/bin/a5pace run --live -q -S 7001 --fast --tape $d4 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d4/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 c4="$here/bin/a5control $d4"

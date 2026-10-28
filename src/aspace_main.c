@@ -5,7 +5,7 @@
      arecord ... | a5pace run DIR | aplay ...      (the edge does the device, and the loopback, see docs/EDGE.md)
    options: -S LAT  simulated card with LAT frames of round trip (no pipe), paced in real time
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
-            -C PORT control port (0 any free; default 0)  --safe  start with recording off
+            -C PORT control port (0 any free; default 0)  --live  start recording (aspace starts SAFE: recording off)
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
@@ -121,7 +121,7 @@ static int cmd_profiles( int argc, char **argv )
 
 static int usage( void )
   {
-  fprintf( stderr, "usage: a5pace new DIR NAME SECONDS [--profile NAME]\n       a5pace profiles | profiles show NAME | profiles install\n       a5pace run [-S LAT [--fast|--step]] [-C PORT] [--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
+  fprintf( stderr, "usage: a5pace new DIR NAME SECONDS [--profile NAME]\n       a5pace profiles | profiles show NAME | profiles install\n       a5pace run [-S LAT [--fast|--step]] [-C PORT] [--live] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
   return 2;
   }
 
@@ -495,7 +495,7 @@ static void nap( long ms ) { struct timespec t = { ms / 1000, ( ms % 1000 ) * 10
 static int cmd_run( int argc, char **argv )
   {
   Run r; memset( &r, 0, sizeof r ); r.step_cl = -1;
-  AspCoreCfg cfg; asp_core_defaults( &cfg );
+  AspCoreCfg cfg; asp_core_defaults( &cfg ); cfg.live = 0;          /* aspace starts safe: recording is turned on on purpose */
   int port = 0, fast = 0, quiet = 0; int64_t lat = 0;
   const char *dir = NULL, *profile = NULL, *tankpath = NULL; int tape_in = 0, tape_loop = 0;
   char flagtext[600] = "", settings[1100] = "", stored[1100] = "", pname[64] = "";
@@ -505,7 +505,8 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--fast" ) ) fast = 1;
     else if( ! strcmp( argv[i], "--step" ) ) r.step = 1;
     else if( ! strcmp( argv[i], "-C" ) && i + 1 < argc ) port = atoi( argv[++i] );
-    else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
+    else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;                                  /* (the default now) */
+    else if( ! strcmp( argv[i], "--live" ) ) cfg.live = 1;
     else if( ! strcmp( argv[i], "--tape" ) ) tape_in = 1;                                   /* the input as it came, flac, in DIR/tape/ */
     else if( ! strcmp( argv[i], "--tape-loop" ) ) tape_loop = 1;                            /* and the loop as it went out: heavy, does not compress */
     else if( ! strcmp( argv[i], "--nofeed" ) ) cfg.feed = 0;       /* takes are stored but not put into the loop (alignment tests) */

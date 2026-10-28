@@ -7,7 +7,7 @@ t=$(mktemp -d); export A5PACE_CONFIG=$t/cfg; fail=0
 B=$here/bin
 chk() { if ! eval "$2"; then echo "FAIL $1"; fail=1; fi; }
 $B/a5create $t/e1 e1 --seconds 6.25 --no-click > /dev/null
-$B/a5pace run -q -S 7003 --step $t/e1 2> /dev/null &
+$B/a5pace run --live -q -S 7003 --step $t/e1 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $t/e1/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 $B/a5control $t/e1 SIM BURST 2 0.1 5 > /dev/null

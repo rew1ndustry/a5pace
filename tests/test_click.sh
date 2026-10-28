@@ -69,7 +69,7 @@ open('$t/st.d32','wb').write(b''.join(struct.pack('<ii',((i*37)%100000)*20000,-(
 $B/aspflac enc $t/st.d32 $t/st.flac 2 48000
 $B/a5create $t/f3 f3 --from $t/st.flac > $t/f3.out; chk "a flac too, stereo" "grep -q '60000 frames' $t/f3.out && grep -q 'stereo' $t/f3.out"
 # --- run one headless: the click is in the loop, and the loop matches a rebuild from the store
-$B/a5pace run -q -S 7001 --fast $t/m1 2> /dev/null &
+$B/a5pace run --live -q -S 7001 --fast $t/m1 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $t/m1/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "it starts and has the click in the loop" "$B/a5control $t/m1 STATE | grep -q '\"loop_takes\":1' && $B/a5control $t/m1 TAKES | grep -q generated"
@@ -78,7 +78,7 @@ $B/asptank rebuild $t/m1 $t/reb.d64 384000
 chk "the loop file is exactly what the store says" "$B/asptank diff $t/m1/cache/loop.d64 $t/reb.d64 | grep -q '^0 of'"
 # --- a5click on a space that is running: told, not written behind its back; kept unless --insert; clear works
 $B/a5create $t/r1 r1 --seconds 6.25 > /dev/null
-$B/a5pace run -q -S 7002 --step $t/r1 2> /dev/null &
+$B/a5pace run --live -q -S 7002 --step $t/r1 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $t/r1/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 $B/a5click $t/r1 --sig 4/4 --bars 2 --style beats > $t/c5.out; $B/a5click $t/r1 --sig 4/4 --bars 2 --style offbeat --insert > $t/c6.out

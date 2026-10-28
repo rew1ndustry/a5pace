@@ -77,7 +77,7 @@ bits. When that shift changes, the output fades from the old scale to the new on
 the change is a ramp and not a step.
 
 ### The shell's keys (`a5shell DIR`; press `?` in it)
-The shell always puts the space in safe mode when it starts (nothing is recorded until you press `space`).
+aspace starts SAFE (nothing is recorded) unless run with `--live`; the shell keeps no state of its own, it shows what aspace reports and `space` asks aspace to switch.
 The top line names the space. `space` safe/live. `u` undoes the last take and `U` every take of the last iteration: they go
 out of the loop, and takes the automix removed because of them come back; it is heard from each take's next start, and does
 nothing in keep mode (where `m` / `M` mix or mute the most recent take, queued / now). `h` history: up/down to a row, `.`

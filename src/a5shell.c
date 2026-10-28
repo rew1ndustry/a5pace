@@ -3,7 +3,7 @@
      space  safe / live     h  history: go back to a place     w  wipe the loop     a  mode: al ak a0 a1-9 ap
      u  undo the last take   U  the last iteration   x  export (a5export)   t  mixing
      r  sync again   l  relearn the floor   g/G  gate   p  profile   ?  help   q  leave   Q  stop aspace
-   the shell always starts the space in safe mode: space goes live.
+   the shell has no safe/live state of its own: it shows aspace's (which starts safe), and space asks aspace to change it.
    nothing here is needed to run aspace: it is only a window on the control port. */
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -126,8 +126,6 @@ int main( int argc, char **argv )
   ev = cmd >= 0 ? ctlc_connect( argv[1] ) : -1;
   if( cmd < 0 || ev < 0 ) { fprintf( stderr, "a5shell: %s is not running\n", argv[1] ); return 1; }
   ctlc_cmd( ev, "WATCH", NULL, NULL );
-  ctlc_cmd( cmd, "SAFE", quiet, NULL );                           /* always safe to start: space goes live */
-  snprintf( events[nev++ % 8], 220, "safe: nothing is recorded until you press space" );
   { char st[1500] = ""; ctlc_cmd( cmd, "STATE", keep_state, st ); const char *n = strstr( st, "\"name\":\"" ); if( n ) { n += 8; size_t l = strcspn( n, "\"" ); if( l > 99 ) l = 99; memcpy( space, n, l ); space[l] = 0; } }
   struct termios raw;
   if( isatty( 0 ) ) { tcgetattr( 0, &saved ); raw = saved; raw.c_lflag &= ~(tcflag_t)( ICANON | ECHO ); raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; tcsetattr( 0, TCSANOW, &raw ); atexit( restore ); }
