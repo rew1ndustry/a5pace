@@ -225,6 +225,17 @@ of 1.3 s in 52 takes, the create waiting behind the keeper's journal commit). Id
 file ahead of time; the encoder's verify (about 20% of the 34 ms a tick that recording costs there) off on slow machines; the
 job budget by time instead of by frames (`moves` takes 33 ms a tick while a job runs).
 
+### The encoder level (echo, 25 s of real takes, stereo, verify on)
+
+| FLAC level | file size, % of raw (three takes) | cost on the A8, ms of every 200 ms tick |
+|---|---|---|
+| 0 | 73.7 | 11 |
+| 2 (chosen) | 72.2 / 71.7 / 58.3 | 14 |
+| 3 | 71.7 / 71.9 / 58.6 | 19 |
+| 5 (libFLAC's default) | 70.3 / 70.3 / 57.8 | **50** |
+
+Level 2 is used for takes on every machine (one format, whatever the box), verify stays on.
+
 ## Order of work
 
 (2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps

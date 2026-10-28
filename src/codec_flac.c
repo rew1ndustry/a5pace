@@ -9,7 +9,10 @@
    is the caller's to keep. the stream is a legal flac stream all the same, and libFLAC reads it back with or without
    its header */
 
-#define LEVEL 5
+/* level 2: fixed predictors only, no lpc. on a cortex-a8 (the cubieboard) recording a stereo take at level 5 costs a quarter of
+   the one core, 50 ms of every 200 ms tick; level 2 costs 14 ms and the files are 0.5 to 1.4 points of the raw size bigger
+   (70.3 -> 72.2, 57.8 -> 58.3, 70.3 -> 71.7 on three real takes). verify, which decodes each frame again, adds 5 ms. */
+#define LEVEL 2
 
 struct AspEnc { FLAC__StreamEncoder *f; AspSink sink; void *user; int failed; };
 
