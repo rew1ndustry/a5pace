@@ -153,6 +153,48 @@ is separate and changeable (it lives in the session descriptor / peers table, no
 proved later (a hub, signed takes), the ID becomes the hash of a public key: same width, same place in the header, no
 format change. Handles chosen by people ("knight") are display only, so they never need to be unique.
 
+## Threads, and the cubieboard (measured on echo, 2026-10-28)
+
+echo: Allwinner A10, one Cortex-A8 at 1 GHz, 1 GB, ext4 on an sd card (`commit=600`), 6.18 kernel. Timings of the card
+(python, 55 KB appended per tick, about one stereo take tick):
+
+| operation | median | p90 | worst |
+|---|---|---|---|
+| `write()` of a tick's bytes (page cache) | 0.5 ms | 0.5 | 1.2 |
+| `fdatasync` after each tick | 17 ms | 91 | **1.5 s** |
+| `fdatasync` after each 1.1 MB (a take being recorded for 60 s) | 181 ms | | **4.3 s** |
+| rename + `fsync` of the directory | 43 ms | 67 | 147 |
+| sqlite insert, `synchronous=FULL` (the default) | 13.6 ms | 17 | 114 |
+| sqlite insert, `synchronous=NORMAL` | 0.2 ms | 0.2 | 0.5 |
+| sqlite WAL checkpoint (after NORMAL inserts) | 1.05 s | | |
+| sequential write | 5 MB/s | | |
+
+The pipes to the card hold about 500 ms each way; a loop that is more than about 300 ms late underruns. So on this card
+the page cache is free and **anything that waits for the card is a hazard**: one `fdatasync` can cost 4 s.
+
+What the core still does that can wait for the card: the `fdatasync` in `asp_tw_close` at the end of every take; the dir
+`fsync` in adopt; every sqlite commit (`synchronous=FULL` by default: several near the top of every pass); the automatic WAL
+checkpoint; a read of a take that is not in the page cache (a job); the tank, if it is on the card (it must be in ram:
+`--tank /dev/shm/...`).
+
+Three ways to deal with it, in order of how much they ask:
+
+1. **No threads, no waiting.** `PRAGMA synchronous=NORMAL`, `wal_autocheckpoint=0` (checkpoint at close), no `fdatasync` in
+   the core, `posix_fadvise` read-ahead on takes (done). The kernel writes everything out within about 30 s. Cost: a power
+   cut can lose the last half minute or so, and a row may outlive its take's last bytes; so on open the store checks the
+   newest takes (header finished, size) and reports the doubtful. The core stays one serial loop. Not safe against a hard
+   power cut on stage.
+2. **One keeper thread, servant not controller.** As 1, plus a thread that does only what waits: `fdatasync` + dir `fsync` of a
+   finished take, then a note to the core that it is durable; and the WAL checkpoint on its own connection. It shares no
+   state with the core but a short mutex-guarded queue and a done flag per job; the core never waits for it (only
+   `core_close` joins it). sqlite, the tank, the tick, the takes stay in the core thread. About 60 lines of pthread. A power
+   cut costs only what was not yet synced, and the log says exactly which takes were not (`take_durable` event).
+3. **Do the waiting between ticks, in the loop.** Right after the output tick is written the card has its fullest buffer. Fine
+   on a disk (stalls of 20-100 ms), not on this card (seconds).
+
+Recommendation: 1 now (needed whichever), 2 for the cubie. The loop stays serial; the keeper is an I/O servant like the
+kernel's writeback, not another place where decisions are made.
+
 ## Order of work
 
 (2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps
