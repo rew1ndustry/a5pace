@@ -26,8 +26,20 @@ SQL_OBJ    =
 SQL_LIBS   = -lsqlite3
 endif
 
-LIBOBJ = build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o
-all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5shell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate
+# the codec, chosen at build time: flac (default) or raw. see include/codec.h
+CODEC   ?= flac
+ifeq ($(CODEC),flac)
+CODEC_CFLAGS = $(FLAC_CFLAGS)
+CODEC_DEP    = $(FLAC_DEP)
+CODEC_LIBS   = $(FLAC_LIBS)
+else
+CODEC_CFLAGS =
+CODEC_DEP    =
+CODEC_LIBS   = -lm
+endif
+
+LIBOBJ = build/codec_$(CODEC).o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o
+all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5shell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -41,6 +53,13 @@ src/schema_sql.h: tools/schema.sql
 build/sqlite3.o: third_party/sqlite/sqlite3.c
 	@mkdir -p build
 	$(CC) -O2 -DSQLITE_THREADSAFE=1 -c -o $@ $<
+
+build/codec_$(CODEC).o: src/codec_$(CODEC).c include/codec.h include/plat.h $(CODEC_DEP)
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) $(CODEC_CFLAGS) -c -o $@ $<
+bin/test_codec: tests/test_codec.c build/codec_$(CODEC).o include/codec.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ $< build/codec_$(CODEC).o $(CODEC_LIBS)
 
 build/flacio.o: src/flacio.c include/flacio.h $(FLAC_DEP)
 	@mkdir -p build
@@ -144,7 +163,8 @@ bin/test_gate: tests/test_gate.c build/gate.o
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< build/gate.o -lm
 
-test: all bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+test: all bin/test_codec bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+	bin/test_codec
 	bin/test_job
 	bin/test_mixparse
 	bin/test_gate
