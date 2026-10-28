@@ -48,44 +48,48 @@ int asp_take_peak( AspStore *s, int64_t id, int src, int64_t *peak )
 
 /* --- jobs --- */
 
+/* a job reads its take as a stream, a block at a time, and never holds more than one block: a take may be hours long.
+   it visits the take's frames in order; frame f lies at tank position pos0 + f (the tank wraps). a take longer than
+   the loop therefore reaches each position more than once, a loop-length apart, and a change of level arrives at
+   those a revolution at a time rather than all at once: the sum is the same, exactly. */
 struct AspJob
   {
-  int64_t pos0, lo, hi, cursor;
-  int32_t *op, *np;
-  int64_t on, nn;
-  int och, nch;
+  AspTakeR *r;
+  int64_t pos0, lo, hi, cursor;   /* cursor: the next frame of the take to move (lo .. hi) */
+  int64_t base, have, at;         /* frame index of the block's first frame; frames in it; how many are used */
+  int32_t *buf;                   /* the block, as stored */
+  int ch;                         /* channels as stored */
   int osrc, nsrc;                 /* a side that is one channel of a take stored with more: which, or -1 for all as they are */
   AspPlace from, to;
   };
 
-AspJob *asp_job_new( int64_t pos0, int64_t lo, int64_t hi,
-                     int32_t *oldpcm, int64_t oldframes, int oldch, AspPlace from,
-                     int32_t *newpcm, int64_t newframes, int newch, AspPlace to )
+AspJob *asp_job_open( const char *path, int64_t pos0, int64_t lo, int64_t hi, AspPlace from, int osrc, AspPlace to, int nsrc )
   {
+  AspTakeR *r = asp_tr_open( path );
+  if( ! r ) return NULL;
+  const AspHdr *h = asp_tr_hdr( r );
+  if( ! h->finished || osrc >= h->channels || nsrc >= h->channels ) { asp_tr_close( r ); return NULL; }
   AspJob *j = calloc( 1, sizeof *j );
-  j->pos0 = pos0; j->lo = lo < 0 ? 0 : lo;
-  j->op = oldpcm; j->on = oldframes; j->och = oldch; j->from = from;
-  j->np = newpcm; j->nn = newframes; j->nch = newch; j->to = to;
-  j->osrc = j->nsrc = -1;
-  int64_t top = oldframes > newframes ? oldframes : newframes;
-  j->hi = hi < 0 || hi > top ? top : hi;
+  j->buf = malloc( (size_t)ASP_TICK * h->channels * 4 );
+  if( ! j || ! j->buf ) { free( j ? j->buf : NULL ); free( j ); asp_tr_close( r ); return NULL; }
+  j->r = r; j->ch = h->channels; j->pos0 = pos0;
+  j->lo = lo < 0 ? 0 : lo;
+  j->hi = hi < 0 || hi > (int64_t)h->frames ? (int64_t)h->frames : hi;
   j->cursor = j->lo;
+  j->from = from; j->to = to; j->osrc = osrc; j->nsrc = nsrc;
   return j;
   }
 
-/* the take is read once for both sides; each side hears it through its own view (src: one channel of it, or -1 as stored) */
+/* a take of the store, through a view: src is the one channel of it that is heard (mono), or -1 for the channels as stored;
+   each side has its own */
 AspJob *asp_job_take( AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, int osrc, AspPlace to, int nsrc )
   {
-  AspTake k; char path[1200]; int32_t *p; int64_t n; int ch;
-  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) || asp_take_load( path, -1, &p, &n, &ch ) ) return NULL;
-  if( osrc >= ch || nsrc >= ch ) { free( p ); return NULL; }
-  AspJob *j = asp_job_new( k.off * k.rate, lo, hi, p, n, ch, from, p, n, ch, to );
-  j->np = NULL;                                           /* shared: np == NULL means use op */
-  j->osrc = osrc; j->nsrc = nsrc;
-  return j;
+  AspTake k; char path[1200];
+  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) ) return NULL;
+  return asp_job_open( path, k.off * k.rate, lo, hi, from, osrc, to, nsrc );
   }
 
-void asp_job_free( AspJob *j ) { if( j ) { free( j->op ); if( j->np ) free( j->np ); free( j ); } }
+void asp_job_free( AspJob *j ) { if( j ) { asp_tr_close( j->r ); free( j->buf ); free( j ); } }
 int64_t asp_job_span( const AspJob *j ) { return j->hi - j->lo; }
 int64_t asp_job_pos0( const AspJob *j ) { return j->pos0; }
 
@@ -145,31 +149,43 @@ int asp_job_retarget( AspJob *j, AspPlace to )
   {
   if( j->cursor > j->lo ) return -1;
   j->to = to;
-  return asp_place_eq( j->from, j->to ) && j->osrc == j->nsrc && ! j->np ? 1 : 0;
+  return asp_place_eq( j->from, j->to ) && j->osrc == j->nsrc ? 1 : 0;
   }
 
-/* d runs along the loop from where the take starts: frame d, d+loop, d+2 loop ... all land on one position */
+/* move up to budget frames (decoding the ones below lo counts), not past frame lo + limit of the take (limit < 0: no limit).
+   1 done, 0 more to do, -1 failed */
 int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
   {
-  const int32_t *np = j->np ? j->np : j->op;
-  int64_t nn = j->np ? j->nn : j->on, nch = j->np ? j->nch : j->och, size = asp_tank_frames( t );
-  int64_t end = j->hi - j->lo > size ? j->lo + size : j->hi;          /* positions to visit */
+  int64_t end = j->hi;
   if( limit >= 0 && j->lo + limit < end ) end = j->lo + limit;
-  while( j->cursor < end && budget > 0 )
+  while( j->cursor < j->hi && budget > 0 )
     {
-    int64_t k = end - j->cursor, i, mix[2 * ASP_TICK];
-    if( k > ASP_TICK ) k = ASP_TICK;
-    if( asp_tank_get( t, j->pos0 + j->cursor, k, mix ) ) return -1;
-    for( i = 0; i < k; i++ )
-      for( int64_t f = j->cursor + i; f < j->hi; f += size )
-        {
-        if( f < j->on ) contrib( j->op + f * j->och, j->och, j->osrc, j->from, -1, mix + 2 * i );
-        if( f < nn )    contrib( np + f * nch, (int)nch, j->np ? -1 : j->nsrc, j->to, 1, mix + 2 * i );
-        }
-    if( asp_tank_put( t, j->pos0 + j->cursor, k, mix ) ) return -1;
-    j->cursor += k; budget -= k;
+    if( j->at == j->have )                                     /* the block is used up: the next */
+      {
+      if( j->cursor >= end ) break;
+      int n = asp_tr_get( j->r, j->buf, ASP_TICK );
+      if( n < 0 ) return -1;
+      if( n == 0 ) return -1;                                  /* it ended before the frames its header counts */
+      j->base += j->have; j->have = n; j->at = 0;
+      }
+    int64_t f = j->base + j->at, k = j->have - j->at;
+    if( f < j->lo ) { if( k > j->lo - f ) k = j->lo - f; j->at += k; budget -= k; continue; }       /* before the part asked for */
+    if( f >= end ) break;
+    if( k > end - f ) k = end - f;
+    if( k > budget ) k = budget;
+    int64_t mix[2 * ASP_TICK];
+    if( asp_tank_get( t, j->pos0 + f, k, mix ) ) return -1;
+    for( int64_t i = 0; i < k; i++ )
+      {
+      const int32_t *p = j->buf + ( j->at + i ) * j->ch;
+      contrib( p, j->ch, j->osrc, j->from, -1, mix + 2 * i );
+      contrib( p, j->ch, j->nsrc, j->to, 1, mix + 2 * i );
+      }
+    if( asp_tank_put( t, j->pos0 + f, k, mix ) ) return -1;
+    j->at += k; j->cursor = f + k; budget -= k;
     }
-  return j->cursor >= ( j->hi - j->lo > size ? j->lo + size : j->hi );
+  if( j->cursor < j->hi ) return 0;
+  return asp_tr_errors( j->r ) ? -1 : 1;                       /* a damaged block is a failed move */
   }
 
 int asp_job_step( AspJob *j, AspTank *t, int64_t budget ) { return asp_job_step_to( j, t, budget, -1 ); }

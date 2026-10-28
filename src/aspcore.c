@@ -592,10 +592,8 @@ static void take_end_( AspCore *c, const int32_t *last )
   int is_quiet = c->cfg.minpeak < 0 && pkdb < c->cfg.minpeak;
   if( ! bad && ( is_bump || is_quiet ) )
     {
-    int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
-    if( c->t_feed && asp_take_load( c->part, c->t_fix, &sp, &n2, &ch2 ) == 0 )   /* it was fed into the loop as it came: take it out again */
-      mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, ch2, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, ch2, ASP_PLACE_OFF ), -1 );
-    else free( sp );
+    if( c->t_feed )                                          /* it was fed into the loop as it came: take it out again (the job keeps the file open) */
+      mv_add( c, asp_job_open( c->part, c->t_sec * RATE, 0, -1, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, c->t_fix, ASP_PLACE_OFF, -1 ), -1 );
     unlink( c->part );
     logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
            (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, is_bump ? "bump" : "quiet", level_db( h.peak[0] ), level_db( h.peak[1] ) );

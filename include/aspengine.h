@@ -21,19 +21,19 @@ void    asp_place_mult( AspPlace p, int mono, int64_t *ml, int64_t *mr );    /* 
 int64_t asp_gain( int64_t x, int64_t m );
 void    asp_place_to_mix( AspPlace p, int mono, int *gdb, int *pan );        /* what an unmixed placement amounts to */
 
-/* a move: take the old placement of some data out of the loop and put the new one in, as one exact
-   add-the-difference. old and new may be different data (a stereo take converted to mono). a job does
-   it a slice at a time so the tick loop is never held; asp_move_take runs one to the end. */
+/* a move: take the old placement of a take out of the loop and put the new one in, as one exact add-the-difference. the
+   two placements may hear the take differently (a stereo feed replaced by its left channel as mono). a job reads the take
+   as a stream and does it a slice at a time, so the tick loop is never held and no take is ever held in memory;
+   asp_move_take runs one to the end. */
 typedef struct AspJob AspJob;
-AspJob *asp_job_new( int64_t pos0, int64_t lo, int64_t hi,
-                     int32_t *oldpcm, int64_t oldframes, int oldch, AspPlace from,
-                     int32_t *newpcm, int64_t newframes, int newch, AspPlace to );   /* takes the buffers */
-/* a take through a view: src is the one channel of it that is heard (mono), or -1 for the channels as stored; each side has its own */
+/* a take file (takefile.h) whose frame 0 lies at tank position pos0. each side hears it through its own view: src is the one
+   channel of it that is heard (mono), or -1 for the channels as stored. the file may be unlinked once the job is open */
+AspJob *asp_job_open( const char *path, int64_t pos0, int64_t lo, int64_t hi, AspPlace from, int from_src, AspPlace to, int to_src );
+/* the same for a take of the store */
 AspJob *asp_job_take( AspStore *s, int64_t take_id, int64_t lo, int64_t hi, AspPlace from, int from_src, AspPlace to, int to_src );
 int     asp_job_step( AspJob *j, AspTank *t, int64_t budget_frames );    /* 1 done, 0 more, -1 error */
-/* a job goes along the loop from where the take starts, one position at a time, and each position gets everything
-   the take puts there (a take longer than the loop lies over itself) in one write; so a position is never half
-   changed. limit: how far along (in frames from the start of the take) it may go; asp_job_step has none. */
+/* a job goes along the take from its start; a position of the loop is changed once for each loop-length of the take that
+   lies over it, in turn. limit: how far along (in frames from the start of the take) it may go; asp_job_step has none. */
 int     asp_job_step_to( AspJob *j, AspTank *t, int64_t budget_frames, int64_t limit );
 int64_t asp_job_cursor( const AspJob *j );
 int     asp_job_retarget( AspJob *j, AspPlace to );                     /* before it has started: 1 if it is now nothing to do */
@@ -42,7 +42,7 @@ int64_t asp_job_pos0( const AspJob *j );
 void    asp_job_free( AspJob *j );
 int     asp_move_take( AspTank *t, AspStore *s, int64_t take_id, int src, int64_t lo, int64_t hi, AspPlace from, AspPlace to );
 
-/* a take's frames as interleaved int32 (malloc'd, caller frees), and its peak */
+/* the frames of an ordinary flac file as interleaved int32 (malloc'd, caller frees): for the tools that read other people's files */
 int  asp_pcm_load( const char *flac, int32_t **pcm, int64_t *frames, int *channels );
 int  asp_take_peak( AspStore *s, int64_t take_id, int src, int64_t *peak );     /* largest |sample|: of channel src, or of all (-1) */
 

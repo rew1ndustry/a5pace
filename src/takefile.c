@@ -151,6 +151,9 @@ AspTakeR *asp_tr_open( const char *path )
   unsigned char b[ASP_HDR_SIZE];
   if( ! r ) return NULL;
   r->fd = open( path, O_RDONLY );
+#ifdef POSIX_FADV_SEQUENTIAL
+  if( r->fd >= 0 ) posix_fadvise( r->fd, 0, 0, POSIX_FADV_SEQUENTIAL );     /* read ahead: a slow card is asked early, not waited for */
+#endif
   if( r->fd < 0 || read( r->fd, b, ASP_HDR_SIZE ) != ASP_HDR_SIZE || hdr_get( b, &r->h ) || strncmp( r->h.codec, asp_codec_name(), 4 )
       || ! ( r->dec = asp_dec_new( r->h.channels, tr_source, r ) ) )
     { if( r->fd >= 0 ) close( r->fd ); free( r ); return NULL; }
