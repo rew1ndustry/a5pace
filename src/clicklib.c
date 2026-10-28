@@ -113,65 +113,103 @@ int32_t *asp_click_render( const AspClickEv *ev, int nev, int64_t loop, const As
 /* --- audio files in ------------------------------------------------------------------------------------- */
 static uint32_t le16( const unsigned char *p ) { return p[0] | p[1] << 8; }
 
-int asp_audio_read( const char *path, int32_t **pcm, int64_t *frames, int *channels, int *rate, char *err, int errn )
+struct AspAudio { AspFlacR *fl; FILE *f; int ch, bits, fmt; int64_t left; };
+
+/* an audio file read a block at a time: wav (pcm 16/24/32, float 32) or flac, one or two channels at 48000. the frame count
+   is what the file says (a flac may say 0, not knowing) */
+AspAudio *asp_audio_open( const char *path, int *channels, int64_t *frames, char *err, int errn )
   {
   size_t pl = strlen( path );
+  AspAudio *a = calloc( 1, sizeof *a );
+  if( ! a ) return NULL;
   if( pl > 5 && ! strcmp( path + pl - 5, ".flac" ) )
     {
-    int bits = 0;
-    uint64_t fr;
-    if( asp_flac_info( path, NULL, &fr, channels, rate, &bits ) ) { snprintf( err, errn, "%s: not a flac file", path ); return -1; }
-    if( *channels > 2 ) { snprintf( err, errn, "%s: %d channels (one or two, please)", path, *channels ); return -1; }
-    if( *rate != RATE ) { snprintf( err, errn, "%s is %d Hz; aspace works at 48000 (sox in.flac -r 48000 out.flac converts)", path, *rate ); return -1; }
-    int ch; 
-    if( asp_pcm_load( path, pcm, frames, &ch ) ) { snprintf( err, errn, "%s: cannot decode", path ); return -1; }
-    if( bits < 32 ) for( int64_t i = 0; i < *frames * ch; i++ ) (*pcm)[i] = (int32_t)( (uint32_t)(*pcm)[i] << ( 32 - bits ) );
-    return 0;
+    int rate = 0; uint64_t fr;
+    a->fl = asp_flac_r_open( path, &a->ch, &rate, &a->bits, &fr );
+    if( ! a->fl ) { snprintf( err, errn, "%s: not a flac file", path ); free( a ); return NULL; }
+    if( a->ch > 2 ) { snprintf( err, errn, "%s: %d channels (one or two, please)", path, a->ch ); asp_audio_close( a ); return NULL; }
+    if( rate != RATE ) { snprintf( err, errn, "%s is %d Hz; aspace works at 48000 (sox in.flac -r 48000 out.flac converts)", path, rate ); asp_audio_close( a ); return NULL; }
+    *channels = a->ch; *frames = (int64_t)fr;
+    return a;
     }
-  FILE *f = fopen( path, "rb" );
-  if( ! f ) { snprintf( err, errn, "%s: cannot open", path ); return -1; }
+  a->f = fopen( path, "rb" );
+  if( ! a->f ) { snprintf( err, errn, "%s: cannot open", path ); free( a ); return NULL; }
   unsigned char h[12], ck[8];
-  int fmt = 0, ch = 0, bits = 0, r = 0, found = 0;
-  long dstart = 0; uint32_t dlen = 0;
-  if( fread( h, 1, 12, f ) != 12 || memcmp( h, "RIFF", 4 ) || memcmp( h + 8, "WAVE", 4 ) )
-    { fclose( f ); snprintf( err, errn, "%s: not a wav or flac file (convert other formats first, e.g. with sox)", path ); return -1; }
-  while( fread( ck, 1, 8, f ) == 8 )
+  int r = 0, found = 0;
+  uint32_t dlen = 0;
+  if( fread( h, 1, 12, a->f ) != 12 || memcmp( h, "RIFF", 4 ) || memcmp( h + 8, "WAVE", 4 ) )
+    { snprintf( err, errn, "%s: not a wav or flac file (convert other formats first, e.g. with sox)", path ); asp_audio_close( a ); return NULL; }
+  while( fread( ck, 1, 8, a->f ) == 8 )
     {
     uint32_t len = asp_ld32( ck + 4 );
     if( ! memcmp( ck, "fmt ", 4 ) )
       {
       unsigned char b[40] = { 0 };
-      if( len > 40 || fread( b, 1, len, f ) != len ) break;
-      fmt = (int)le16( b ); ch = (int)le16( b + 2 ); r = (int)asp_ld32( b + 4 ); bits = (int)le16( b + 14 );
-      if( fmt == 0xFFFE && len >= 26 ) fmt = (int)le16( b + 24 );          /* extensible: the sub format */
-      if( len & 1 ) fgetc( f );
+      if( len > 40 || fread( b, 1, len, a->f ) != len ) break;
+      a->fmt = (int)le16( b ); a->ch = (int)le16( b + 2 ); r = (int)asp_ld32( b + 4 ); a->bits = (int)le16( b + 14 );
+      if( a->fmt == 0xFFFE && len >= 26 ) a->fmt = (int)le16( b + 24 );          /* extensible: the sub format */
+      if( len & 1 ) fgetc( a->f );
       }
-    else if( ! memcmp( ck, "data", 4 ) ) { dstart = ftell( f ); dlen = len; found = 1; break; }
-    else { fseek( f, (long)len + ( len & 1 ), SEEK_CUR ); }
+    else if( ! memcmp( ck, "data", 4 ) ) { dlen = len; found = 1; break; }
+    else { fseek( a->f, (long)len + ( len & 1 ), SEEK_CUR ); }
     }
-  if( ! found || ! ch ) { fclose( f ); snprintf( err, errn, "%s: no audio found", path ); return -1; }
-  if( ch > 2 ) { fclose( f ); snprintf( err, errn, "%s: %d channels (one or two, please)", path, ch ); return -1; }
-  if( r != RATE ) { fclose( f ); snprintf( err, errn, "%s is %d Hz; aspace works at 48000 (sox in.wav -r 48000 out.wav converts)", path, r ); return -1; }
-  if( ! ( ( fmt == 1 && ( bits == 16 || bits == 24 || bits == 32 ) ) || ( fmt == 3 && bits == 32 ) ) )
-    { fclose( f ); snprintf( err, errn, "%s: %d bit format %d not handled (pcm 16, 24, 32 or float 32)", path, bits, fmt ); return -1; }
-  int bytes = bits / 8;
-  int64_t n = dlen / ( (int64_t)bytes * ch );
-  unsigned char *raw = malloc( (size_t)n * bytes * ch );
-  fseek( f, dstart, SEEK_SET );
-  size_t got = fread( raw, (size_t)bytes * ch, (size_t)n, f );
-  fclose( f );
-  if( (int64_t)got < n ) n = (int64_t)got;
-  int32_t *o = malloc( (size_t)n * ch * 4 );
-  for( int64_t i = 0; i < n * ch; i++ )
+  if( ! found || ! a->ch ) { snprintf( err, errn, "%s: no audio found", path ); asp_audio_close( a ); return NULL; }
+  if( a->ch > 2 ) { snprintf( err, errn, "%s: %d channels (one or two, please)", path, a->ch ); asp_audio_close( a ); return NULL; }
+  if( r != RATE ) { snprintf( err, errn, "%s is %d Hz; aspace works at 48000 (sox in.wav -r 48000 out.wav converts)", path, r ); asp_audio_close( a ); return NULL; }
+  if( ! ( ( a->fmt == 1 && ( a->bits == 16 || a->bits == 24 || a->bits == 32 ) ) || ( a->fmt == 3 && a->bits == 32 ) ) )
+    { snprintf( err, errn, "%s: %d bit format %d not handled (pcm 16, 24, 32 or float 32)", path, a->bits, a->fmt ); asp_audio_close( a ); return NULL; }
+  a->left = dlen / ( (int64_t)( a->bits / 8 ) * a->ch );
+  *channels = a->ch; *frames = a->left;
+  return a;
+  }
+
+int asp_audio_get( AspAudio *a, int32_t *pcm, unsigned max )
+  {
+  if( a->fl )
+    {
+    int n = asp_flac_r_get( a->fl, pcm, max );
+    if( n > 0 && a->bits < 32 ) for( int i = 0; i < n * a->ch; i++ ) pcm[i] = (int32_t)( (uint32_t)pcm[i] << ( 32 - a->bits ) );
+    return n;
+    }
+  unsigned char raw[4096 * 2 * 4];
+  int bytes = a->bits / 8;
+  if( max > 4096 ) max = 4096;
+  if( (int64_t)max > a->left ) max = (unsigned)a->left;
+  size_t got = max ? fread( raw, (size_t)bytes * a->ch, max, a->f ) : 0;
+  a->left -= (int64_t)got;
+  for( size_t i = 0; i < got * a->ch; i++ )
     {
     const unsigned char *p = raw + i * bytes;
-    if( fmt == 3 ) { union { uint32_t u; float f; } c; c.u = asp_ld32( p ); double v = c.f * 2147483648.0; o[i] = (int32_t)( v > 2147483647 ? 2147483647 : v < -2147483648.0 ? -2147483647 : v ); }
-    else if( bits == 16 ) o[i] = (int32_t)( (uint32_t)le16( p ) << 16 );
-    else if( bits == 24 ) o[i] = (int32_t)( ( (uint32_t)p[0] << 8 ) | ( (uint32_t)p[1] << 16 ) | ( (uint32_t)p[2] << 24 ) );
-    else o[i] = (int32_t)asp_ld32( p );
+    if( a->fmt == 3 ) { union { uint32_t u; float f; } c; c.u = asp_ld32( p ); double v = c.f * 2147483648.0; pcm[i] = (int32_t)( v > 2147483647 ? 2147483647 : v < -2147483648.0 ? -2147483647 : v ); }
+    else if( a->bits == 16 ) pcm[i] = (int32_t)( (uint32_t)le16( p ) << 16 );
+    else if( a->bits == 24 ) pcm[i] = (int32_t)( ( (uint32_t)p[0] << 8 ) | ( (uint32_t)p[1] << 16 ) | ( (uint32_t)p[2] << 24 ) );
+    else pcm[i] = (int32_t)asp_ld32( p );
     }
-  free( raw );
-  *pcm = o; *frames = n; *channels = ch; *rate = r;
+  return (int)got;
+  }
+
+void asp_audio_close( AspAudio *a )
+  { if( a ) { asp_flac_r_close( a->fl ); if( a->f ) fclose( a->f ); free( a ); } }
+
+/* a whole file in memory: for short ones (the sounds of a click) */
+int asp_audio_read( const char *path, int32_t **pcm, int64_t *frames, int *channels, int *rate, char *err, int errn )
+  {
+  int64_t told; int ch;
+  AspAudio *a = asp_audio_open( path, &ch, &told, err, errn );
+  if( ! a ) return -1;
+  int64_t cap = told > 0 ? told : 1 << 16, n = 0;
+  int32_t *p = malloc( (size_t)cap * ch * 4 );
+  int k = 0;
+  while( p )
+    {
+    if( n + 4096 > cap ) { cap *= 2; int32_t *q = realloc( p, (size_t)cap * ch * 4 ); if( ! q ) { free( p ); p = NULL; break; } p = q; }
+    k = asp_audio_get( a, p + n * ch, 4096 );
+    if( k <= 0 ) break;
+    n += k;
+    }
+  asp_audio_close( a );
+  if( ! p || k < 0 ) { free( p ); snprintf( err, errn, "%s: cannot decode", path ); return -1; }
+  *pcm = p; *frames = n; *channels = ch; *rate = RATE;
   return 0;
   }
 
@@ -194,7 +232,7 @@ static int write_take( const char *path, const int32_t *pcm, int64_t frames, int
 static int64_t peak_of( const AspHdr *h )
   { uint32_t pk = 0; for( int i = 0; i < h->channels; i++ ) if( h->peak[i] > pk ) pk = h->peak[i]; return pk; }
 
-int asp_pcm_write_part( const char *dir, const int32_t *pcm, int64_t frames, int channels, char *name, size_t n )
+static int asp_pcm_write_part( const char *dir, const int32_t *pcm, int64_t frames, int channels, char *name, size_t n )
   {
   static int serial;
   char path[1300];
@@ -260,17 +298,48 @@ int asp_click_clear( AspStore *s, AspTank *t )
   return cleared;
   }
 
-/* an audio file as a take of its own in a session that is not running (pcm interleaved, channels 1 or 2). in puts it into the loop */
-int64_t asp_import_insert( AspStore *s, AspTank *t, int64_t iter, const int32_t *pcm, int64_t frames, int channels, int lev_l, int lev_r, int in )
+/* an audio file written, a block at a time, as a take waiting to be adopted; h says what it came to */
+int asp_audio_to_take( const char *src, const char *part, AspHdr *h, char *err, int errn )
   {
-  char tmp[1300], st[500], l[8], r[8], args[300];
+  int ch; int64_t told;
+  AspAudio *a = asp_audio_open( src, &ch, &told, err, errn );
+  if( ! a ) return -1;
+  unsigned char artist[ASP_ARTIST];
+  AspTakeW *w = asp_artist_local( artist, 1 ) ? NULL : asp_tw_open( part, artist, ch, RATE, 0 );
+  int32_t *buf = malloc( (size_t)4096 * ch * 4 );
+  int k = 0, rc = 0;
+  if( ! w || ! buf ) { snprintf( err, errn, "%s: cannot make the track", src ); asp_audio_close( a ); free( buf ); if( w ) { asp_tw_abort( w ); unlink( part ); } return -1; }
+  while( ! rc && ( k = asp_audio_get( a, buf, 4096 ) ) > 0 ) rc = asp_tw_put( w, buf, (unsigned)k );
+  free( buf ); asp_audio_close( a );
+  if( rc || k < 0 ) { asp_tw_abort( w ); unlink( part ); snprintf( err, errn, "%s: cannot decode", src ); return -1; }
+  if( asp_tw_close( w, 0, h ) ) { unlink( part ); snprintf( err, errn, "%s: cannot write the track", src ); return -1; }
+  if( h->frames < 1 ) { unlink( part ); snprintf( err, errn, "%s is empty", src ); return -1; }
+  return 0;
+  }
+
+/* the same for a session that is running: the take goes under DIR/tmp, its name returned for the running aspace to adopt */
+int asp_audio_import_part( const char *dir, const char *src, char *name, size_t n, AspHdr *h, char *err, int errn )
+  {
+  static int serial;
+  char path[1300];
+  snprintf( path, sizeof path, "%s/tmp", dir ); mkdir( path, 0777 );
+  snprintf( name, n, "gen_%d_%d.part", (int)getpid(), serial++ );
+  snprintf( path, sizeof path, "%s/tmp/%s", dir, name );
+  return asp_audio_to_take( src, path, h, err, errn );
+  }
+
+/* a take written by asp_audio_to_take, as a take of its own in a session that is not running. in puts it into the loop */
+int64_t asp_import_adopt( AspStore *s, AspTank *t, int64_t iter, const char *part, int lev_l, int lev_r, int in )
+  {
+  char st[500], l[8], r[8], args[300];
   AspTake k; AspHdr h;
-  if( asp_tmp_path( s, tmp, sizeof tmp ) || write_take( tmp, pcm, frames, channels, &h ) ) return -1;
-  int64_t pk = peak_of( &h );
+  if( asp_take_header( part, &h ) ) return -1;
+  int64_t pk = peak_of( &h ), frames = (int64_t)h.frames;
+  int channels = h.channels;
   lev_s( lev_l, l ); lev_s( lev_r, r );
   snprintf( st, sizeof st, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":0,\"mono\":%d,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"file\"}",
             in ? "mix" : "off", l, r, channels == 1, (long long)frames, (long long)pk );
-  if( asp_take_adopt( s, iter, 0, tmp, in ? "mix" : "off", st, 0, &k ) ) return -1;
+  if( asp_take_adopt( s, iter, 0, part, in ? "mix" : "off", st, 0, &k ) ) return -1;
   snprintf( args, sizeof args, "{\"take\":%lld,\"iter\":%lld,\"len\":%lld,\"mono\":%d,\"in\":%d}", (long long)k.id, (long long)iter, (long long)frames, channels == 1, in );
   asp_log( s, "click", "take_imported", args, 0 );
   if( in && t && asp_move_take( t, s, k.id, -1, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev_l, lev_r, 0 } ) ) return -1;

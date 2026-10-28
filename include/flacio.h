@@ -19,4 +19,10 @@ int  asp_flac_decode_file( const char *flac, const char *d32 );
 /* streaminfo: md5 of the decoded pcm bytes (16) and frames */
 int  asp_flac_info( const char *flac, unsigned char md5[16], uint64_t *frames,
                     int *channels, int *rate, int *bits );
+
+/* an ordinary flac file read a block at a time (not the codec of takes: that is codec.h) */
+typedef struct AspFlacR AspFlacR;
+AspFlacR *asp_flac_r_open( const char *flac, int *channels, int *rate, int *bits, uint64_t *frames );   /* NULL if not a flac file */
+int  asp_flac_r_get( AspFlacR *r, int32_t *pcm, unsigned max );    /* frames, left justified as flac gives them; 0 at the end, -1 failed */
+void asp_flac_r_close( AspFlacR *r );
 #endif

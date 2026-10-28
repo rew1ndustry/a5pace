@@ -51,18 +51,19 @@ int main( int argc, char **argv )
     }
   if( ! dir || ! file ) { fprintf( stderr, "usage: a5import DIR FILE.flac|FILE.wav [--play] [--level N] [--pan l|c|r]\n" ); return 2; }
   int ll, lr;
-  int32_t *pcm = NULL; int64_t frames = 0; int ch = 0, rate = 0;
-  if( asp_audio_read( file, &pcm, &frames, &ch, &rate, err, sizeof err ) ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
+  AspHdr h; int64_t told; int ch = 0;
+  { AspAudio *a = asp_audio_open( file, &ch, &told, err, sizeof err );        /* what it is, before any of it is read */
+    if( ! a ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
+    asp_audio_close( a ); }
   if( level == -99 ) level = ch == 1 ? 1 : 0;                      /* a mono track is shared between the two outputs: one step down is 0 dB centred */
   ll = lr = level;
   if( ! strcmp( pan, "l" ) ) lr = ASP_LEV_OFF; else if( ! strcmp( pan, "r" ) ) ll = ASP_LEV_OFF; else if( strcmp( pan, "c" ) ) { fprintf( stderr, "a5import: --pan l, c or r\n" ); return 2; }
-  if( frames < 1 ) { fprintf( stderr, "a5import: %s is empty\n", file ); return 1; }
   int64_t id = -1, iter = 0;
   int fd = running( dir ) ? ctlc_connect( dir ) : -1;
   if( fd >= 0 )
     {
     char name[80], line[400]; long long tid = -1, it = 0;
-    if( asp_pcm_write_part( dir, pcm, frames, ch, name, sizeof name ) ) { fprintf( stderr, "a5import: could not write the track\n" ); return 1; }
+    if( asp_audio_import_part( dir, file, name, sizeof name, &h, err, sizeof err ) ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
     snprintf( line, sizeof line, "IMPORT %s %d %d %s", name, ll, lr, in ? "IN" : "KEEP" );
     reply[0] = 0;
     if( ctlc_cmd( fd, line, keep, NULL ) || sscanf( reply, "%lld %lld", &tid, &it ) != 2 )
@@ -78,14 +79,15 @@ int main( int argc, char **argv )
     AspTank *t = asp_tank_open( tp, err, sizeof err );
     if( t && ( asp_tank_dirty( t ) || asp_tank_frames( t ) != loop ) ) { asp_tank_close( t ); t = NULL; }     /* it will be rebuilt at the next start */
     iter = asp_gen_next_iter( s );
-    id = asp_import_insert( s, t, iter, pcm, frames, ch, ll, lr, in );
+    char part[1300];
+    if( asp_tmp_path( s, part, sizeof part ) || asp_audio_to_take( file, part, &h, err, sizeof err ) ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
+    id = asp_import_adopt( s, t, iter, part, ll, lr, in );
     if( t ) asp_tank_close( t );
     asp_close( s );
     if( id >= 0 && in && ! t ) printf( "(the loop will be rebuilt at the next start)\n" );
     }
-  free( pcm );
   if( id < 0 ) { fprintf( stderr, "a5import: could not import %s\n", file ); return 1; }
-  printf( "%s: %.2f s, %s, take %lld, iteration %lld, %s\n", file, frames / 48000.0, ch == 1 ? "mono" : "stereo", (long long)id, (long long)iter,
+  printf( "%s: %.2f s, %s, take %lld, iteration %lld, %s\n", file, h.frames / 48000.0, ch == 1 ? "mono" : "stereo", (long long)id, (long long)iter,
           in ? "in the loop" : "kept, not in the loop" );
   return 0;
   }

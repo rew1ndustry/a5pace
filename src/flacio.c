@@ -133,3 +133,61 @@ int asp_flac_info( const char *flac, unsigned char md5[16], uint64_t *frames,
   if( bits ) *bits = sm.data.stream_info.bits_per_sample;
   return 0;
   }
+
+struct AspFlacR { FLAC__StreamDecoder *d; int ch, bad; int32_t *buf; size_t cap, have, pos; };
+
+static FLAC__StreamDecoderWriteStatus rwr( const FLAC__StreamDecoder *d, const FLAC__Frame *fr,
+                                           const FLAC__int32 *const b[], void *cd )
+  {
+  AspFlacR *r = cd;
+  unsigned ch = fr->header.channels, n = fr->header.blocksize;
+  (void)d;
+  if( (int)ch != r->ch ) { r->bad = 1; return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT; }
+  if( (size_t)n * ch > r->cap )
+    {
+    int32_t *p = realloc( r->buf, (size_t)n * ch * 4 );
+    if( ! p ) { r->bad = 1; return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT; }
+    r->buf = p; r->cap = (size_t)n * ch;
+    }
+  for( unsigned i = 0; i < n; i++ ) for( unsigned k = 0; k < ch; k++ ) r->buf[(size_t)i * ch + k] = b[k][i];
+  r->have = n; r->pos = 0;
+  return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+  }
+static void rer( const FLAC__StreamDecoder *d, FLAC__StreamDecoderErrorStatus s, void *cd )
+  { (void)d; (void)s; ((AspFlacR *)cd)->bad = 1; }
+
+AspFlacR *asp_flac_r_open( const char *flac, int *channels, int *rate, int *bits, uint64_t *frames )
+  {
+  FLAC__StreamMetadata sm;
+  if( ! FLAC__metadata_get_streaminfo( flac, &sm ) ) return NULL;
+  AspFlacR *r = calloc( 1, sizeof *r );
+  if( ! r ) return NULL;
+  r->ch = (int)sm.data.stream_info.channels;
+  if( channels ) *channels = r->ch;
+  if( rate ) *rate = (int)sm.data.stream_info.sample_rate;
+  if( bits ) *bits = (int)sm.data.stream_info.bits_per_sample;
+  if( frames ) *frames = sm.data.stream_info.total_samples;
+  r->d = FLAC__stream_decoder_new();
+  if( ! r->d || FLAC__stream_decoder_init_file( r->d, flac, rwr, NULL, rer, r ) != FLAC__STREAM_DECODER_INIT_STATUS_OK )
+    { if( r->d ) FLAC__stream_decoder_delete( r->d ); free( r ); return NULL; }
+  return r;
+  }
+
+int asp_flac_r_get( AspFlacR *r, int32_t *pcm, unsigned max )
+  {
+  while( r->pos == r->have )
+    {
+    r->have = r->pos = 0;
+    if( r->bad ) return -1;
+    if( FLAC__stream_decoder_get_state( r->d ) == FLAC__STREAM_DECODER_END_OF_STREAM ) return 0;
+    if( ! FLAC__stream_decoder_process_single( r->d ) && FLAC__stream_decoder_get_state( r->d ) != FLAC__STREAM_DECODER_END_OF_STREAM ) return -1;
+    }
+  unsigned k = (unsigned)( r->have - r->pos );
+  if( k > max ) k = max;
+  memcpy( pcm, r->buf + r->pos * r->ch, (size_t)k * r->ch * 4 );
+  r->pos += k;
+  return (int)k;
+  }
+
+void asp_flac_r_close( AspFlacR *r )
+  { if( r ) { FLAC__stream_decoder_finish( r->d ); FLAC__stream_decoder_delete( r->d ); free( r->buf ); free( r ); } }

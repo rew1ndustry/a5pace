@@ -25,15 +25,23 @@ void   asp_click_sounds_free( AspClickSounds *s );
 /* mono pcm for the loop (malloc'd, loop_frames long); sounds mix where they overlap */
 int32_t *asp_click_render( const AspClickEv *ev, int nev, int64_t loop_frames, const AspClickSounds *s );
 
-/* an audio file (wav: pcm 16/24/32 or float 32; flac): interleaved int32 left justified, channels 1 or 2, rate 48000 */
+/* an audio file (wav: pcm 16/24/32 or float 32; flac): interleaved int32 left justified, channels 1 or 2, rate 48000, read a block at a time */
+typedef struct AspAudio AspAudio;
+AspAudio *asp_audio_open( const char *path, int *channels, int64_t *frames, char *err, int errn );
+int    asp_audio_get( AspAudio *a, int32_t *pcm, unsigned max );     /* frames; 0 at the end; -1 failed */
+void   asp_audio_close( AspAudio *a );
+/* the whole of a short one in memory (the sounds of a click) */
 int    asp_audio_read( const char *path, int32_t **pcm, int64_t *frames, int *channels, int *rate, char *err, int errn );
 
 /* make a mono click take in a session that is not running, at lev l r (shifts; 99 = off). iter is in the 90000 series (asp_gen_next_iter). in puts it into
    the loop as well; otherwise it is only kept (state off) until someone plays it. returns the take id or -1 */
 int64_t asp_click_insert( AspStore *s, AspTank *t, int64_t iter, int32_t *mono, int64_t frames, const char *style, int lev_l, int lev_r, const char *meta, int in );
 /* for a session that is running: the click as a take under DIR/tmp, name returned; the running aspace adopts it (CLICK ADD) */
-int64_t asp_import_insert( AspStore *s, AspTank *t, int64_t iter, const int32_t *pcm, int64_t frames, int channels, int lev_l, int lev_r, int in );
-int    asp_pcm_write_part( const char *dir, const int32_t *pcm, int64_t frames, int channels, char *name, size_t n );
+/* an audio file as a take, written a block at a time (h: what it came to); then adopted into a session that is not running, in puts it into the loop;
+   or, for a running one, written under DIR/tmp and its name sent to the space */
+int    asp_audio_to_take( const char *src, const char *part, AspHdr *h, char *err, int errn );
+int    asp_audio_import_part( const char *dir, const char *src, char *name, size_t n, AspHdr *h, char *err, int errn );
+int64_t asp_import_adopt( AspStore *s, AspTank *t, int64_t iter, const char *part, int lev_l, int lev_r, int in );
 int64_t asp_gen_next_iter( AspStore *s );
 int    asp_click_write_part( const char *dir, const int32_t *mono, int64_t frames, char *name, size_t n );
 /* take every generated click out of the loop (state off) */

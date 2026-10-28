@@ -48,10 +48,12 @@ int main( int argc, char **argv )
   if( ( musical ? 1 : 0 ) + ( secs > 0 ? 1 : 0 ) + ( from ? 1 : 0 ) != 1 ) { fprintf( stderr, "a5create: say how long it is in one way: seconds, bars, or a file\n" ); return usage(); }
   if( *sigs && asp_meter_parse( sigs, &m ) ) { fprintf( stderr, "a5create: %s is not a time signature\n", sigs ); return 2; }
 
-  int32_t *src = NULL; int64_t frames = 0; int sch = 0, srate = 0;
+  int64_t frames = 0; int sch = 0;
   if( from )
     {
-    if( asp_audio_read( from, &src, &frames, &sch, &srate, err, sizeof err ) ) { fprintf( stderr, "a5create: %s\n", err ); return 1; }
+    AspAudio *a = asp_audio_open( from, &sch, &frames, err, sizeof err );       /* how long it is; the file itself is read later, a block at a time */
+    if( ! a ) { fprintf( stderr, "a5create: %s\n", err ); return 1; }
+    asp_audio_close( a );
     }
   else if( musical ) frames = (int64_t)llround( asp_meter_seconds( &m ) * 48000 );
   else frames = (int64_t)llround( secs * 48000 );
@@ -74,20 +76,15 @@ int main( int argc, char **argv )
 
   if( from )                                                       /* the file is the first take: the loop plays it */
     {
-    char tmp[1300]; AspTake k; char st[400];
-    asp_tmp_path( s, tmp, sizeof tmp );
-    FILE *f = fopen( tmp, "wb" );
-    for( int64_t i = 0; i < frames * sch; i++ ) { unsigned char b[4]; asp_st32( b, (uint32_t)src[i] ); fwrite( b, 1, 4, f ); }
-    fclose( f );
-    if( asp_take_add_d32( s, 0, 0, tmp, sch, 48000, "off", 0, &k ) ) { fprintf( stderr, "a5create: could not store the file\n" ); return 1; }
-    remove( tmp );
-    int64_t pk = 0; for( int64_t i = 0; i < frames * sch; i++ ) { int64_t v = src[i] < 0 ? -(int64_t)src[i] : src[i]; if( v > pk ) pk = v; }
+    char tmp[1300]; AspTake k; AspHdr h; char st[400];
+    if( asp_tmp_path( s, tmp, sizeof tmp ) || asp_audio_to_take( from, tmp, &h, err, sizeof err ) ) { fprintf( stderr, "a5create: %s\n", err ); return 1; }
+    if( asp_take_adopt( s, 0, 0, tmp, "off", NULL, 0, &k ) ) { fprintf( stderr, "a5create: could not store the file\n" ); return 1; }
+    int64_t pk = 0; for( int i = 0; i < h.channels; i++ ) if( h.peak[i] > pk ) pk = h.peak[i];
     int lev = sch == 1 ? 1 : 0;
     snprintf( st, sizeof st, "{\"status\":\"mix\",\"lev\":[\"%d\",\"%d\"],\"flip\":0,\"mono\":%d,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"file\"}", lev, lev, sch == 1, (long long)frames, (long long)pk );
     asp_take_set_state( s, k.id, st, "a5create", 0 );
     asp_move_take( t, s, k.id, -1, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev, lev, 0 } );
     printf( "  %s is the loop: %s, take %lld\n", from, sch == 1 ? "mono" : "stereo", (long long)k.id );
-    free( src );
     }
 
   if( musical && ! noclick && ! ns ) styles[ns++] = "beats";
