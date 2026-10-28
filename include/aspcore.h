@@ -87,7 +87,7 @@ int      asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m
 typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gdb, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
 int      asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u );
 int      asp_core_pending( const AspCore *c, int64_t id );
-/* generated tracks for a space that is running (a5click, a5import). part is the file name under blobs/tmp; kind "click" (the
+/* generated tracks for a space that is running (a5click, a5import). part is the file name under tmp/; kind "click" (the
    loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */
 int64_t  asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in );
 int      asp_core_click_clear( AspCore *c );

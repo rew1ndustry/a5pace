@@ -37,6 +37,7 @@ int main( void )
   {
   char dir[] = "/tmp/aspjob_testXXXXXX", p[300], e[ASP_ERR], cmd[600], f1[300], f2[300];
   if( ! mkdtemp( dir ) ) return 1;
+  { char x[300]; snprintf( x, sizeof x, "%s/cfg", dir ); setenv( "XDG_CONFIG_HOME", x, 1 ); }
   snprintf( p, sizeof p, "%s/s", dir );
   AspStore *s = asp_create( p, "{\"name\":\"j\"}", e );
   snprintf( p, sizeof p, "%s/l.d64", dir );
@@ -52,11 +53,11 @@ int main( void )
 
   AspPlace OFF = ASP_PLACE_OFF, st00 = { 0, 0, 0 }, sw = { 2, 1, 1 }, c11 = { 1, 1, 0 }, hl = { 0, ASP_LEV_OFF, 0 }, hr = { ASP_LEV_OFF, 0, 0 };
 
-  CHECK( asp_move_take( t, s, a.id, 0, -1, OFF, st00 ) == 0 );   mput( S, 30000, 2, 0, 1, st00 );     CHECK( same( t ) );
-  CHECK( asp_move_take( t, s, a.id, 0, -1, st00, sw ) == 0 );    mput( S, 30000, 2, 0, -1, st00 ); mput( S, 30000, 2, 0, 1, sw );   CHECK( same( t ) );   /* swapped channels, new levels */
-  CHECK( asp_move_take( t, s, b.id, 0, -1, OFF, c11 ) == 0 );    mput( M, 9000, 1, 48000, 1, c11 );   CHECK( same( t ) );   /* mono in the middle */
-  CHECK( asp_move_take( t, s, b.id, 0, -1, c11, hl ) == 0 );     mput( M, 9000, 1, 48000, -1, c11 ); mput( M, 9000, 1, 48000, 1, hl ); CHECK( same( t ) );
-  CHECK( asp_move_take( t, s, b.id, 0, -1, hl, hr ) == 0 );      mput( M, 9000, 1, 48000, -1, hl ); mput( M, 9000, 1, 48000, 1, hr ); CHECK( same( t ) );
+  CHECK( asp_move_take( t, s, a.id, -1, 0, -1, OFF, st00 ) == 0 );   mput( S, 30000, 2, 0, 1, st00 );     CHECK( same( t ) );
+  CHECK( asp_move_take( t, s, a.id, -1, 0, -1, st00, sw ) == 0 );    mput( S, 30000, 2, 0, -1, st00 ); mput( S, 30000, 2, 0, 1, sw );   CHECK( same( t ) );   /* swapped channels, new levels */
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, OFF, c11 ) == 0 );    mput( M, 9000, 1, 48000, 1, c11 );   CHECK( same( t ) );   /* mono in the middle */
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, c11, hl ) == 0 );     mput( M, 9000, 1, 48000, -1, c11 ); mput( M, 9000, 1, 48000, 1, hl ); CHECK( same( t ) );
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, hl, hr ) == 0 );      mput( M, 9000, 1, 48000, -1, hl ); mput( M, 9000, 1, 48000, 1, hr ); CHECK( same( t ) );
 
   /* a conversion: the stereo take was fed live as stereo, and is replaced by its left channel as mono, in slices */
   {
@@ -82,15 +83,15 @@ int main( void )
   asp_place_mult( (AspPlace){ 0, 0, 0, 0, -100, 1 }, 1, &ml, &mr ); CHECK( ml == ( 1 << 24 ) && mr == 0 );
   asp_place_mult( (AspPlace){ 0, 0, 0, 0, 80, 1 }, 0, &ml, &mr );   CHECK( ml == ( 1 << 24 ) && mr == ml );
   { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == 0 && p == -100 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == 0 && p == 0 ); }
-  CHECK( asp_move_take( t, s, b.id, 0, -1, hr, mx ) == 0 );
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, hr, mx ) == 0 );
   int32_t *bm = malloc( 30000 * 4 ); for( int i = 0; i < 30000; i++ ) bm[i] = S[2*i];     /* a is, since the conversion, its left channel as mono */
   memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );
   asp_place_mult( mx, 1, &ms[0], &ms[1] );
   for( int i = 0; i < 9000; i++ ) { int64_t at = ( 48000 + i ) % LOOP; model[2*at] += asp_gain( M[i], ms[0] ); model[2*at+1] += asp_gain( M[i], ms[1] ); }
   CHECK( same( t ) );
-  CHECK( asp_move_take( t, s, b.id, 0, -1, mx, mx2 ) == 0 );  CHECK( asp_move_take( t, s, b.id, 0, -1, mx2, ASP_PLACE_OFF ) == 0 );
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, mx, mx2 ) == 0 );  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, mx2, ASP_PLACE_OFF ) == 0 );
   memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );  CHECK( same( t ) );
-  CHECK( asp_move_take( t, s, b.id, 0, -1, ASP_PLACE_OFF, hr ) == 0 ); free( bm );
+  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, ASP_PLACE_OFF, hr ) == 0 ); free( bm );
   }
 
   /* rebuild from state: flip and mono follow the log */
@@ -99,7 +100,7 @@ int main( void )
   memset( model, 0, sizeof model );
   mput( S, 30000, 2, 0, 1, sw ); mput( M, 9000, 1, 48000, 1, c11 );
   CHECK( asp_rebuild( t, s, -1 ) == 0 && same( t ) );
-  int64_t pk; CHECK( asp_take_peak( s, b.id, &pk ) == 0 && pk > 0 );
+  int64_t pk; CHECK( asp_take_peak( s, b.id, -1, &pk ) == 0 && pk > 0 );
   AspTakeState ps; asp_parse_state( "{\"status\":\"mix\",\"lev\":[\"1\",\"-\"],\"flip\":1,\"peak\":777,\"len\":55}", &ps );
   CHECK( ps.l == 1 && ps.r == ASP_LEV_OFF && ps.flip == 1 && ps.peak == 777 && ps.len == 55 );
 

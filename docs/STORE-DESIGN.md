@@ -155,6 +155,13 @@ format change. Handles chosen by people ("knight") are display only, so they nev
 
 ## Order of work
 
+(2026-10-28: steps 1 and 2 are done. Step 2 in the code: `takefile.[ch]` (header, writer, reader, `asp_hdr_mono`); the store keeps
+`takes.<artist12>/<iter>/<off>.a5t`, schema v2 (no blob_sha/md5, `UNIQUE(artist, iter, off)`), an artist id made on first
+use in `$XDG_CONFIG_HOME/aspace/artist`; the core writes every take through the writer, stereo as heard, and decides mono
+from the header when the take ends, so `take_end_` reads nothing back; jobs take a view (`src`) per side. Whole `make test`
+passes with `CODEC=flac` and `CODEC=raw`. A session made before this is refused with a message. Not yet converted:
+`tools/verify.py` and `tools/import_asp4.py` still speak the old layout - step 4.)
+
 1. DONE 2026-10-28: `codec.h`, `codec_flac.c`, `codec_raw.c`, `test_codec` (round trips at 1/2/4 channels, no-header decode, 7-byte-at-a-time source, truncated stream, damaged block, bad args). Still to do here: check that finalized (old) flac files decode through `asp_dec_*` once the take reader exists.
 2. Take writer/reader on the store (`asp_take_adopt` = fdatasync, rename, row); mono as metadata; tests: store, core.
 3. Streaming `AspJob`; rebuild; tests: mix, job, tank, core (exact-sum tests already exist).

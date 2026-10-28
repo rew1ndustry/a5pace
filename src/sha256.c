@@ -71,18 +71,3 @@ static void sha_hex( Sha *c, char out[65] )
 
 void asp_sha256_buf( const void *p, size_t len, char out[65] )
   { Sha c; sha_init( &c ); sha_add( &c, p, len ); sha_hex( &c, out ); }
-
-int asp_sha256_file( const char *path, char out[65] )
-  {
-  FILE *f = fopen( path, "rb" );
-  if( ! f ) return -1;
-  Sha c; sha_init( &c );
-  unsigned char buf[1 << 16];
-  size_t got;
-  while( ( got = fread( buf, 1, sizeof buf, f ) ) > 0 ) sha_add( &c, buf, got );
-  int bad = ferror( f );
-  fclose( f );
-  if( bad ) return -1;
-  sha_hex( &c, out );
-  return 0;
-  }

@@ -28,7 +28,8 @@ typedef struct AspJob AspJob;
 AspJob *asp_job_new( int64_t pos0, int64_t lo, int64_t hi,
                      int32_t *oldpcm, int64_t oldframes, int oldch, AspPlace from,
                      int32_t *newpcm, int64_t newframes, int newch, AspPlace to );   /* takes the buffers */
-AspJob *asp_job_take( AspStore *s, int64_t take_id, int64_t lo, int64_t hi, AspPlace from, AspPlace to );
+/* a take through a view: src is the one channel of it that is heard (mono), or -1 for the channels as stored; each side has its own */
+AspJob *asp_job_take( AspStore *s, int64_t take_id, int64_t lo, int64_t hi, AspPlace from, int from_src, AspPlace to, int to_src );
 int     asp_job_step( AspJob *j, AspTank *t, int64_t budget_frames );    /* 1 done, 0 more, -1 error */
 /* a job goes along the loop from where the take starts, one position at a time, and each position gets everything
    the take puts there (a take longer than the loop lies over itself) in one write; so a position is never half
@@ -39,11 +40,11 @@ int     asp_job_retarget( AspJob *j, AspPlace to );                     /* befor
 int64_t asp_job_span( const AspJob *j );                                /* frames it will touch, from pos0 */
 int64_t asp_job_pos0( const AspJob *j );
 void    asp_job_free( AspJob *j );
-int     asp_move_take( AspTank *t, AspStore *s, int64_t take_id, int64_t lo, int64_t hi, AspPlace from, AspPlace to );
+int     asp_move_take( AspTank *t, AspStore *s, int64_t take_id, int src, int64_t lo, int64_t hi, AspPlace from, AspPlace to );
 
 /* a take's frames as interleaved int32 (malloc'd, caller frees), and its peak */
 int  asp_pcm_load( const char *flac, int32_t **pcm, int64_t *frames, int *channels );
-int  asp_take_peak( AspStore *s, int64_t take_id, int64_t *peak );     /* largest |sample| over all channels */
+int  asp_take_peak( AspStore *s, int64_t take_id, int src, int64_t *peak );     /* largest |sample|: of channel src, or of all (-1) */
 
 /* the older call: same data, no swap */
 int asp_apply_take( AspTank *t, AspStore *s, int64_t take_id, int64_t lo, int64_t hi,
@@ -54,6 +55,6 @@ int asp_tank_clear( AspTank *t );
 int asp_rebuild( AspTank *t, AspStore *s, int64_t upto );
 
 /* the take-state fields the engine reads from the json state */
-typedef struct { char status[8]; int l, r, flip, mono; int64_t gone, peak, len; int gdb, pan, mixed; } AspTakeState;
+typedef struct { char status[8]; int l, r, flip, mono, src; int64_t gone, peak, len; int gdb, pan, mixed; } AspTakeState;
 void asp_parse_state( const char *json, AspTakeState *st );
 #endif

@@ -4,6 +4,7 @@
 #include <math.h>
 #include "aspengine.h"
 #include "flacio.h"
+#include "takefile.h"
 
 /* --- pcm in memory --- */
 
@@ -35,12 +36,13 @@ int asp_pcm_load( const char *flac, int32_t **pcm, int64_t *frames, int *channel
   return 0;
   }
 
-int asp_take_peak( AspStore *s, int64_t id, int64_t *peak )
+/* largest |sample| of a take: of the channel src, or of all. the recording kept it in the header */
+int asp_take_peak( AspStore *s, int64_t id, int src, int64_t *peak )
   {
-  AspTake k; char path[1200]; int32_t *p; int64_t n, pk = 0; int ch;
-  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) || asp_pcm_load( path, &p, &n, &ch ) ) return -1;
-  for( int64_t i = 0; i < n * ch; i++ ) { int64_t v = p[i] < 0 ? -(int64_t)p[i] : p[i]; if( v > pk ) pk = v; }
-  free( p ); *peak = pk;
+  AspTake k; char path[1200]; AspHdr h; uint32_t pk = 0;
+  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) || asp_take_header( path, &h ) || src >= h.channels ) return -1;
+  for( int i = 0; i < h.channels; i++ ) if( ( src < 0 || src == i ) && h.peak[i] > pk ) pk = h.peak[i];
+  *peak = pk;
   return 0;
   }
 
@@ -52,6 +54,7 @@ struct AspJob
   int32_t *op, *np;
   int64_t on, nn;
   int och, nch;
+  int osrc, nsrc;                 /* a side that is one channel of a take stored with more: which, or -1 for all as they are */
   AspPlace from, to;
   };
 
@@ -63,19 +66,22 @@ AspJob *asp_job_new( int64_t pos0, int64_t lo, int64_t hi,
   j->pos0 = pos0; j->lo = lo < 0 ? 0 : lo;
   j->op = oldpcm; j->on = oldframes; j->och = oldch; j->from = from;
   j->np = newpcm; j->nn = newframes; j->nch = newch; j->to = to;
+  j->osrc = j->nsrc = -1;
   int64_t top = oldframes > newframes ? oldframes : newframes;
   j->hi = hi < 0 || hi > top ? top : hi;
   j->cursor = j->lo;
   return j;
   }
 
-AspJob *asp_job_take( AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, AspPlace to )
+/* the take is read once for both sides; each side hears it through its own view (src: one channel of it, or -1 as stored) */
+AspJob *asp_job_take( AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, int osrc, AspPlace to, int nsrc )
   {
   AspTake k; char path[1200]; int32_t *p; int64_t n; int ch;
-  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) || asp_pcm_load( path, &p, &n, &ch ) ) return NULL;
-  /* the same buffer is read for both sides */
+  if( asp_take_get( s, id, &k ) || asp_take_path( s, &k, path, sizeof path ) || asp_take_load( path, -1, &p, &n, &ch ) ) return NULL;
+  if( osrc >= ch || nsrc >= ch ) { free( p ); return NULL; }
   AspJob *j = asp_job_new( k.off * k.rate, lo, hi, p, n, ch, from, p, n, ch, to );
   j->np = NULL;                                           /* shared: np == NULL means use op */
+  j->osrc = osrc; j->nsrc = nsrc;
   return j;
   }
 
@@ -117,13 +123,14 @@ void asp_place_to_mix( AspPlace p, int mono, int *gdb, int *pan )
   *gdb = g > 0 ? (int)lround( 20.0 * log10( g ) ) : 0; *pan = (int)lround( pn );
   }
 
-static inline void contrib( const int32_t *p, int ch, AspPlace pl, int sign, int64_t *m )
+static inline void contrib( const int32_t *p, int ch, int src, AspPlace pl, int sign, int64_t *m )
   {
-  int64_t a = p[0], b = ch > 1 ? p[1] : p[0];
+  int one = ch == 1 || src >= 0;                          /* a single channel is heard as mono */
+  int64_t a = p[src >= 0 ? src : 0], b = one ? a : p[1];
   if( pl.mixed )
     {
     int64_t ml, mr;
-    asp_place_mult( pl, ch == 1, &ml, &mr );
+    asp_place_mult( pl, one, &ml, &mr );
     m[0] += sign * asp_gain( a, ml ); m[1] += sign * asp_gain( b, mr );
     return;
     }
@@ -138,7 +145,7 @@ int asp_job_retarget( AspJob *j, AspPlace to )
   {
   if( j->cursor > j->lo ) return -1;
   j->to = to;
-  return asp_place_eq( j->from, j->to ) && ! j->np ? 1 : 0;
+  return asp_place_eq( j->from, j->to ) && j->osrc == j->nsrc && ! j->np ? 1 : 0;
   }
 
 /* d runs along the loop from where the take starts: frame d, d+loop, d+2 loop ... all land on one position */
@@ -156,8 +163,8 @@ int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
     for( i = 0; i < k; i++ )
       for( int64_t f = j->cursor + i; f < j->hi; f += size )
         {
-        if( f < j->on ) contrib( j->op + f * j->och, j->och, j->from, -1, mix + 2 * i );
-        if( f < nn )    contrib( np + f * nch, (int)nch, j->to, 1, mix + 2 * i );
+        if( f < j->on ) contrib( j->op + f * j->och, j->och, j->osrc, j->from, -1, mix + 2 * i );
+        if( f < nn )    contrib( np + f * nch, (int)nch, j->np ? -1 : j->nsrc, j->to, 1, mix + 2 * i );
         }
     if( asp_tank_put( t, j->pos0 + j->cursor, k, mix ) ) return -1;
     j->cursor += k; budget -= k;
@@ -167,9 +174,9 @@ int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
 
 int asp_job_step( AspJob *j, AspTank *t, int64_t budget ) { return asp_job_step_to( j, t, budget, -1 ); }
 
-int asp_move_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace from, AspPlace to )
+int asp_move_take( AspTank *t, AspStore *s, int64_t id, int src, int64_t lo, int64_t hi, AspPlace from, AspPlace to )
   {
-  AspJob *j = asp_job_take( s, id, lo, hi, from, to );
+  AspJob *j = asp_job_take( s, id, lo, hi, from, src, to, src );
   if( ! j ) return -1;
   int rc = asp_job_step( j, t, INT64_MAX );
   asp_job_free( j );
@@ -177,7 +184,7 @@ int asp_move_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, 
   }
 
 int asp_apply_take( AspTank *t, AspStore *s, int64_t id, int64_t lo, int64_t hi, int ol, int orr, int nl, int nr )
-  { return asp_move_take( t, s, id, lo, hi, (AspPlace){ ol, orr, 0 }, (AspPlace){ nl, nr, 0 } ); }
+  { return asp_move_take( t, s, id, -1, lo, hi, (AspPlace){ ol, orr, 0 }, (AspPlace){ nl, nr, 0 } ); }
 
 int asp_tank_clear( AspTank *t )
   {
@@ -208,7 +215,7 @@ static int64_t num_after( const char *j, const char *key, int64_t dflt )
 void asp_parse_state( const char *j, AspTakeState *st )
   {
   const char *p;
-  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = 0; st->gone = 0; st->peak = -1; st->len = -1; st->gdb = st->pan = st->mixed = 0;
+  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = st->src = 0; st->gone = 0; st->peak = -1; st->len = -1; st->gdb = st->pan = st->mixed = 0;
   if( ( p = strstr( j, "\"status\":\"" ) ) )
     {
     int n = 0; p += 10;
@@ -222,7 +229,7 @@ void asp_parse_state( const char *j, AspTakeState *st )
     }
   st->gone = num_after( j, "\"gone\":", 0 );
   st->flip = (int)num_after( j, "\"flip\":", 0 );
-  st->mono = (int)num_after( j, "\"mono\":", 0 );
+  st->mono = (int)num_after( j, "\"mono\":", 0 ); st->src = (int)num_after( j, "\"src\":", 0 );
   st->peak = num_after( j, "\"peak\":", -1 );
   st->len = num_after( j, "\"len\":", -1 );
   st->mixed = (int)num_after( j, "\"mixed\":", 0 ); st->gdb = (int)num_after( j, "\"gdb\":", 0 ); st->pan = (int)num_after( j, "\"pan\":", 0 );
@@ -249,7 +256,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
     {
     AspTakeState *st = &l.e[i].st;
     if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* take 0 holds settings, not a take; or not in the loop */
-    rc = asp_move_take( t, s, l.e[i].id, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gdb, st->pan, st->mixed } );
+    rc = asp_move_take( t, s, l.e[i].id, st->mono ? st->src : -1, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gdb, st->pan, st->mixed } );
     }
   free( l.e );
   return rc;

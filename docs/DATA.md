@@ -6,7 +6,7 @@ Status: agreed design, no code yet. Decided 2026-10-26.
 
 ```
 <session>/session.db            SQLite (WAL): facts + append-only event log
-<session>/blobs/ab/abcd....flac  immutable FLAC takes, name = SHA-256 of the file
+<session>/takes.<artist12>/<iter>/<off>.a5t  immutable takes: a header of facts, then the codec's bytes (docs/STORE-DESIGN.md)
 <session>/cache/                 disposable: the .d64 tank, decoded PCM, checkpoints
 ```
 
@@ -23,7 +23,7 @@ Status: agreed design, no code yet. Decided 2026-10-26.
 |---|---|---|---|---|
 | realtime audio | best | poor (BLOB copy, decode per read) | unusable | plain PCM cache |
 | state | fragile (extension = state, renames race) | transactional | transactional | transactional |
-| network / p2p | rsync-shaped, no conflict model | single-writer file | native but needs a server | replicate log + fetch blobs by hash |
+| network / p2p | rsync-shaped, no conflict model | single-writer file | native but needs a server | replicate log + fetch takes by artist/iter/offset |
 | contributor install | none | one file | heavy | one directory |
 | integrity | none | WAL | yes | blob name is its hash; FLAC carries an MD5 |
 
@@ -40,7 +40,7 @@ error, drop/starve report, revert. Unknown `type` values are stored and skipped 
 readers, so new control ideas need no schema change.
 
 - **Rebuild:** state at log point N = fold of events 1..N over the FLAC takes. The tank, levels
-  and mixes can always be regenerated from the blobs plus the log.
+  and mixes can always be regenerated from the takes plus the log.
 - **Time travel:** returning to an earlier state appends `revert{to: N}`. It never truncates,
   so "log everything" holds and a revert can itself be reverted. Optional `.d64` checkpoints
   every K events make a rebuild quick.
@@ -52,7 +52,7 @@ readers, so new control ideas need no schema change.
 
 ```
 session(id TEXT PRIMARY KEY, descriptor_json, schema_version, created)
-takes(id, iter, offset, blob_sha, len, rate, channels, bits, status, gone, wrapped, t_start)
+takes(id, artist, iter, offset, len, rate, channels, bits, status, gone, wrapped, t_start)
 log(seq INTEGER PRIMARY KEY, tick, wall, actor, type, args_json)
 mixes(name PRIMARY KEY, seq)            -- label on a log point
 notes(id, take_id, seq, text, kind)     -- ledger, cues, journal lines

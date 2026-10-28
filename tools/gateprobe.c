@@ -24,7 +24,7 @@ int main( int argc, char **argv )
     if( asp_take_get( s, id, &k ) ) break;
     if( a < argc ) { int want = 0; for( int i = a; i < argc; i++ ) if( atoll( argv[i] ) == id ) want = 1; if( ! want ) continue; }
     asp_take_path( s, &k, path, sizeof path );
-    if( asp_pcm_load( path, &p, &n, &ch ) ) continue;
+    if( asp_take_load( path, -1, &p, &n, &ch ) ) continue;
     int32_t *st = malloc( (size_t)n * 8 );                    /* stereo from whatever it is */
     for( int64_t i = 0; i < n; i++ ) { st[2*i] = p[i*ch]; st[2*i+1] = p[i*ch+(ch>1)]; }
     free( p );

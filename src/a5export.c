@@ -41,7 +41,7 @@ static int64_t json_num( const char *j, const char *key, int64_t d )
   return p ? atoll( p + strlen( k ) ) : d;
   }
 
-typedef struct { int64_t id, iter, off, frames; int ch, in; char sha[65], path[1300]; AspTakeState st; } Tk;
+typedef struct { int64_t id, iter, off, frames; int ch, src, in; char path[1300]; AspTakeState st; } Tk;
 typedef struct { Tk *t; int n, cap; AspStore *s; int mixed_only; } Snap;
 
 static void snap_cb( int64_t id, const char *json, void *u )
@@ -55,8 +55,9 @@ static void snap_cb( int64_t id, const char *json, void *u )
   if( sn->n == sn->cap ) { sn->cap = sn->cap ? sn->cap * 2 : 64; sn->t = realloc( sn->t, sn->cap * sizeof *sn->t ); }
   Tk *t = sn->t + sn->n++;
   memset( t, 0, sizeof *t );
-  t->id = id; t->iter = k.iter; t->off = k.off; t->frames = k.frames; t->ch = k.channels; t->in = in; t->st = st;
-  snprintf( t->sha, sizeof t->sha, "%s", k.sha );
+  t->id = id; t->iter = k.iter; t->off = k.off; t->frames = k.frames; t->in = in; t->st = st;
+  t->src = st.mono ? st.src : -1;                            /* a mono take is one channel of what is stored */
+  t->ch = t->src >= 0 ? 1 : k.channels;
   asp_take_path( sn->s, &k, t->path, sizeof t->path );
   }
 
@@ -161,18 +162,11 @@ static int pass_cb( const int32_t *pcm, unsigned frames, int channels, void *u )
   return 0;
   }
 
-/* a stereo take whose channels are the same all the way through is a mono take */
-static int same_cb( const int32_t *pcm, unsigned frames, int channels, void *u )
-  {
-  for( unsigned i = 0; channels == 2 && i < frames; i++ ) if( pcm[2*i] != pcm[2*i+1] ) { *(int *)u = 0; return 1; }
-  return 0;
-  }
+/* a stereo take whose channels are the same all the way through is a mono take: the header counted that as it was recorded */
 static int is_mono( const Tk *t )
   {
-  if( t->ch == 1 ) return 1;
-  int same = 1;
-  asp_flac_decode_frames( t->path, same_cb, &same );
-  return same;
+  AspHdr h;
+  return t->ch == 1 || ( asp_take_header( t->path, &h ) == 0 && h.ident );
   }
 
 static int64_t padded( int64_t end, int64_t loop ) { return end <= 0 ? loop : ( ( end + loop - 1 ) / loop ) * loop; }
@@ -183,7 +177,7 @@ static int export_take( const char *dir, const char *name, const Tk *t, int64_t 
   int64_t st = ( t->off * RATE ) % loop, total = padded( st + t->frames, loop );
   Out o; Pass p = { &o, och };
   if( out_open( &o, dir, name, och ) ) return -1;
-  if( silence( &o, st, och ) || asp_flac_decode_frames( t->path, pass_cb, &p ) || silence( &o, total - st - t->frames, och ) )
+  if( silence( &o, st, och ) || asp_take_frames( t->path, t->src, pass_cb, &p ) || silence( &o, total - st - t->frames, och ) )
     { asp_flac_enc_close( o.e ); unlink( o.part ); return -1; }
   return out_close( &o );
   }
@@ -260,7 +254,7 @@ int main( int argc, char **argv )
     for( int i = 0; i < sn.n; i++ )
       {
       Tk *t = sn.t + i; if( ! t->in ) continue;
-      h = fnv( h, t->sha, 64 ); h = fnv( h, &t->st.l, sizeof t->st.l ); h = fnv( h, &t->st.r, sizeof t->st.r ); h = fnv( h, &t->st.flip, sizeof t->st.flip );
+      h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->st.l, sizeof t->st.l ); h = fnv( h, &t->st.r, sizeof t->st.r ); h = fnv( h, &t->st.flip, sizeof t->st.flip );
       h = fnv( h, &t->st.gdb, sizeof t->st.gdb ); h = fnv( h, &t->st.pan, sizeof t->st.pan ); h = fnv( h, &t->st.mixed, sizeof t->st.mixed ); h = fnv( h, &t->off, sizeof t->off );
       }
     snprintf( jobs[nj].name, 120, "mix_%05lld.flac", (long long)cur ); jobs[nj++].key = h;
@@ -269,7 +263,7 @@ int main( int argc, char **argv )
     for( int i = 0; i < sn.n && nj < 4096; i++ )
       {
       Tk *t = sn.t + i;
-      uint64_t h = 1469598103934665603ULL; h = fnv( h, &loop, sizeof loop ); h = fnv( h, t->sha, 64 ); h = fnv( h, &t->off, sizeof t->off );
+      uint64_t h = 1469598103934665603ULL; h = fnv( h, &loop, sizeof loop ); h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->off, sizeof t->off );
       snprintf( jobs[nj].name, 120, "%s_%05lld_%05lld.flac", t->in ? "loop" : "mute", (long long)( t->iter >= 0 ? t->iter : GEN_SERIES - t->iter ), (long long)t->off );
       jobs[nj].key = h; jobs[nj].t = i; nj++;
       }

@@ -69,6 +69,7 @@ int main( void )
   {
   char dir[] = "/tmp/aspcore_testXXXXXX", sd[300], tp[300], e[ASP_ERR], cmd[600];
   if( ! mkdtemp( dir ) ) return 1;
+  { char x[300]; snprintf( x, sizeof x, "%s/cfg", dir ); setenv( "XDG_CONFIG_HOME", x, 1 ); }
   snprintf( sd, sizeof sd, "%s/s", dir ); snprintf( tp, sizeof tp, "%s/loop.d64", dir );
   AspStore *s = asp_create( sd, "{\"name\":\"core\"}", e );
   AspTank *t = asp_tank_create( tp, LOOP, 48000, e, sizeof e );
@@ -110,7 +111,7 @@ int main( void )
     {
     char path[1200]; Buf b = { malloc( 8 * 48000 * 40 ), 0, 48000 * 40 };
     asp_take_path( s, &k, path, sizeof path );
-    CHECK( asp_flac_decode_frames( path, collect, &b ) == 0 );
+    CHECK( asp_take_frames( path, -1, collect, &b ) == 0 );
     int64_t at = P0 - sec0 * 48000, bad = 0;
     for( int j = 0; j < BLEN && at + j < b.n; j++ )
       for( int ch = 0; ch < 2; ch++ )

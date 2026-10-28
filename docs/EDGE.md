@@ -55,7 +55,7 @@ ready in keep mode).
   distance from the origin, not the elapsed time. Recording position = origin-relative; the loop goes
   out ahead of it by the measured round trip so what is played against it lands back in place.
 - **PLAY phase:** gate (learning waits for the returning sync to pass), takes recorded as FLAC streamed to
-  `blobs/tmp`, each tick fed into the tank at its level as it is recorded, take committed to the store
+  `tmp/`, each tick fed into the tank at its level as it is recorded, take committed to the store
   at its end (one transaction: row, `take_added`, `take_state`). Frame 0 of a take is the start of its
   second of the loop, so it can be replayed into a rebuilt tank sample for sample.
 - **Events logged:** sync_start, sync_found/failed, gate, new, end, top, wrap, safe_on/off, edge_drop/starve,

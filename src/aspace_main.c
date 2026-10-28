@@ -162,7 +162,8 @@ static void fold_cb( int64_t id, const char *st, void *u )
   {
   Run *r = u; AspTake k;
   if( asp_take_get( r->store, id, &k ) ) return;
-  ctl_say( r->ctl, r->run, "take %lld iter %lld off %lld frames %lld ch %d %s", (long long)id, (long long)k.iter, (long long)k.off, (long long)k.frames, k.channels, st );
+  AspTakeState ts; asp_parse_state( st, &ts );                       /* ch: as it is heard; a mono take is stored with both channels */
+  ctl_say( r->ctl, r->run, "take %lld iter %lld off %lld frames %lld ch %d %s", (long long)id, (long long)k.iter, (long long)k.off, (long long)k.frames, ts.mono ? 1 : k.channels, st );
   }
 
 static void grid_cb( void *u, const AspCoreTake *t )
@@ -348,8 +349,8 @@ static void handle( void *u, int cl, const char *line )
       "TAKES                                every take and its state",
       "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (dB) and pan (-100..100), absolute; mute takes it out of the loop",
       "UNDO TAKE|ITER [NOW] | RESTORE seq [NOW] | LASTMIX [NOW]   undo the last take / iteration; the mix at a history point; toggle the latest take",
-      "IMPORT file l r IN|KEEP   a track for a5import (file under blobs/tmp)",
-      "CLICK ADD iter file style l r IN|KEEP   a click for a5click (file under blobs/tmp); CLICK CLEAR takes them out",
+      "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
+      "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
@@ -396,7 +397,7 @@ static void handle( void *u, int cl, const char *line )
     int k = asp_core_mix( r->core, atoll( w[1] ), w[2][0] == '*' ? -1 : atoll( w[2] ), &m );
     if( ! k ) ctl_err( c, cl, "no such take" ); else { ctl_say( c, cl, "%d take(s)", k ); ctl_ok( c, cl ); }
     }
-  else if( ! strcmp( w[0], "CLICK" ) && n > 1 )        /* CLICK ADD iter file style l r IN|KEEP (a5click's flac under blobs/tmp); CLICK CLEAR */
+  else if( ! strcmp( w[0], "CLICK" ) && n > 1 )        /* CLICK ADD iter file style l r IN|KEEP (a5click's take under tmp/); CLICK CLEAR */
     {
     for( char *q = w[1]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
     if( ! strcmp( w[1], "CLEAR" ) ) { ctl_say( c, cl, "%d click(s) taken out of the loop", asp_core_click_clear( r->core ) ); ctl_ok( c, cl ); }
@@ -421,7 +422,7 @@ static void handle( void *u, int cl, const char *line )
     { ctl_say( c, cl, "%d take(s) changed", asp_core_restore( r->core, atoll( w[1] ), n > 2 && ! strcasecmp( w[2], "NOW" ) ) ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LASTMIX" ) )               /* LASTMIX [NOW]: toggle the most recent take in or out (keep mode) */
     { if( asp_core_toggle_last( r->core, n > 1 && ! strcasecmp( w[1], "NOW" ) ) ) ctl_err( c, cl, "no take yet" ); else ctl_ok( c, cl ); }
-  else if( ! strcmp( w[0], "IMPORT" ) && n > 4 )       /* IMPORT file l r IN|KEEP (a5import's flac under blobs/tmp): the next 90000 slot */
+  else if( ! strcmp( w[0], "IMPORT" ) && n > 4 )       /* IMPORT file l r IN|KEEP (a5import's take under tmp/): the next 90000 slot */
     {
     int64_t it = 0, id = asp_core_gen_add( r->core, &it, w[1], "file", "", atoi( w[2] ), atoi( w[3] ), ! strcasecmp( w[4], "IN" ) );
     if( id < 0 ) ctl_err( c, cl, "that file cannot be imported (48 kHz flac, one or two channels)" ); else { ctl_say( c, cl, "%lld %lld", (long long)id, (long long)it ); ctl_ok( c, cl ); }

@@ -78,12 +78,15 @@ try:
     print("takes", db.execute("select count(*) from takes").fetchone()[0], " log events", db.execute("select count(*) from log").fetchone()[0])
     print("event types:", dict(db.execute("select type,count(*) from log group by 1 order by 2 desc limit 25").fetchall()))
     missing = bad = 0
-    for sha, frames in db.execute("select blob_sha, frames from takes"):
-        p = "%s/blobs/%s/%s.flac" % (d, sha[:2], sha)
-        if not os.path.exists(p): missing += 1
-    print("takes whose blob file is missing:", missing)
-    tmp = "%s/blobs/tmp" % d
-    if os.path.isdir(tmp): print("unfinished takes in blobs/tmp:", len(os.listdir(tmp)))
+    for artist, it, off, frames in db.execute("select artist, iter, off, frames from takes"):
+        p = "%s/takes.%s/%d/%d.a5t" % (d, artist[:12], it, off)
+        try:
+            h = open(p, "rb").read(160)                      # magic, flags at 14, frames at 24 (takefile.h)
+            if h[:4] != b"A5TK" or not h[14] & 1 or int.from_bytes(h[24:32], "little") != frames: bad += 1
+        except OSError: missing += 1
+    print("takes whose file is missing:", missing, " unfinished or not matching the database:", bad)
+    tmp = "%s/tmp" % d
+    if os.path.isdir(tmp): print("unfinished takes in tmp:", len(os.listdir(tmp)))
 except Exception as e:
     print("could not read the session database:", e)
 PY

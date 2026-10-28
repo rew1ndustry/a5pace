@@ -8,7 +8,9 @@
 #include <time.h>
 #include "sqlite3.h"
 #include "aspstore.h"
-#include "flacio.h"
+#include "codec.h"
+#include "takefile.h"
+#include "plat.h"
 #include "schema_sql.h"
 
 struct AspStore
@@ -17,6 +19,8 @@ struct AspStore
   char dir[1024];
   char id[65];
   int readonly;
+  unsigned char artist[ASP_ARTIST];      /* who is recording here: takes this store writes carry it */
+  char artist_hex[2 * ASP_ARTIST + 1];
   };
 
 static void seterr( char *err, const char *what, const char *more )
@@ -39,6 +43,47 @@ static int mkdir_p( const char *path )
 
 static double ms_now( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
+/* the artist: 128 random bits, made the first time aspace runs and kept in $XDG_CONFIG_HOME/aspace/artist (or
+   ~/.config/aspace/artist). without create, none made: -1 if there is not one yet */
+int asp_artist_local( unsigned char id[ASP_ARTIST], int create )
+  {
+  char dir[1024], path[1100], line[64];
+  const char *x = getenv( "XDG_CONFIG_HOME" ), *h = getenv( "HOME" );
+  if( x && *x ) snprintf( dir, sizeof dir, "%s/aspace", x ); else if( h && *h ) snprintf( dir, sizeof dir, "%s/.config/aspace", h ); else return -1;
+  snprintf( path, sizeof path, "%s/artist", dir );
+  FILE *f = fopen( path, "r" );
+  int got = 0;
+  if( f )
+    {
+    if( fgets( line, sizeof line, f ) && strlen( line ) >= 2 * ASP_ARTIST )
+      {
+      got = 1;
+      for( int i = 0; i < ASP_ARTIST && got; i++ )
+        { unsigned v; if( sscanf( line + 2 * i, "%2x", &v ) != 1 ) got = 0; else id[i] = (unsigned char)v; }
+      }
+    fclose( f );
+    }
+  if( ! got && create )
+    {
+    FILE *u = fopen( "/dev/urandom", "rb" );
+    if( ! u || fread( id, 1, ASP_ARTIST, u ) != ASP_ARTIST ) { if( u ) fclose( u ); return -1; }
+    fclose( u );
+    mkdir_p( dir );
+    if( ! ( f = fopen( path, "w" ) ) ) return -1;
+    for( int i = 0; i < ASP_ARTIST; i++ ) fprintf( f, "%02x", id[i] );
+    fprintf( f, "\n" );
+    fclose( f );
+    got = 1;
+    }
+  return got ? 0 : -1;
+  }
+
+static void load_artist( AspStore *s, int create )
+  {
+  asp_artist_local( s->artist, create );                 /* zero until there is one */
+  for( int i = 0; i < ASP_ARTIST; i++ ) sprintf( s->artist_hex + 2 * i, "%02x", s->artist[i] );
+  }
+
 static void fsync_path( const char *path )
   {
   int fd = open( path, O_RDONLY );
@@ -55,6 +100,7 @@ static AspStore *opendb( const char *dir, int flags, char *err )
   if( sqlite3_open_v2( path, &s->db, flags, NULL ) != SQLITE_OK )
     { seterr( err, "cannot open", sqlite3_errmsg( s->db ) ); sqlite3_close( s->db ); free( s ); return NULL; }
   sqlite3_busy_timeout( s->db, 5000 );
+  load_artist( s, ! s->readonly );
   return s;
   }
 
@@ -69,7 +115,7 @@ AspStore *asp_create( const char *dir, const char *descriptor_json, char err[ASP
     snprintf( sub, sizeof sub, "%s/session.db", dir );
     if( ! stat( sub, &st ) ) { seterr( err, "session already exists", dir ); return NULL; }
     }
-  snprintf( sub, sizeof sub, "%s/blobs", dir );  if( mkdir_p( sub ) ) { seterr( err, "mkdir", sub ); return NULL; }
+  snprintf( sub, sizeof sub, "%s/tmp", dir );  if( mkdir_p( sub ) ) { seterr( err, "mkdir", sub ); return NULL; }
   snprintf( sub, sizeof sub, "%s/cache", dir );  mkdir_p( sub );
   AspStore *s = opendb( dir, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, err );
   if( ! s ) return NULL;
@@ -78,7 +124,7 @@ AspStore *asp_create( const char *dir, const char *descriptor_json, char err[ASP
     { seterr( err, "schema", msg ); sqlite3_free( msg ); asp_close( s ); return NULL; }
   asp_sha256_buf( descriptor_json, strlen( descriptor_json ), s->id );
   sqlite3_stmt *q;
-  sqlite3_prepare_v2( s->db, "insert into session values(?,?,1,?)", -1, &q, NULL );
+  sqlite3_prepare_v2( s->db, "insert into session values(?,?,2,?)", -1, &q, NULL );
   sqlite3_bind_text( q, 1, s->id, -1, SQLITE_STATIC );
   sqlite3_bind_text( q, 2, descriptor_json, -1, SQLITE_STATIC );
   sqlite3_bind_double( q, 3, now() );
@@ -99,6 +145,10 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
     { seterr( err, "not a session", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
   snprintf( s->id, sizeof s->id, "%s", (const char *)sqlite3_column_text( q, 0 ) );
   sqlite3_finalize( q );
+  if( sqlite3_prepare_v2( s->db, "select schema_version from session limit 1", -1, &q, NULL ) != SQLITE_OK
+      || sqlite3_step( q ) != SQLITE_ROW || sqlite3_column_int( q, 0 ) != 2 )
+    { seterr( err, "a session of an older aspace (takes are kept in another way now)", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
+  sqlite3_finalize( q );
   return s;
   }
 
@@ -106,6 +156,8 @@ void asp_close( AspStore *s )
   { if( s ) { sqlite3_close( s->db ); free( s ); } }
 const char *asp_session_id( AspStore *s ) { return s->id; }
 const char *asp_dir( AspStore *s ) { return s->dir; }
+const char *asp_artist( AspStore *s ) { return s->artist_hex; }
+const unsigned char *asp_artist_id( AspStore *s ) { return s->artist; }
 
 int64_t asp_log( AspStore *s, const char *actor, const char *type, const char *args_json, int64_t tick )
   {
@@ -132,13 +184,13 @@ int64_t asp_log_last( AspStore *s )
   return v;
   }
 
-#define TAKE_COLS "id,iter,off,blob_sha,frames,rate,channels,bits,status"
+#define TAKE_COLS "id,iter,off,artist,frames,rate,channels,bits,status"
 static void take_row( sqlite3_stmt *q, AspTake *t )
   {
   t->id = sqlite3_column_int64( q, 0 );
   t->iter = sqlite3_column_int64( q, 1 );
   t->off = sqlite3_column_int64( q, 2 );
-  snprintf( t->sha, sizeof t->sha, "%s", sqlite3_column_text( q, 3 ) );
+  snprintf( t->artist, sizeof t->artist, "%s", sqlite3_column_text( q, 3 ) );
   t->frames = sqlite3_column_int64( q, 4 );
   t->rate = sqlite3_column_int( q, 5 );
   t->channels = sqlite3_column_int( q, 6 );
@@ -161,23 +213,44 @@ int asp_take_find( AspStore *s, int64_t iter, int64_t off, AspTake *out )
   {
   sqlite3_stmt *q;
   int rc = -1;
-  sqlite3_prepare_v2( s->db, "select " TAKE_COLS " from takes where iter=? and off=?", -1, &q, NULL );
-  sqlite3_bind_int64( q, 1, iter );
-  sqlite3_bind_int64( q, 2, off );
+  sqlite3_prepare_v2( s->db, "select " TAKE_COLS " from takes where artist=? and iter=? and off=?", -1, &q, NULL );
+  sqlite3_bind_text( q, 1, s->artist_hex, -1, SQLITE_STATIC );
+  sqlite3_bind_int64( q, 2, iter );
+  sqlite3_bind_int64( q, 3, off );
   if( sqlite3_step( q ) == SQLITE_ROW ) { take_row( q, out ); rc = 0; }
   sqlite3_finalize( q );
   return rc;
   }
 
+/* takes.<first 12 of the artist>/<iter>/<off>.a5t: the folder names the artist, the file name has no prefix; the header has all of it */
 int asp_take_path( AspStore *s, const AspTake *t, char *buf, size_t n )
-  { return snprintf( buf, n, "%s/blobs/%.2s/%s.flac", s->dir, t->sha, t->sha ) < (int)n ? 0 : -1; }
+  { return snprintf( buf, n, "%s/takes.%.12s/%lld/%lld.a5t", s->dir, t->artist, (long long)t->iter, (long long)t->off ) < (int)n ? 0 : -1; }
+
+static int to_d32( const int32_t *pcm, unsigned frames, int ch, void *u )
+  {
+  FILE *f = u;
+  unsigned char b[4 * 4096];
+  size_t total = (size_t)frames * ch, n = 0;
+  while( n < total )
+    {
+    size_t k = total - n < 4096 ? total - n : 4096;
+    for( size_t i = 0; i < k; i++ ) asp_st32( b + 4 * i, (uint32_t)pcm[n + i] );        /* little endian on disk whatever the host */
+    if( fwrite( b, 4, k, f ) != k ) return -1;
+    n += k;
+    }
+  return 0;
+  }
 
 int asp_take_export_d32( AspStore *s, int64_t id, const char *out_path )
   {
   AspTake t;
   char p[1200];
   if( asp_take_get( s, id, &t ) || asp_take_path( s, &t, p, sizeof p ) ) return -1;
-  return asp_flac_decode_file( p, out_path );
+  FILE *f = strcmp( out_path, "-" ) ? fopen( out_path, "wb" ) : stdout;
+  if( ! f ) return -1;
+  int rc = asp_take_frames( p, -1, to_d32, f );
+  if( f == stdout ) fflush( stdout ); else if( fclose( f ) ) rc = -1;
+  return rc;
   }
 
 int64_t asp_take_set_state( AspStore *s, int64_t id, const char *state_json, const char *actor, int64_t tick )
@@ -200,45 +273,37 @@ int64_t asp_take_set_state( AspStore *s, int64_t id, const char *state_json, con
 int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, const char *status,
                     const char *state_json, int64_t tick, AspTake *out )
   {
-  char dst[1200], sha[65], dir[1200];
-  unsigned char md5[16];
-  uint64_t frames;
-  int ch, rt, bits;
-  AspTake dummy;
+  char dst[1200], dir[1200], args[200], st[200];
+  AspHdr h;
+  AspTake dummy, t;
   if( s->readonly ) return -1;
   if( ! out ) out = &dummy;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;           /* takes are never overwritten */
-  double t0 = ms_now(), tm[5];
-  fsync_path( part );
+  double t0 = ms_now(), tm[3];
+  if( asp_take_header( part, &h ) || ! h.finished || memcmp( h.artist, s->artist, ASP_ARTIST ) ) return -1;
+  memset( &t, 0, sizeof t );
+  t.iter = iter; t.off = off; snprintf( t.artist, sizeof t.artist, "%s", s->artist_hex );
+  if( asp_take_path( s, &t, dst, sizeof dst ) ) return -1;
+  snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
+  if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( part, dst ) ) return -1;       /* the part was synced when it was closed */
   tm[0] = ms_now() - t0; t0 = ms_now();
-  if( asp_sha256_file( part, sha ) || asp_flac_info( part, md5, &frames, &ch, &rt, &bits ) ) return -1;
-  tm[1] = ms_now() - t0; t0 = ms_now();
-  snprintf( dir, sizeof dir, "%s/blobs/%.2s", s->dir, sha );
-  mkdir_p( dir );
-  snprintf( dst, sizeof dst, "%s/%s.flac", dir, sha );
-  if( ! access( dst, F_OK ) ) unlink( part );                        /* identical blob already held */
-  else if( rename( part, dst ) ) return -1;
-  tm[2] = ms_now() - t0; t0 = ms_now();
   fsync_path( dir );
-  tm[3] = ms_now() - t0; t0 = ms_now();
+  tm[1] = ms_now() - t0; t0 = ms_now();
 
-  char hex[33], args[200], st[200];
-  for( int i = 0; i < 16; i++ ) sprintf( hex + 2 * i, "%02x", md5[i] );
   if( run( s, "begin immediate" ) ) return -1;
   sqlite3_stmt *q;
   sqlite3_prepare_v2( s->db,
-    "insert into takes(iter,off,blob_sha,md5,frames,rate,channels,bits,status,t_start) values(?,?,?,?,?,?,?,?,?,?)",
+    "insert into takes(artist,iter,off,frames,rate,channels,bits,status,t_start) values(?,?,?,?,?,?,?,?,?)",
     -1, &q, NULL );
-  sqlite3_bind_int64( q, 1, iter );
-  sqlite3_bind_int64( q, 2, off );
-  sqlite3_bind_text( q, 3, sha, -1, SQLITE_STATIC );
-  sqlite3_bind_text( q, 4, hex, -1, SQLITE_STATIC );
-  sqlite3_bind_int64( q, 5, (int64_t)frames );
-  sqlite3_bind_int( q, 6, rt );
-  sqlite3_bind_int( q, 7, ch );
-  sqlite3_bind_int( q, 8, bits );
-  sqlite3_bind_text( q, 9, status, -1, SQLITE_STATIC );
-  sqlite3_bind_double( q, 10, now() );
+  sqlite3_bind_text( q, 1, s->artist_hex, -1, SQLITE_STATIC );
+  sqlite3_bind_int64( q, 2, iter );
+  sqlite3_bind_int64( q, 3, off );
+  sqlite3_bind_int64( q, 4, (int64_t)h.frames );
+  sqlite3_bind_int( q, 5, h.rate );
+  sqlite3_bind_int( q, 6, h.channels );
+  sqlite3_bind_int( q, 7, h.bits );
+  sqlite3_bind_text( q, 8, status, -1, SQLITE_STATIC );
+  sqlite3_bind_double( q, 9, now() );
   int rc = sqlite3_step( q );
   sqlite3_finalize( q );
   if( rc != SQLITE_DONE ) { run( s, "rollback" ); return -1; }
@@ -248,10 +313,10 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
   asp_take_set_state( s, id, state_json, "aspace", tick );
   if( run( s, "commit" ) ) { run( s, "rollback" ); return -1; }
-  tm[4] = ms_now() - t0;
-  if( tm[0] + tm[1] + tm[2] + tm[3] + tm[4] > 20 )                    /* where a slow adopt went, ms: fsync file, sha+info, rename, fsync dir, sql */
+  tm[2] = ms_now() - t0;
+  if( tm[0] + tm[1] + tm[2] > 20 )                                    /* where a slow adopt went, ms */
     {
-    snprintf( args, sizeof args, "{\"fsync_file\":%.0f,\"sha_info\":%.0f,\"rename\":%.0f,\"fsync_dir\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2], tm[3], tm[4] );
+    snprintf( args, sizeof args, "{\"rename\":%.0f,\"fsync_dir\":%.0f,\"sql\":%.0f}", tm[0], tm[1], tm[2] );
     asp_log( s, "aspace", "adopt_slow", args, tick );
     }
   return asp_take_get( s, id, out );
@@ -265,8 +330,20 @@ int asp_take_add_d32( AspStore *s, int64_t iter, int64_t off, const char *d32_pa
   if( s->readonly ) return -1;
   if( ! asp_take_find( s, iter, off, &dummy ) ) return -1;
   if( asp_tmp_path( s, part, sizeof part ) ) return -1;          /* one counter for every temporary name, so it can never be the input's */
-  if( asp_flac_encode_file( d32_path, part, channels, rate ) ) { unlink( part ); return -1; }
-  if( asp_take_adopt( s, iter, off, part, status, NULL, tick, out ) ) { unlink( part ); return -1; }
+  FILE *f = fopen( d32_path, "rb" );
+  AspTakeW *w = f ? asp_tw_open( part, s->artist, channels, rate, 0 ) : NULL;
+  if( ! w ) { if( f ) fclose( f ); return -1; }
+  int32_t buf[4096 * ASP_CODEC_MAXCH];
+  unsigned char raw[sizeof buf];
+  size_t got;
+  int rc = 0;
+  while( ! rc && ( got = fread( raw, 4 * (size_t)channels, 4096, f ) ) > 0 )
+    {
+    for( size_t i = 0; i < got * channels; i++ ) buf[i] = (int32_t)asp_ld32( raw + 4 * i );   /* d32 is little endian on disk */
+    rc = asp_tw_put( w, buf, (unsigned)got );
+    }
+  fclose( f );
+  if( asp_tw_close( w, 0, NULL ) || rc || asp_take_adopt( s, iter, off, part, status, NULL, tick, out ) ) { unlink( part ); return -1; }
   return 0;
   }
 
@@ -274,7 +351,7 @@ int asp_tmp_path( AspStore *s, char *buf, size_t n )
   {
   static int serial;
   char dir[1200];
-  snprintf( dir, sizeof dir, "%s/blobs/tmp", s->dir );
+  snprintf( dir, sizeof dir, "%s/tmp", s->dir );
   mkdir_p( dir );
   return snprintf( buf, n, "%s/%d_%d.part", dir, (int)getpid(), serial++ ) < (int)n ? 0 : -1;
   }

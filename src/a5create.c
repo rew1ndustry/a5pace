@@ -85,7 +85,7 @@ int main( int argc, char **argv )
     int lev = sch == 1 ? 1 : 0;
     snprintf( st, sizeof st, "{\"status\":\"mix\",\"lev\":[\"%d\",\"%d\"],\"flip\":0,\"mono\":%d,\"src\":0,\"len\":%lld,\"gone\":0,\"peak\":%lld,\"generated\":\"file\"}", lev, lev, sch == 1, (long long)frames, (long long)pk );
     asp_take_set_state( s, k.id, st, "a5create", 0 );
-    asp_move_take( t, s, k.id, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev, lev, 0 } );
+    asp_move_take( t, s, k.id, -1, 0, -1, (AspPlace)ASP_PLACE_OFF, (AspPlace){ lev, lev, 0 } );
     printf( "  %s is the loop: %s, take %lld\n", from, sch == 1 ? "mono" : "stereo", (long long)k.id );
     free( src );
     }

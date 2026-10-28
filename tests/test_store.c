@@ -26,6 +26,7 @@ int main( void )
   {
   char dir[] = "/tmp/aspstore_testXXXXXX", p[256], e[ASP_ERR];
   mkdtemp( dir );
+  { char x[300]; snprintf( x, sizeof x, "%s/cfg", dir ); setenv( "XDG_CONFIG_HOME", x, 1 ); }       /* the artist is made in the test, not in the user's config */
   snprintf( p, sizeof p, "%s/s", dir );
   AspStore *s = asp_create( p, "{\"name\":\"t\"}", e );
   CHECK( s );
@@ -37,16 +38,18 @@ int main( void )
   write_d32( pcm, 50000, 1 );
   AspTake t1, t2, tmp;
   CHECK( asp_take_add_d32( s, 5, 18, pcm, 2, 48000, "mix", 100, &t1 ) == 0 );
-  CHECK( t1.frames == 50000 && t1.bits == 32 && t1.channels == 2 && strlen( t1.sha ) == 64 );
+  CHECK( t1.frames == 50000 && t1.bits == 32 && t1.channels == 2 && strlen( t1.artist ) == 32 && ! strcmp( t1.artist, asp_artist( s ) ) );
   CHECK( asp_take_add_d32( s, 5, 18, pcm, 2, 48000, "mix", 101, &tmp ) != 0 );   /* never overwritten */
   write_d32( pcm, 1234, 2 );
   CHECK( asp_take_add_d32( s, 5, 19, pcm, 2, 48000, "mix", 102, &t2 ) == 0 );
   CHECK( asp_take_find( s, 5, 19, &tmp ) == 0 && tmp.id == t2.id );
 
-  char sha[65];
-  char bp[300];
+  char sha[65], bp[300], want[300];
   CHECK( asp_take_path( s, &t1, bp, sizeof bp ) == 0 );
-  CHECK( asp_sha256_file( bp, sha ) == 0 && ! strcmp( sha, t1.sha ) );            /* blob named by its hash */
+  snprintf( want, sizeof want, "%s/takes.%.12s/5/18.a5t", p, asp_artist( s ) );
+  CHECK( ! strcmp( bp, want ) && access( bp, F_OK ) == 0 );                        /* named by who, which iteration, where */
+  { AspHdr h; CHECK( asp_take_header( bp, &h ) == 0 && h.finished && h.frames == 50000 && ! memcmp( h.artist, asp_artist_id( s ), ASP_ARTIST ) ); }
+  { char f[300]; snprintf( f, sizeof f, "%s/cfg/aspace/artist", dir ); CHECK( access( f, F_OK ) == 0 ); }   /* made on first use, kept */
   asp_sha256_buf( "abc", 3, sha );
   CHECK( ! strcmp( sha, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ) );
 

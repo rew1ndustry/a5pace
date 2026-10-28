@@ -13,8 +13,8 @@ python3 -I - $t/m1 $B <<'PY' || fail=1
 import sqlite3, subprocess, sys, numpy as np
 d,B=sys.argv[1],sys.argv[2]
 db=sqlite3.connect(d+"/session.db")
-sha,iter_=db.execute("select blob_sha,iter from takes").fetchone()
-a=np.frombuffer(subprocess.run([B+"/aspflac","dec",f"{d}/blobs/{sha[:2]}/{sha}.flac","-"],capture_output=True).stdout,dtype='<i4').astype(float)
+id_,iter_=db.execute("select id,iter from takes").fetchone()
+a=np.frombuffer(subprocess.run([B+"/aspstore",d,"export",str(id_),"-"],capture_output=True).stdout,dtype='<i4').astype(float)
 ok=True
 if len(a)!=384000: print("FAIL click length",len(a)); ok=False
 on=[i for i in range(1,len(a)) if abs(a[i])>1e7 and np.max(abs(a[max(0,i-300):i]))<=1e7]
@@ -55,8 +55,8 @@ python3 -I - $t/f1 $B <<'PY' || fail=1
 import sqlite3, subprocess, sys, numpy as np, math
 d,B=sys.argv[1],sys.argv[2]
 db=sqlite3.connect(d+"/session.db")
-sha,ch,fr=db.execute("select blob_sha,channels,frames from takes").fetchone()
-a=np.frombuffer(subprocess.run([B+"/aspflac","dec",f"{d}/blobs/{sha[:2]}/{sha}.flac","-"],capture_output=True).stdout,dtype='<i4')
+id_,ch,fr=db.execute("select id,channels,frames from takes").fetchone()
+a=np.frombuffer(subprocess.run([B+"/aspstore",d,"export",str(id_),"-"],capture_output=True).stdout,dtype='<i4')
 exp=np.array([int(12000*math.sin(2*math.pi*440*i/48000))<<16 for i in range(120000)],dtype='<i4')
 sys.exit(0 if ch==1 and fr==120000 and (a==exp).all() else 1)
 PY

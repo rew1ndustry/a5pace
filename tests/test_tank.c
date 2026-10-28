@@ -44,6 +44,7 @@ int main( void )
   {
   char dir[] = "/tmp/asptank_testXXXXXX", p[300], e[ASP_ERR], cmd[600];
   if( ! mkdtemp( dir ) ) return 1;
+  { char x[300]; snprintf( x, sizeof x, "%s/cfg", dir ); setenv( "XDG_CONFIG_HOME", x, 1 ); }
   snprintf( p, sizeof p, "%s/s", dir );
   AspStore *s = asp_create( p, "{\"name\":\"t\"}", e );
   snprintf( p, sizeof p, "%s/loop.d64", dir );

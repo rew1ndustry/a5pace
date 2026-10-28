@@ -29,6 +29,7 @@ static void rig_open( Rig *r, const AspCoreCfg *cfg, int seconds )
   {
   char sd[300], tp[300], e[ASP_ERR];
   strcpy( r->dir, "/tmp/aspmix_testXXXXXX" ); if( ! mkdtemp( r->dir ) ) exit( 1 );
+  { char x[300]; snprintf( x, sizeof x, "%s/cfg", r->dir ); setenv( "XDG_CONFIG_HOME", x, 1 ); }
   snprintf( sd, sizeof sd, "%s/s", r->dir ); snprintf( tp, sizeof tp, "%s/loop.d64", r->dir );
   r->s = asp_create( sd, "{\"name\":\"mix\"}", e );
   r->t = asp_tank_create( tp, LOOP, 48000, e, sizeof e );
@@ -79,7 +80,8 @@ int main( void )
   CHECK( s.n == 2 );
   AspTake k0, k1;
   CHECK( asp_take_get( r.s, s.id[0], &k0 ) == 0 && asp_take_get( r.s, s.id[1], &k1 ) == 0 );
-  CHECK( k0.channels == 1 && k1.channels == 1 );
+  /* a mono take is stored with both channels as heard; mono is what the state says */
+  CHECK( k0.channels == 2 && k1.channels == 2 );
   CHECK( s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 && s.st[1].mono && s.st[1].l == 1 );
   CHECK( strstr( "x", "x" ) );
   AspCoreStatus st; asp_core_status( r.c, &st );
@@ -141,7 +143,7 @@ int main( void )
     while( nextb < 35 ) { int fr = 0; for( int k = 0; k < 16; k++ ) if( ! r.sim.b[k].on ) fr++; if( ! fr ) break; sim_burst( &r.sim, b0 + (int64_t)nextb * 28800, 1, 0.1 ); nextb++; nb++; }
     }
   States s; states( &r, &s ); AspTake tk; AspCoreStatus st; asp_core_status( r.c, &st );
-  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 1 && s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 );
+  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 2 && s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 );
   CHECK( count_type( r.dir, "new" ) == 1 );                           /* the left-only noise opened nothing */
   CHECK( st.jobs == 0 );                                              /* nothing left to convert */
   }
@@ -154,7 +156,7 @@ int main( void )
   base = ( r.sim.tickn + 120 ) * ASP_TICK + 500;
   sim_burst( &r.sim, base, 2, 0.1 );
   sim_until( &r.sim, base + LOOP + 48000 * 3 );
-  { States s; states( &r, &s ); AspTake k; CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &k ) == 0 && k.channels == 1 && s.st[0].mono ); CHECK( matches( &r ) ); }
+  { States s; states( &r, &s ); AspTake k; CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &k ) == 0 && k.channels == 2 && s.st[0].mono ); CHECK( matches( &r ) ); }
   rig_close( &r );
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 40 );

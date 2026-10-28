@@ -8,11 +8,10 @@
 #include "aspcore.h"
 #include "aspengine.h"
 #include "gate.h"
-#include "flacio.h"
+#include "takefile.h"
 #include "settings.h"
 
 #define RATE        48000
-#define LEVEL_CLIP  0x7FFFFF00LL
 #define HANG        10            /* ticks of silence a take keeps after the last sound */
 #define BUDGET      48000         /* frames of take a tick may spend on level moves */
 
@@ -48,11 +47,10 @@ struct AspCore
   int      have_prev;
 
   /* the take in progress */
-  AspFlacEnc *enc;
+  AspTakeW *enc;
   char     part[1200];
   int64_t  t_iter, t_sec, t_off, t_frames;
-  int      t_wrapped, t_damaged, shh, t_ident;
-  int64_t  t_peak[2], t_clips[2], t_act[2];
+  int      t_wrapped, t_damaged, shh;
 
   /* takes in the loop, which the automix works on */
   LoopTake *lt; int nlt, caplt;
@@ -155,7 +153,7 @@ static void load_cb( int64_t id, const char *json, void *u )
   LoopTake *t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
   t->now = t->base = (AspPlace){ st.l, st.r, st.flip, st.gdb, st.pan, st.mixed };
-  t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
+  t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->src = st.src; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
   if( t->gen )                                             /* the marker has to survive the state being rewritten */
     {
     const char *g = strstr( json, "\"generated\":\"" ), *y = strstr( json, "\"style\":\"" );
@@ -163,7 +161,7 @@ static void load_cb( int64_t id, const char *json, void *u )
     if( gl > 12 ) gl = 12; if( yl > 24 ) yl = 24;
     snprintf( t->gtail, sizeof t->gtail, ",\"generated\":\"%.*s\"%s%.*s%s", gl, g ? g + 13 : "", yl ? ",\"style\":\"" : "", yl, y ? y + 9 : "", yl ? "\"" : "" );
     }
-  if( t->in && t->peak < 0 && asp_take_peak( c->store, id, &t->peak ) ) t->peak = 0;
+  if( t->in && t->peak < 0 && asp_take_peak( c->store, id, t->mono ? t->src : -1, &t->peak ) ) t->peak = 0;
   }
 
 void asp_core_defaults( AspCoreCfg *c )
@@ -283,7 +281,8 @@ static void queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int
     break;
     }
   if( asp_place_eq( f, g ) ) return;
-  mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, g ), t->id );
+  int v = t->mono ? t->src : -1;                          /* a mono take is one channel of what is stored */
+  mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, v, g, v ), t->id );
   }
 
 /* --- automix --- */
@@ -333,14 +332,15 @@ void asp_core_settings( AspCore *c, const char *profile, const char *text )
 const char *asp_core_profile( const AspCore *c ) { return c->profile; }
 const char *asp_core_settings_text( const AspCore *c ) { return c->settings; }
 
-/* a generated track for a space that is running (a5click, a5import): the flac was written under blobs/tmp. it is kept as a
+/* a generated track for a space that is running (a5click, a5import): the take was written under tmp/. it is kept as a
    take of its own, in the 90000 series (90001, 90002 ... : the next one free, the old negative iterations counting as
    90000 - n); in puts it into the loop as well (behind the head, like any other change). a click is the loop long and mono */
 int64_t asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in )
   {
-  char path[1300], st[500]; AspTake k; uint64_t fr = 0; int ch = 0, rate = 0, bits = 0, click = ! strcmp( kind, "click" );
-  snprintf( path, sizeof path, "%s/blobs/tmp/%s", asp_dir( c->store ), part );
-  if( strchr( part, '/' ) || asp_flac_info( path, NULL, &fr, &ch, &rate, &bits ) || ch < 1 || ch > 2 || rate != RATE ) return -1;
+  char path[1300], st[500]; AspTake k; AspHdr h; uint64_t fr; int ch, click = ! strcmp( kind, "click" );
+  snprintf( path, sizeof path, "%s/tmp/%s", asp_dir( c->store ), part );
+  if( strchr( part, '/' ) || asp_take_header( path, &h ) || ! h.finished || h.channels < 1 || h.channels > 2 || h.rate != RATE ) return -1;
+  fr = h.frames; ch = h.channels;
   if( click && ( (int64_t)fr != c->size || ch != 1 ) ) return -1;
   if( *iter <= 0 )
     for( *iter = 90001; ; (*iter)++ )
@@ -355,7 +355,7 @@ int64_t asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const cha
   snprintf( lt.gtail, sizeof lt.gtail, ",\"generated\":\"%.8s\"%s%.20s%s", kind, click ? ",\"style\":\"" : "", click ? style : "", click ? "\"" : "" );
   state_json( &lt, in ? "mix" : "off", st, sizeof st );
   if( asp_take_adopt( c->store, *iter, 0, path, in ? "mix" : "off", st, c->tick, &k ) ) return -1;
-  if( asp_take_peak( c->store, k.id, &lt.peak ) ) lt.peak = 0;
+  if( asp_take_peak( c->store, k.id, -1, &lt.peak ) ) lt.peak = 0;
   lt.id = k.id;
   LoopTake *t = lt_add( c ); *t = lt;
   if( click ) logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
@@ -552,81 +552,59 @@ static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
 /* frames of a take, from its start, counted so that frame 0 is the start of its second of the loop */
 static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
   {
-  int rc = 0;
-  if( c->t_fix >= 0 )                              /* one channel, recorded as mono and put in the middle as it comes: no stereo, no conversion */
+  int rc = asp_tw_put( c->enc, pcm, (unsigned)n );          /* both channels, as they came: what was heard is kept */
+  if( c->t_fix >= 0 )                                       /* one channel, put in the middle as it comes: no stereo, no conversion */
     {
-    int32_t m[4096], d[2 * 4096];
-    for( int64_t i = 0; i < n; i += 4096 )
+    int32_t d[2 * 4096];
+    for( int64_t i = 0; i < n && c->t_feed; i += 4096 )
       {
       int64_t k = n - i < 4096 ? n - i : 4096;
-      for( int64_t j = 0; j < k; j++ ) d[2*j] = d[2*j+1] = m[j] = pcm[2 * ( i + j ) + c->t_fix];
-      rc |= asp_flac_enc_write( c->enc, m, (unsigned)k );
-      if( c->t_feed ) asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames + i, d, k, ASP_LEV_OFF, ASP_LEV_OFF, c->cfg.mono_lev, c->cfg.mono_lev );
+      for( int64_t j = 0; j < k; j++ ) d[2*j] = d[2*j+1] = pcm[2 * ( i + j ) + c->t_fix];
+      asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames + i, d, k, ASP_LEV_OFF, ASP_LEV_OFF, c->cfg.mono_lev, c->cfg.mono_lev );
       }
-    c->t_frames += n;
-    return rc;
     }
-  for( int64_t i = 0; i < n; i += 4096 )
-    {
-    int64_t k = n - i < 4096 ? n - i : 4096;
-    rc |= asp_flac_enc_write( c->enc, pcm + 2 * i, (unsigned)k );
-    }
-  for( int64_t i = 0; i < n && c->t_ident; i++ ) if( pcm[2*i] != pcm[2*i+1] ) c->t_ident = 0;
-  take_feed( c, pcm, n, 0 );
+  else take_feed( c, pcm, n, 0 );
   c->t_frames += n;
   return rc;
   }
 
-static void level_scan( AspCore *c, const int32_t *pcm, int64_t n )
-  {
-  for( int64_t i = 0; i < 2 * n; i++ )
-    {
-    int64_t v = llabs( (int64_t)pcm[i] );
-    if( v > c->t_peak[i & 1] ) c->t_peak[i & 1] = v;
-    if( v >= LEVEL_CLIP ) ++c->t_clips[i & 1];
-    }
-  }
+/* which of the two inputs the gate hears now, as bits */
+static unsigned heard( AspCore *c ) { return ( asp_gate_active( c->gate, 0 ) ? 1u : 0u ) | ( asp_gate_active( c->gate, 1 ) ? 2u : 0u ); }
 
 static double level_db( int64_t p ) { return p ? 20 * log10( p / 2147483648.0 ) : -200; }
 
-/* the take is over: decide mono and where it sits, store it, and bring the loop to match */
+/* the take is over: decide mono and where it sits, store it, and bring the loop to match. nothing here reads the take:
+   what the header counted while it was recorded is enough */
 static void take_end_( AspCore *c, const int32_t *last )
   {
   AspTake tk;
-  if( last ) { level_scan( c, last, ASP_TICK ); take_put( c, last, ASP_TICK ); }
-  int bad = asp_flac_enc_close( c->enc );
+  AspHdr h;
+  if( last ) take_put( c, last, ASP_TICK );
+  int bad = asp_tw_close( c->enc, c->t_damaged, &h );
   c->enc = NULL;
+  uint32_t pk = h.peak[0] > h.peak[1] ? h.peak[0] : h.peak[1];
 
   /* not worth keeping: a bump (told the instrument's lowest note, most of the take lies below it), or a take that never
      reaches the quietest level worth keeping. it is not stored, and it is taken out of the loop again */
   double share = asp_gate_event_share( c->gate, 1 );
-  double pkdb = level_db( c->t_peak[0] > c->t_peak[1] ? c->t_peak[0] : c->t_peak[1] );
+  double pkdb = level_db( pk );
   int is_bump = c->cfg.lowcut > 30 && asp_gate_lowcut( c->gate ) > 30 && share < asp_gate_dominance( c->gate );
   int is_quiet = c->cfg.minpeak < 0 && pkdb < c->cfg.minpeak;
   if( ! bad && ( is_bump || is_quiet ) )
     {
     int32_t *sp = NULL; int64_t n2 = 0; int ch2 = 0;
-    if( c->t_feed && asp_pcm_load( c->part, &sp, &n2, &ch2 ) == 0 && ch2 == ( c->t_fix >= 0 ? 1 : 2 ) )   /* it was fed into the loop as it came: take it out again */
+    if( c->t_feed && asp_take_load( c->part, c->t_fix, &sp, &n2, &ch2 ) == 0 )   /* it was fed into the loop as it came: take it out again */
       mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, sp, n2, ch2, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, malloc( 4 ), 0, ch2, ASP_PLACE_OFF ), -1 );
     else free( sp );
     unlink( c->part );
     logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
-           (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, is_bump ? "bump" : "quiet", level_db( c->t_peak[0] ), level_db( c->t_peak[1] ) );
+           (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, is_bump ? "bump" : "quiet", level_db( h.peak[0] ), level_db( h.peak[1] ) );
     c->gone = c->tick;
     return;
     }
 
-  /* mono: one channel never rang, or both are the same */
-  int mono = 0, src = 0;
-  if( c->t_fix >= 0 ) { mono = 1; src = c->t_fix; }          /* told which channel: mono from the start */
-  else if( c->t_in == 3 ) mono = 0;                          /* told it is stereo */
-  else if( c->cfg.mono_detect && ! c->t_damaged )
-    {
-    int64_t a = c->t_act[0], b = c->t_act[1];
-    if( c->t_ident ) { mono = 1; src = 0; }
-    else if( a > 0 && b * 20 <= a ) { mono = 1; src = 0; }
-    else if( b > 0 && a * 20 <= b ) { mono = 1; src = 1; }
-    }
+  int src = asp_hdr_mono( &h, c->cfg.mono_detect ), mono = src >= 0;
+  if( ! mono ) src = 0;
   int swap = c->cfg.automix.mode == ASP_AUTOMIX_SWAP;
   if( swap && c->swap_n++ && ( c->cfg.automix.each || (int64_t)c->t_iter != c->swap_iter ) ) c->swap_flip = ! c->swap_flip;   /* the first take goes left / unflipped */
   c->swap_iter = c->t_iter;
@@ -638,61 +616,32 @@ static void take_end_( AspCore *c, const int32_t *last )
 
   LoopTake lt = { 0 };
   lt.iter = c->t_iter; lt.off = c->t_off; lt.len = c->t_frames; lt.mono = mono; lt.src = src;
-  lt.peak = c->t_peak[0] > c->t_peak[1] ? c->t_peak[0] : c->t_peak[1];
+  lt.peak = mono ? h.peak[src] : pk;
   lt.now = lt.base = fin; lt.in = c->t_feed;
   char st[300];
   state_json( &lt, lt.in ? "mix" : "off", st, sizeof st );
 
-  int32_t *stereo = NULL; int64_t sn = 0; int sch = 0;
-  char part2[1200]; part2[0] = 0;
-  if( ! bad && mono && c->t_fix < 0 )                       /* keep the stereo for the move, store one channel */
-    {
-    if( asp_pcm_load( c->part, &stereo, &sn, &sch ) == 0 && sch == 2 && ! asp_tmp_path( c->store, part2, sizeof part2 ) )
-      {
-      AspFlacEnc *e = asp_flac_enc_open( part2, 1, RATE );
-      int32_t *m = malloc( (size_t)sn * 4 );
-      for( int64_t i = 0; i < sn; i++ ) m[i] = stereo[2*i+src];
-      for( int64_t i = 0; e && i < sn; i += 4096 ) asp_flac_enc_write( e, m + i, (unsigned)( sn - i < 4096 ? sn - i : 4096 ) );
-      free( m );
-      if( e && asp_flac_enc_close( e ) ) part2[0] = 0;
-      }
-    else part2[0] = 0;
-    if( ! part2[0] ) { mono = 0; lt.mono = 0; fin = live; lt.now = lt.base = fin; state_json( &lt, lt.in ? "mix" : "off", st, sizeof st ); free( stereo ); stereo = NULL; }
-    }
-
-  const char *use = mono && part2[0] ? part2 : c->part;
-  if( bad || asp_take_adopt( c->store, c->t_iter, c->t_off, use, lt.in ? "mix" : "off", st, c->tick, &tk ) )
+  if( bad || asp_take_adopt( c->store, c->t_iter, c->t_off, c->part, lt.in ? "mix" : "off", st, c->tick, &tk ) )
     {
     logf_( c, "error", "{\"what\":\"take not stored\",\"iter\":%lld,\"off\":%lld,\"part\":\"%s\"}",
-           (long long)c->t_iter, (long long)c->t_off, use );
-    free( stereo );
+           (long long)c->t_iter, (long long)c->t_off, c->part );
+    return;
     }
-  else
+  lt.id = tk.id;
+  LoopTake *t = lt_add( c );
+  *t = lt;
+  t->ready_pass = c->pass + 1;
+  if( c->t_feed )                                           /* the live feed heard it one way; the loop is to hear it as decided */
     {
-    if( use == part2 ) unlink( c->part );
-    lt.id = tk.id;
-    LoopTake *t = lt_add( c );
-    *t = lt;
-    t->ready_pass = c->pass + 1;
-    if( c->t_feed )
-      {
-      if( mono && stereo )                                  /* the live feed was stereo: swap it for the mono at its place */
-        {
-        int32_t *m = malloc( (size_t)sn * 4 );
-        for( int64_t i = 0; i < sn; i++ ) m[i] = stereo[2*i+src];
-        mv_add( c, asp_job_new( c->t_sec * RATE, 0, -1, stereo, sn, 2, live, m, sn, 1, fin ), -1 );
-        stereo = NULL;
-        }
-      else if( fin.l != live.l || fin.r != live.r || fin.flip != live.flip )
-        mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, fin ), tk.id );
-      }
-    free( stereo );
-    logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
-           (long long)tk.id, (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames,
-           level_db( c->t_peak[0] ), level_db( c->t_peak[1] ), (long long)c->t_clips[0], (long long)c->t_clips[1],
-           c->t_damaged, mono, src, fin.flip, c->t_feed );
-    automix_new( c, t );
+    int osrc = c->t_fix >= 0 ? c->t_fix : -1, nsrc = mono ? src : -1;
+    if( osrc != nsrc || fin.l != live.l || fin.r != live.r || fin.flip != live.flip )
+      mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, osrc, fin, nsrc ), tk.id );
     }
+  logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
+         (long long)tk.id, (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames,
+         level_db( h.peak[0] ), level_db( h.peak[1] ), (long long)h.clips[0], (long long)h.clips[1],
+         c->t_damaged, mono, src, fin.flip, c->t_feed );
+  automix_new( c, t );
   c->gone = c->tick;
   }
 
@@ -709,24 +658,21 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   if( asp_tmp_path( c->store, c->part, sizeof c->part ) ) return -1;
   c->t_in = c->cfg.input;
   c->t_fix = c->t_in == 1 ? 0 : c->t_in == 2 ? 1 : -1;
-  c->enc = asp_flac_enc_open( c->part, c->t_fix >= 0 ? 1 : 2, RATE );
+  c->enc = asp_tw_open( c->part, asp_artist_id( c->store ), 2, RATE, c->t_in );       /* both channels, whatever was told */
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
-  c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0; c->t_ident = 1;
+  c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0;
   c->t_feed = c->cfg.feed && c->cfg.automix.mode != ASP_AUTOMIX_KEEP;     /* keep: stored, not put into the loop */
-  memset( c->t_peak, 0, sizeof c->t_peak ); memset( c->t_clips, 0, sizeof c->t_clips ); memset( c->t_act, 0, sizeof c->t_act );
   {
   int32_t z[2 * 4096] = { 0 };                           /* frame 0 of a take is the start of its second */
   for( int64_t n = mod; n > 0; n -= 4096 )
-    { int64_t k = n < 4096 ? n : 4096; asp_flac_enc_write( c->enc, z, (unsigned)k ); c->t_frames += k; }
+    { int64_t k = n < 4096 ? n : 4096; asp_tw_put( c->enc, z, (unsigned)k ); c->t_frames += k; }
   }
   if( scan < 0 && c->have_prev )                         /* a pre-roll reaches back into the tick before */
     {
-    level_scan( c, c->prev + 2 * ( ASP_TICK + scan ), -scan );
     take_put( c, c->prev + 2 * ( ASP_TICK + scan ), -scan );
     scan = 0;
     }
-  level_scan( c, c->cur + 2 * scan, ASP_TICK - scan );
   take_put( c, c->cur + 2 * scan, ASP_TICK - scan );
   c->born = c->tick;
   logf_( c, "new", "{\"iter\":%lld,\"off\":%lld,\"wrapped\":%d}", (long long)c->t_iter, (long long)c->t_off, wrapped );
@@ -790,7 +736,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     if( ! c->gate_ready ) { asp_gate_reset( c->gate ); c->gate_ready = 1; logf_( c, "gate", "{\"msg\":\"learning\"}" ); }
     asp_gate_switch( c->gate, c->cur, c->have_prev ? c->prev : NULL, ASP_TICK, ! track || c->born + 1 >= c->tick );
     scan = asp_gate_scan( c->gate, c->cur, ASP_TICK );
-    if( track ) { if( asp_gate_active( c->gate, 0 ) ) c->t_act[0]++; if( asp_gate_active( c->gate, 1 ) ) c->t_act[1]++; }
+    if( track ) asp_tw_active( c->enc, heard( c ) );
     }
   else c->gate_ready = 0;
   lap( c, "gate", &t0 );
@@ -810,11 +756,11 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
 
   if( c->live && c->tick > c->hush && scan < ASP_TICK )
     {
-    if( track ) { level_scan( c, c->cur, ASP_TICK ); take_put( c, c->cur, ASP_TICK ); }
-    else if( ! take_new( c, off, scan, ( recpos + scan ) < 0 ) ) { c->newt = 1; if( asp_gate_active( c->gate, 0 ) ) c->t_act[0]++; if( asp_gate_active( c->gate, 1 ) ) c->t_act[1]++; }
+    if( track ) take_put( c, c->cur, ASP_TICK );
+    else if( ! take_new( c, off, scan, ( recpos + scan ) < 0 ) ) { c->newt = 1; asp_tw_active( c->enc, heard( c ) ); }
     c->shh = 0;
     }
-  else if( track && ++c->shh < HANG ) { level_scan( c, c->cur, ASP_TICK ); take_put( c, c->cur, ASP_TICK ); }
+  else if( track && ++c->shh < HANG ) take_put( c, c->cur, ASP_TICK );
   else if( track ) take_end( c, c->cur );
 
   lap( c, "take", &t0 );

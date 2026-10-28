@@ -34,7 +34,7 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `REVERT seq` | go back to a log point (only while SAFE); the loop is rebuilt from the store |
 | `EDGE drop\|starve N` | the edge reports lost samples: the take in progress is marked damaged and the hunt restarts |
 | `EVENT edge_x {json}` | an edge or shell tells the log something (a latency report) |
-| `CLICK ADD iter file style l r IN\|KEEP`, `CLICK CLEAR` | a5click's way into a running space (the flac is under blobs/tmp) |
+| `CLICK ADD iter file style l r IN\|KEEP`, `CLICK CLEAR` | a5click's way into a running space (the take is under tmp/) |
 | `SIM BURST ch amp [ticks]`, `SIM DUP 0\|1`, `STEP n` | simulated card only: play a tone burst in (ch 0 left, 1 right, 2 both), identical noise on both channels, step n ticks and reply when done |
 | `HELP` | this list of commands |
 | `QUIT` | close cleanly |
