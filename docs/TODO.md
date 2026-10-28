@@ -30,10 +30,9 @@ Done: `a5create` (seconds, bars, or a file) and `a5click` (docs/CREATE.md). Clic
 Done: `a5export DIR [loop|mixed|all] [--to FOLDER]`, see docs/EXPORT.md. Still open: a shell key for it, a take that
 overlaps itself in the iteration sum (summed with saturation for now), a `--since` to export only newer iterations.
 
-## Generated tracks are numbered in the 90000 series (user)
-Every generated track (clicks, imported files) gets an iteration of 90001, 90002 ... instead of -1, -2 ... . a5export already
-labels them so (negative n becomes 90000 - n). Still to do: store them so, in a5click, a5create, the core's CLICK ADD and
-the mixing screen, and a migration for sessions that have negative iterations. `generated` stays the marker in the state.
+## Generated tracks are numbered in the 90000 series: done
+a5click, a5create and a5import store them as 90001, 90002 ... . Old negative iterations still read (a5export shows them as
+90000 - n); no migration, the old sessions are not being carried forward (user).
 
 ## Undo in the shell: done
 `u`, `U`, history with `.` / `!`, keep-mode `m` / `M`, safe-start and `x` export are in (docs/SHELL.md). Open: an undo of an undo (redo) and a "what would change" preview in the history.
@@ -83,12 +82,10 @@ copy to another machine along with the session directory.
 - **Preview** in the history: before `.` or `!`, show what a row would change (takes going out, coming back, mixes restored).
 
 ## a5import, next (user)
-- `--play`: an option to play the imported track (not clear yet whether this means audition it through the speakers or put it
-  into the loop straight away; today it goes into the loop unless `--mute`). Ask before building.
 - Import an export folder over the original takes, replacing them in the loop and in storage (`a5export` names carry the
   iteration and offset, so a file maps back to its take). Other options to design: resample, trim, place at an offset.
 
 ## Remove the session NAME (user)
 `a5create DIR NAME` and `a5pace new DIR NAME` store a name in the descriptor. Nothing uses it except the shell header and
-the `name` field of STATE (a5export no longer reads it). Remove the argument, stop writing it, show the path in the shell
+the `name` field of STATE (a5export no longer reads it). Remove the argument, stop writing it, show the DIR's name (not the whole path) in the shell
 header, drop `name` from STATE; old descriptors that have one are just ignored. A session must not care what its folder is called.

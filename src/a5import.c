@@ -1,7 +1,7 @@
 /* a5import: put an audio file into a session as a take. whether or not the session is running.
-     a5import DIR FILE [--mute] [--level N] [--pan l|c|r]
+     a5import DIR FILE [--play] [--level N] [--pan l|c|r]
    FILE is wav or flac at 48 kHz, one or two channels. it becomes a generated track in the next free place of the 90000
-   series (90001, 90002 ...), starting at the loop's start, in the loop at --level (a right shift, 6 dB a step: the
+   series (90001, 90002 ...), starting at the loop's start. it is kept, muted: --play puts it into the loop as well, at --level (a right shift, 6 dB a step: the
    default is 1 for a mono track, which sits centred at 0 dB, and 0 for a stereo one). --mute keeps it as a take that is not in the loop. a running session is told (IMPORT) and the track joins
    the loop behind the play head like any other change; a closed one is written to. */
 #define _POSIX_C_SOURCE 200809L
@@ -37,18 +37,19 @@ static void keep( const char *l, void *u ) { (void)u; if( ! reply[0] ) snprintf(
 int main( int argc, char **argv )
   {
   const char *dir = NULL, *file = NULL, *pan = "c";
-  int level = -99, in = 1;
+  int level = -99, in = 0;
   char err[ASP_ERR], tp[1100];
   for( int i = 1; i < argc; i++ )
     {
-    if( ! strcmp( argv[i], "--mute" ) ) in = 0;
+    if( ! strcmp( argv[i], "--play" ) ) in = 1;
+    else if( ! strcmp( argv[i], "--mute" ) ) in = 0;                  /* (the default) */
     else if( ! strcmp( argv[i], "--level" ) && i + 1 < argc ) level = atoi( argv[++i] );
     else if( ! strcmp( argv[i], "--pan" ) && i + 1 < argc ) pan = argv[++i];
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
     else if( argv[i][0] != '-' && ! file ) file = argv[i];
     else { fprintf( stderr, "a5import: what is %s?\n", argv[i] ); return 2; }
     }
-  if( ! dir || ! file ) { fprintf( stderr, "usage: a5import DIR FILE.flac|FILE.wav [--mute] [--level N] [--pan l|c|r]\n" ); return 2; }
+  if( ! dir || ! file ) { fprintf( stderr, "usage: a5import DIR FILE.flac|FILE.wav [--play] [--level N] [--pan l|c|r]\n" ); return 2; }
   int ll, lr;
   int32_t *pcm = NULL; int64_t frames = 0; int ch = 0, rate = 0;
   if( asp_audio_read( file, &pcm, &frames, &ch, &rate, err, sizeof err ) ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
