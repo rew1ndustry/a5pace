@@ -184,7 +184,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     { if( err ) snprintf( err, errn, "the loop is too short" ); return NULL; }
   AspCore *c = calloc( 1, sizeof *c );
   c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t );
-  c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 1;
+  c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 0;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
   if( cfg->lowcut > 0 ) asp_gate_set_lowcut( c->gate, cfg->lowcut );
@@ -199,8 +199,13 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
-  for( int i = 0; i < c->nlt; i++ )                     /* the count only goes up: a new run starts above every take there is (not the generated 90000 series) */
-    if( c->lt[i].iter < 90000 && (uint64_t)c->lt[i].iter > c->iter ) c->iter = (uint64_t)c->lt[i].iter;
+  { /* the count only goes up, and only a take moves it: this run's first iteration is the one after the newest take's (not counting the
+       generated 90000 series). the iteration the takes are in is "used", so the first pass moves on; a space with no takes stays where it is */
+    int64_t top = -1;
+    for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter < 90000 && c->lt[i].iter > top ) top = c->lt[i].iter;
+    if( top >= 0 && (uint64_t)top >= c->iter ) { c->iter = (uint64_t)top; c->newt = 1; }
+    else if( top < 0 && c->iter == 0 ) c->newt = 1;      /* a new space: recording starts at iteration 1 (0 is for what a5create made) */
+  }
   asp_tank_set_head( c->tank, c->iter, c->peak );
   if( cfg->declared_latency > 0 )                       /* declared, not measured: play from the first tick */
     {
@@ -756,7 +761,7 @@ static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
       c->latency = res->frames;
       c->origin = c->tick + 1;                           /* the loop starts at its top on the next tick */
       c->hush = c->origin + c->latency / ASP_TICK + 5;   /* the sync still in flight comes back first */
-      c->phase = 1; c->gate_ready = 0; c->have_prev = 0; c->newt = 1;
+      c->phase = 1; c->gate_ready = 0; c->have_prev = 0;     /* (newt stays: the iteration moves on only if a take is in it) */
       logf_( c, "sync_found", "{\"frames\":%lld,\"inverted\":%d,\"channel\":%d,\"out_db\":%.1f,\"in_peak_db\":%.1f,\"seconds\":%d,\"spread\":%d}",
              (long long)res->frames, res->inverted, res->channel, res->out_db, res->in_peak_db, res->seconds, res->spread );
       return;

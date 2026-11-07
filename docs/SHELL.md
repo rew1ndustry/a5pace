@@ -147,7 +147,9 @@ pipewire profile to "off" for the run and restore it after. Running through pipe
 shells; this one does ALSA direct only.
 
 ## Iterations only go up, and live/safe is remembered
-A run starts its iteration count above the highest recorded take (the generated 90000 series aside), whatever the loop file
-(a cache) says, so a restarted or rebuilt space never records into an old iteration. And a take is never written over: if the
+The iteration count only goes up, and only a take moves it: it moves on at the top of a pass if a take was in any tick of the
+iteration that has just ended (or is still open). Safe, restarts and resyncs do not move it. A run starts in the iteration of the newest
+recorded take (the generated 90000 series aside) and moves on at its first pass, whatever the loop file (a cache) says, so a restarted
+or rebuilt space never records into an old iteration; a brand new space starts recording at iteration 1. And a take is never written over: if the
 slot (iteration, second) exists, the next iteration is used. `a5pace run` starts live or safe as it was when it last ran (the
 log's newest `safe_on`, `safe_off` or `core_open`), safe if it never ran; `--live` / `--safe` override.

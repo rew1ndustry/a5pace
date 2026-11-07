@@ -194,6 +194,12 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   Tested on a copy of the real session in `screen`: left+p whole iteration, up/right moves, twelve downs reached 90002.
 - 111..115 blank: nothing recorded in them (the space was safe while they went by); the count still advances. Up/down skip them.
 
+## Iteration advance rule (user, after the cursor rework)
+- The count moves only when a take was in the iteration that ended (`newt`). Fixed: `newt` is no longer forced on at open and at
+  every sync; open sets it only if the newest take's iteration is the current one (or the space is new and at 0). The 111..115
+  blank rows were my own test restarts, one step each. Checked on a copy of the real session (three restarts: 111, 111, 111) and on
+  a small space (safe for 28 s: stays at 1; a take, then 2, and it stays 2 while nothing is recorded). `make test` passes.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.
