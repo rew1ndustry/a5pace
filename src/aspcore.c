@@ -199,12 +199,13 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
-  { /* the count only goes up, and only a take moves it: this run's first iteration is the one after the newest take's (not counting the
-       generated 90000 series). the iteration the takes are in is "used", so the first pass moves on; a space with no takes stays where it is */
-    int64_t top = -1;
+  { /* the count only goes up, and only a take moves it. a run starts in the next empty iteration: the one after the newest take's
+       (not counting the generated 90000 series), 1 for a space with none. the store says so, not the loop file's header (a cache:
+       it is lost when the loop is rebuilt, and an old run could have left it wrong). during the run the count moves at the top of a
+       pass, only if a take was in any tick of the iteration that ended (newt) */
+    int64_t top = 0;
     for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter < 90000 && c->lt[i].iter > top ) top = c->lt[i].iter;
-    if( top >= 0 && (uint64_t)top >= c->iter ) { c->iter = (uint64_t)top; c->newt = 1; }
-    else if( top < 0 && c->iter == 0 ) c->newt = 1;      /* a new space: recording starts at iteration 1 (0 is for what a5create made) */
+    c->iter = (uint64_t)top + 1; c->newt = 0;
   }
   asp_tank_set_head( c->tank, c->iter, c->peak );
   if( cfg->declared_latency > 0 )                       /* declared, not measured: play from the first tick */

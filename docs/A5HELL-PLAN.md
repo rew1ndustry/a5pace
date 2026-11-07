@@ -200,6 +200,11 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   blank rows were my own test restarts, one step each. Checked on a copy of the real session (three restarts: 111, 111, 111) and on
   a small space (safe for 28 s: stays at 1; a take, then 2, and it stays 2 while nothing is recorded). `make test` passes.
 
+## Start at the next empty iteration (user, after the rule above)
+- `asp_core_new` sets the iteration to newest take + 1 (1 if none) and `newt` 0, from the store; the loop file header (tank iter)
+  is no longer read. (The user's real loop file header said 116: left over from the restarts that stepped the count.) Checked: the
+  copy of the real session with its cache restarts at 111 three times; a small space 1, then 2 after a take, and 2 after a restart.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.

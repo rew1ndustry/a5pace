@@ -148,8 +148,9 @@ shells; this one does ALSA direct only.
 
 ## Iterations only go up, and live/safe is remembered
 The iteration count only goes up, and only a take moves it: it moves on at the top of a pass if a take was in any tick of the
-iteration that has just ended (or is still open). Safe, restarts and resyncs do not move it. A run starts in the iteration of the newest
-recorded take (the generated 90000 series aside) and moves on at its first pass, whatever the loop file (a cache) says, so a restarted
-or rebuilt space never records into an old iteration; a brand new space starts recording at iteration 1. And a take is never written over: if the
+iteration that has just ended (or is still open). Safe, restarts and resyncs do not move it. A run starts in the next empty iteration: the one
+after the newest recorded take (the generated 90000 series aside), or 1 in a new space. The store says so; the iteration count in the
+loop file's header is only a cache (it is lost when the loop is rebuilt) and is not read, so a restarted or rebuilt space never records
+into an old iteration. And a take is never written over: if the
 slot (iteration, second) exists, the next iteration is used. `a5pace run` starts live or safe as it was when it last ran (the
 log's newest `safe_on`, `safe_off` or `core_open`), safe if it never ran; `--live` / `--safe` override.
