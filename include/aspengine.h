@@ -10,12 +10,12 @@
 typedef struct { int l, r, flip, gsh, pan, mixed; } AspPlace;
 #define ASP_PLACE_OFF  ((AspPlace){ ASP_LEV_OFF, ASP_LEV_OFF, 0, 0, 0, 0 })
 
-/* an explicit mix (mixed != 0) replaces l, r and flip: gain gsh is a bit shift (absolute: +N right-shifts every sample N
-   bits, -N left-shifts), pan is a bit shift too (+N right: the left side shifted N bits more; -N left). a stereo take
+/* an explicit mix (mixed != 0) replaces l, r and flip: gain gsh is a bit shift (absolute: +N left-shifts every sample N
+   bits, louder; -N right-shifts, quieter), pan is a bit shift too (+N right: the left side shifted N bits more; -N left). a stereo take
    keeps both channels: its pan is stored but has no effect yet. shifts only, so a take taken out subtracts exactly
    what was added. */
-#define ASP_GSH_MIN ASP_LEV_MIN
-#define ASP_GSH_MAX ASP_LEV_MAX
+#define ASP_GSH_MIN (-ASP_LEV_MAX)
+#define ASP_GSH_MAX (-ASP_LEV_MIN)
 #define ASP_PAN_MAX ASP_LEV_MAX
 int     asp_place_eq( AspPlace a, AspPlace b );
 void    asp_place_shifts( AspPlace p, int mono, int *sl, int *sr );          /* the bit shifts for the two outputs */
