@@ -37,7 +37,7 @@ bin/a5pace new /tmp/demo demo 8
 bin/a5pace run -S 7001 /tmp/demo &      # a simulated card, 7001 frames of round trip
 bin/a5control /tmp/demo SIM BURST 2 0.1    # a tone burst in
 bin/a5control /tmp/demo TAKES
-bin/a5hell /tmp/demo
+bin/a5hell /tmp/demo                    # the map, meters and keys: docs/A5HELL-GUIDE.md
 ```
 ## Read next
 `docs/SHELL.md` (running it), `docs/A5HELL-GUIDE.md` (the shell, for people), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` and `docs/STORE-DESIGN.md` (the store: how a take is kept, the

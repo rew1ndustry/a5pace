@@ -23,6 +23,6 @@ int  map_affected( const Map *m, const MapSel *sel, const MapView *v, int T, int
 int  map_starts( const Map *m, const MapView *v, int T, int w, long wide, long it, int *out, int max );
 long map_step( const Map *m, const MapView *v, int T, long it, int dir );
 /* draw the view from screen row r0, w columns wide. cur: the iteration being played (bold label). sel (may be NULL): the cursor
-   is a reversed block, the selection reversed, every cell of every affected take underlined */
+   is a solid block, and every cell of every affected take (and of the selection) is lit in reverse video */
 void map_draw( const Map *m, const MapView *v, int r0, int w, int T, long cur, const MapSel *sel, long wide );
 #endif

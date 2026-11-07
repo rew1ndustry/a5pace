@@ -117,7 +117,7 @@ static void map_update( int cmd, int h )
   }
 
 /* the cursor: an iteration and a cell (-1 is the label: the whole iteration); the anchor is where a selection began. entry is a command being typed */
-static long cur_it, anc_it; static int cur_cell, anc_cell, have_cur; static char entry[64]; static int nentry;
+static int want_newest; static long cur_it, anc_it; static int cur_cell, anc_cell, have_cur; static char entry[64]; static int nentry;
 static int geom_cells( int w, int *tpc ) { int lw, cpc; return map_geom( loopT, w, mwide, &lw, tpc, &cpc ); }
 static MapSel the_sel( void )
   {
@@ -259,7 +259,7 @@ static void help( void )
 " PgUp PgDn Home End  scroll (End follows)      q  leave    Q  stop aspace\n"
 "\n"
 " the map: left/right jump take to take (past the first: the whole iteration),\n up/down to the nearest take in the next row. shift+arrows select, esc clears.\n"
-" the takes under it are underlined (all along, later rows too); keys:\n"
+" the takes under it are lit (all along, later rows too); keys:\n"
 "   m p   mute / play, from the next start     M P   the same at once\n"
 "   .     switch, next start                   !     switch at once\n"
 "   [ITER[.TAKE]] [+N|-N] [/N|\\N] then . ! m p M P\n"
@@ -321,7 +321,8 @@ int main( int argc, char **argv )
     live = strstr( status, "SAFE" ) == NULL;
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
-    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); meter_update( cmd ); if( ! have_cur ) cursor_start( ww ); }
+    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); meter_update( cmd ); if( ! have_cur || ( want_newest && mfollow ) ) cursor_start( ww );
+      want_newest = 0; }
     draw( live, amode );
     struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
     if( poll( p, 3, 250 ) <= 0 ) continue;
@@ -336,6 +337,7 @@ int main( int argc, char **argv )
       char b[1200];
       if( ctlc_readline( ev, b, sizeof b, 10 ) < 0 ) break;
       mdirty = 1;
+      { const char *ty = b[0] == '@' ? strchr( b, ' ' ) : NULL; if( ty && ! strncmp( ty + 1, "end ", 4 ) ) want_newest = 1; }   /* a take is done: the cursor goes to it */
       { char pr[240]; if( pretty( b, pr, sizeof pr ) ) snprintf( events[nev++ % EV], 220, "%.200s", pr ); }
       }
     if( p[0].revents & POLLIN )

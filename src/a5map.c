@@ -178,7 +178,7 @@ void map_draw( const Map *m, const MapView *v, int r0, int w, int T, long cur, c
       {
       unsigned char l = live[r * cells + c], mu = mute[r * cells + c];
       int role = l ? role_of( l ) : mu ? role_of( mu ) : C_TEXT; char ch = l ? '=' : mu ? '-' : ' ';
-      int fx = 0;                                                    /* 1 underlined, 2 selected, 3 the cursor */
+      int fx = 0;                                                    /* 1 lit (an affected take), 2 selected, 3 the cursor */
       if( sel )
         {
         if( mark[r * cells + c] ) fx = 1;
@@ -188,9 +188,11 @@ void map_draw( const Map *m, const MapView *v, int r0, int w, int T, long cur, c
       if( role != cur_role || fx != cur_fx )
         {
         fputs( term_sgr( role ), stdout ); cur_role = role; cur_fx = fx;
-        if( fx == 1 ) fputs( "\033[4m", stdout ); else if( fx == 2 ) fputs( "\033[7m", stdout ); else if( fx == 3 ) fputs( "\033[1;7m", stdout );
+        if( fx == 1 || fx == 2 ) fputs( "\033[7m", stdout );                          /* the take(s) lit as a block */
+        else if( fx == 3 ) fputs( "\033[1;97;40m", stdout );                           /* the cursor: a solid white block in it */
         }
-      for( int k = 0; k < cpc; k++ ) putchar( ch );
+      if( fx == 3 ) for( int k = 0; k < cpc; k++ ) fputs( "\xe2\x96\x88", stdout );    /* U+2588 */
+      else for( int k = 0; k < cpc; k++ ) putchar( ch );
       }
     printf( "%s\033[K", term_sgr( C_TEXT ) );
     }

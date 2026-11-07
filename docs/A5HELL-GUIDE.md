@@ -56,9 +56,11 @@ PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 ...                           <- sta
 ## Mixing on the map
 Move the cursor onto a take. **Left / right** jump to the start of the previous / next take in the row (past the first, onto the
 iteration number at the left: then every take that starts in that iteration is the target). **Up / down** go to the nearest
-row that has a take in it, and the take there nearest to the same column. The cursor is one reversed cell, bold. Keys that are
-typed quickly are all acted on first and the screen is drawn once, so a run of arrows lands where it should. Every take that covers the cursor's cell is **underlined, all along its length**, including
-the part in later rows: those are the takes the next keys will change. With shift+arrows you select a block, and every take
+row that has a take in it, and the take there nearest to the same column. The cursor is a solid white block. Keys typed
+quickly are all acted on first and the screen is drawn once, so a run of arrows lands where it should. Every take that covers the
+cursor's cell **lights up (reverse video), all along its length**, including the part in later rows: those are the takes the next
+keys will change. When a take has just been recorded the cursor moves onto it (if you are following the latest iteration), so
+`p` or `m` is at once about the take you have just played. With shift+arrows you select a block, and every take
 the block touches is changed.
 
 | keys | |

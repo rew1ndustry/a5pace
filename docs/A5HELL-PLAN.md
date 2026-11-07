@@ -205,6 +205,12 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   is no longer read. (The user's real loop file header said 116: left over from the restarts that stepped the count.) Checked: the
   copy of the real session with its cache restarts at 111 three times; a small space 1, then 2 after a take, and 2 after a restart.
 
+## Last change (user): lit takes, block cursor, cursor on the newest take
+- No underline: every cell of the affected takes (and the selection) is reverse video; the cursor is a solid white U+2588 block
+  (bold white on black), the label bold reverse when it is on the iteration number. When a take ends (`end` event) and the map is
+  following the latest iteration, the cursor moves onto the newest recorded take. Checked with a simulated space in keep mode:
+  `p` straight after a take put that take in, twice.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.
