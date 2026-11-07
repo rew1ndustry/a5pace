@@ -228,7 +228,25 @@ static void meters( int r, int w )
   printf( "%s\033[K", term_sgr( C_TEXT ) );
   }
 
-static void draw( int live, int amode )
+/* while a mix command is being typed: the gain and pan of the take under the cursor (GRID: iter off id in mixed gain pan ...) */
+typedef struct { long iter, off; int found, mixed, gsh, pan; } GainQ;
+static void grid_one( const char *l, void *u )
+  {
+  GainQ *q = u; long it, off; int id, in, mixed, gsh, pan;
+  if( q->found || sscanf( l, "%ld %ld %d %d %d %d %d", &it, &off, &id, &in, &mixed, &gsh, &pan ) < 7 ) return;
+  if( it == q->iter && off == q->off ) { q->found = 1; q->mixed = mixed; q->gsh = gsh; q->pan = pan; }
+  }
+static void gain_note( int cmd, int w, int h, char *o, size_t n )
+  {
+  int idx[256], k; MapSel sel = the_sel(); MapView v = the_view( h ); GainQ q = { 0, 0, 0, 0, 0, 0 }; char g[16], p[16];
+  o[0] = 0; k = map_affected( &map, &sel, &v, loopT, w, mwide, idx, 256 ); if( k < 1 ) return;
+  q.iter = map.t[idx[0]].iter; q.off = map.t[idx[0]].off;
+  ctlc_cmd( cmd, "GRID", grid_one, &q ); if( ! q.found ) return;
+  snprintf( g, sizeof g, "%+d", q.gsh ); snprintf( p, sizeof p, q.pan > 0 ? "/%d" : q.pan < 0 ? "\\%d" : "centre", q.pan > 0 ? q.pan : -q.pan );
+  snprintf( o, n, "  [take %ld.%ld: gain %s pan %s%s%s]", q.iter, q.off, g, p, q.mixed ? "" : ", automix", k > 1 ? ", first of several" : "" );
+  }
+
+static void draw( int cmd, int live, int amode )
   {
   int w, h; char t[300];
   term_size( &w, &h );
@@ -238,7 +256,7 @@ static void draw( int live, int amode )
   put( 2, C_TEXT, status, w );
   { MapSel sel = the_sel(); MapView v = the_view( h ); map_draw( &map, &v, 3, w, loopT, mcur, have_cur ? &sel : NULL, mwide ); }   /* rows 3 .. h-3 */
   put( h - 2, C_TEXT, nev ? events[( nev - 1 ) % EV] : "", w );   /* the last thing that happened, in words */
-  if( nentry ) { snprintf( t, sizeof t, " > %s", entry ); put( h - 2, C_TEXT, t, w ); }       /* a command being typed */
+  if( nentry ) { char gn[100]; gain_note( cmd, w, h, gn, sizeof gn ); snprintf( t, sizeof t, " > %s%s", entry, gn ); put( h - 2, C_TEXT, t, w ); }       /* a command being typed */
   meters( h - 1, w );
   corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [?]", "" );
   printf( "%s", term_sgr( C_TEXT ) );
@@ -323,7 +341,7 @@ int main( int argc, char **argv )
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
     { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); meter_update( cmd ); if( ! have_cur || ( want_newest && mfollow ) ) cursor_start( ww );
       want_newest = 0; }
-    draw( live, amode );
+    draw( cmd, live, amode );
     struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
     if( poll( p, 3, 250 ) <= 0 ) continue;
     if( xfd >= 0 && ( p[2].revents & ( POLLIN | POLLHUP ) ) )          /* the export reports, then ends */
