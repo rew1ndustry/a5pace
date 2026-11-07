@@ -82,10 +82,12 @@ int main( void )
   AspPlace mx = { 0, 0, 0, 1, 2, 1 }, mx2 = { 0, 0, 0, -1, -4, 1 };
   int sl, sr, ms[2];
   asp_place_shifts( (AspPlace){ 0, 0, 0, 0, 0, 1 }, 1, &sl, &sr );   CHECK( sl == 0 && sr == 0 );     /* centre: both unshifted */
-  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, -3, 1 }, 1, &sl, &sr );  CHECK( sl == 0 && sr == 3 );     /* left: the right shifted */
-  asp_place_shifts( (AspPlace){ 0, 0, 0, 1, 2, 1 }, 1, &sl, &sr );   CHECK( sl == 1 && sr == -1 );
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, -3, 1 }, 1, &sl, &sr );  CHECK( sl == -3 && sr == 3 );    /* left: balanced, l louder r quieter */
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 1, 2, 1 }, 1, &sl, &sr );   CHECK( sl == 1 && sr == -3 );
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, 1, 1 }, 1, &sl, &sr );   CHECK( sl == 1 && sr == -1 );      /* /1: l -1, r +1 */
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, -2, 1 }, 1, &sl, &sr );  CHECK( sl == -2 && sr == 2 );     /* \\2: l +2, r -2 */
   asp_place_shifts( (AspPlace){ 0, 0, 0, 0, 5, 1 }, 0, &sl, &sr );   CHECK( sl == 0 && sr == 0 );     /* stereo: pan does nothing */
-  { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == 0 && p == -31 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == -1 && p == 0 ); }
+  { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == -15 && p == -15 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == -1 && p == 0 ); }
   CHECK( asp_move_take( t, s, b.id, -1, 0, -1, hr, mx ) == 0 );
   int32_t *bm = malloc( 30000 * 4 ); for( int i = 0; i < 30000; i++ ) bm[i] = S[2*i];     /* a is, since the conversion, its left channel as mono */
   memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );

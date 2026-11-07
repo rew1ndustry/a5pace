@@ -68,7 +68,7 @@ the block touches is changed.
 | `m` / `p` | mute / play (take out of / back into the loop), heard from the take's next start |
 | `M` / `P` | the same, at once |
 | `.` / `!` | switch it the other way, next start / at once |
-| `+3.` `-2.` | gain by bit shifts: `+3` shifts every sample left 3 bits (louder, it saturates), `-2` right 2 bits (quieter); `/2.` pan 2 bits right (the left side shifted 2 more), `\3.` 3 bits left; end with `. ! m p M P` |
+| `+3.` `-2.` | gain by bit shifts: `+3` shifts every sample left 3 bits (louder, it saturates), `-2` right 2 bits (quieter); `/2.` pan 2 steps right (left side 2 bits quieter and right side 2 bits louder), `\3.` 3 steps left (the mirror); end with `. ! m p M P` |
 | `+1/2M` | gain and pan together, and mute at once |
 
 Gain and pan are absolute: typed again, they replace. A sign or slash with no number keeps the take's value but makes it a
