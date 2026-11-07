@@ -86,6 +86,10 @@ typedef struct { int set_gain, gdb, set_pan, pan, act, now; } AspMixCmd;   /* se
 int      asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m );
 typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gdb, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
 int      asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u );
+/* the same with the levels of each take, a byte a tick (asppeaks.h), for the takes that start in iterations from..to. the take
+   being recorded comes last with open set; its levels grow as it goes */
+typedef void (*AspMapCb)( void *u, const AspCoreTake *t, int open, const uint8_t *pk, int n );
+int      asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, void *u );
 int      asp_core_pending( const AspCore *c, int64_t id );
 /* generated tracks for a space that is running (a5click, a5import). part is the file name under tmp/; kind "click" (the
    loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */

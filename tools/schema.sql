@@ -1,5 +1,5 @@
--- asp5 session.db, schema v2 (see docs/DATA.md)
-PRAGMA user_version=2;
+-- asp5 session.db, schema v3 (see docs/DATA.md)
+PRAGMA user_version=3;
 PRAGMA journal_mode=WAL;
 CREATE TABLE session(id TEXT PRIMARY KEY, descriptor_json TEXT NOT NULL,
   schema_version INTEGER NOT NULL, created REAL NOT NULL);
@@ -16,4 +16,5 @@ CREATE TABLE log(seq INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER, wall REAL,
 CREATE TABLE mixes(name TEXT PRIMARY KEY, seq INTEGER NOT NULL);
 CREATE TABLE notes(id INTEGER PRIMARY KEY, take_id INTEGER, seq INTEGER,
   kind TEXT, text TEXT);
+CREATE TABLE peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);  -- a level byte a tick, see asppeaks.h
 CREATE TABLE peers(id TEXT PRIMARY KEY, addr TEXT, last_seen REAL);

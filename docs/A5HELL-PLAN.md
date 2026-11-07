@@ -78,7 +78,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 ## Order of work (each step commits on branch `a5hell2`, tested before the next)
 0. DONE 2026-11-06: read `a5mixer.c`, `gate.c`, `tools/a5start`, `aspcore.c` take close; key clashes settled; findings below.
 1. DONE 2026-11-06 (notes below): `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
-2. Core peaks + `MAP` + backfill; check against decoded audio on a test take.
+2. DONE 2026-11-06 (notes below): Core peaks + `MAP` + backfill; check against decoded audio on a test take.
 3. Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
 4. Cursor, selection, editing keys wired to the mixer language; remove `t`.
 5. Meters.
@@ -122,6 +122,19 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
 - Left for later: the `t` screen (a5mixer.c) and the `?` help page are not painted/fitted yet (help is longer than 24 rows;
   step 6 rewrites it); `SHELL.md` and the user guide still describe the old keys (step 6). `--loop` after the space
   already runs is ignored by design.
+
+## Step 2 notes
+- `include/asppeaks.h`, `src/asppeaks.c`: the byte format (documented in `docs/DATA.md`), used by the core and by `a5peaks`.
+  Schema is v3 (`peaks` table); a v2 session is upgraded when a writer opens it, a read-only open of v2 just has no peaks.
+- Core: `take_put` feeds `AspPk`; `take_end_` stores it with `asp_peaks_set` after the take is adopted; the open take's
+  array is read in place. `asp_core_map` + control `MAP [from [to]]` (lines `iter off frames in|out|open tick0 hex`, 500
+  ticks a line; `-` = no levels). `METER` is left to step 5.
+- `a5peaks DIR` backfills (both channels, the louder, so a take recorded from one input may show the other's noise).
+  Test copy: `scratch/tl` (session.db + takes of transylvanianLullaby, 180 takes, 4 s to backfill, 36892 ticks). Checked: tick count
+  = ceil(frames/9600) for all 180, no tick's rms above the header's peak, largest peak-minus-rms gap 24.5 dB. A live
+  simulated space (SIM BURST 0.3, 0.1, 0.02) gave 206, 186, 159 (-17.5, -27.5, -41 dB) and the open take showed the same.
+- `a5recover` does not make peaks for takes it puts back: run `a5peaks` after it. `tests/test_start.sh` runs a5hell
+  under `script` now (it needs a terminal). No unit test for `asp_pk_add` yet.
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.

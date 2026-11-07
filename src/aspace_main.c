@@ -172,6 +172,20 @@ static void grid_cb( void *u, const AspCoreTake *t )
   ctl_say( r->ctl, r->run, "%lld %lld %lld %d %d %d %d %d %d %lld", (long long)t->iter, (long long)t->off, (long long)t->id, t->in, t->mixed, t->gdb, t->pan, t->pending, t->mono, (long long)t->len );
   }
 
+/* MAP: iter off frames state tick0 hex; the levels in chunks of 500 ticks so a long take fits a line. state: open (being recorded),
+   in (in the loop) or out. no levels (an old take not yet through a5peaks): one line with tick0 0 and "-" */
+static void map_cb( void *u, const AspCoreTake *t, int open, const uint8_t *pk, int n )
+  {
+  Run *r = u; char hex[1010]; const char *st = open ? "open" : t->in ? "in" : "out";
+  if( n <= 0 ) { ctl_say( r->ctl, r->run, "%lld %lld %lld %s 0 -", (long long)t->iter, (long long)t->off, (long long)t->len, st ); return; }
+  for( int k = 0; k < n; k += 500 )
+    {
+    int m = n - k < 500 ? n - k : 500;
+    for( int i = 0; i < m; i++ ) snprintf( hex + 2 * i, 3, "%02x", pk[k + i] );
+    ctl_say( r->ctl, r->run, "%lld %lld %lld %s %d %s", (long long)t->iter, (long long)t->off, (long long)t->len, st, k, hex );
+    }
+  }
+
 static const char *space_name( Run *r )
   {
   static char nm[100];
@@ -352,6 +366,7 @@ static void handle( void *u, int cl, const char *line )
       "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
+      "MAP [from [to]]                      iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
       "EDGE drop|starve frames              the audio edge reports lost samples",
@@ -429,6 +444,8 @@ static void handle( void *u, int cl, const char *line )
     }
   else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
     { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "MAP" ) )                   /* MAP [from [to]]: the levels of the takes starting in those iterations, a byte a 0.2 s tick (asppeaks.h) */
+    { asp_core_map( r->core, n > 1 ? atoll( w[1] ) : 0, n > 2 ? atoll( w[2] ) : INT64_MAX, map_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {

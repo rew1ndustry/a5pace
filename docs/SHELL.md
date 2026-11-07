@@ -24,6 +24,7 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `STATE` / `LINE` | the state as json / as one readable line |
 | `SAFE` / `LIVE` | stop / resume recording takes (the loop keeps playing) |
 | `SYNC` | hunt the round trip again |
+| `MAP [from [to]]` | the levels of the takes starting in those iterations: lines `iter off frames in\|out\|open tick0 hex`, a byte (two hex digits) a 0.2 s tick, `-` if a take has none yet; long takes come in chunks of 500 ticks |
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
 | `AUTOMIX LOOP`, `KEEP`, `OVERLAP n`, `SWAP [each]` | the mode, one at a time, see below |
 | `TAKES` | every take with its state |

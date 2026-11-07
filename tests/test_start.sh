@@ -12,10 +12,10 @@ chk "a5control --start starts it" "$here/bin/a5control --start $t/s STATE | grep
 chk "a5start says it is already running" "$here/tools/a5start $t/s | grep -q 'already running'"
 $here/bin/a5control $t/s QUIT > /dev/null
 n=0; while [ -f $t/s/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
-$here/bin/a5hell $t/s --no-start > $t/ns.out 2>&1 < /dev/null || true
+printf q | script -qec "$here/bin/a5hell $t/s --no-start" $t/ns.out > /dev/null 2>&1 || true      # a5hell needs a terminal
 chk "a5hell --no-start does not start it" "grep -q 'not running' $t/ns.out && ! $here/bin/a5control $t/s LINE > /dev/null 2>&1"
-printf q | $here/bin/a5hell $t/s > $t/sh.out 2>&1 || true
-chk "a5hell starts it, shows it, and leaves it running" "grep -q 'starting it' $t/sh.out && grep -q 'a5hell: st' $t/sh.out && $here/bin/a5control $t/s LINE | grep -q ."
+(sleep 1; printf q) | script -qec "$here/bin/a5hell $t/s" $t/sh.out > /dev/null 2>&1 || true
+chk "a5hell starts it, shows it, and leaves it running" "grep -q 'starting it' $t/sh.out && grep -q 'SAFE' $t/sh.out && $here/bin/a5control $t/s LINE | grep -q ."
 $here/bin/a5control $t/s QUIT > /dev/null
 n=0; while [ -f $t/s/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 # the edge comes from the session's start file, then the defaults, then the environment wins

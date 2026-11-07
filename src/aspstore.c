@@ -156,7 +156,7 @@ AspStore *asp_create( const char *dir, const char *descriptor_json, char err[ASP
     { seterr( err, "schema", msg ); sqlite3_free( msg ); asp_close( s ); return NULL; }
   asp_sha256_buf( descriptor_json, strlen( descriptor_json ), s->id );
   sqlite3_stmt *q;
-  sqlite3_prepare_v2( s->db, "insert into session values(?,?,2,?)", -1, &q, NULL );
+  sqlite3_prepare_v2( s->db, "insert into session values(?,?,3,?)", -1, &q, NULL );
   sqlite3_bind_text( q, 1, s->id, -1, SQLITE_STATIC );
   sqlite3_bind_text( q, 2, descriptor_json, -1, SQLITE_STATIC );
   sqlite3_bind_double( q, 3, now() );
@@ -182,8 +182,12 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
     s->next_id = sqlite3_column_int64( q, 0 );
   sqlite3_finalize( q );
   if( sqlite3_prepare_v2( s->db, "select schema_version from session limit 1", -1, &q, NULL ) != SQLITE_OK
-      || sqlite3_step( q ) != SQLITE_ROW || sqlite3_column_int( q, 0 ) != 2 )
+      || sqlite3_step( q ) != SQLITE_ROW || ( sqlite3_column_int( q, 0 ) != 2 && sqlite3_column_int( q, 0 ) != 3 ) )
     { seterr( err, "a session of an older aspace (takes are kept in another way now)", dir ); if( q ) sqlite3_finalize( q ); asp_close( s ); return NULL; }
+  { int v = ( sqlite3_reset( q ), sqlite3_step( q ), sqlite3_column_int( q, 0 ) );     /* a v2 session gets the peaks table the first time a writer opens it */
+    if( v == 2 && ! s->readonly )
+      run( s, "create table if not exists peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);"
+              "update session set schema_version=3; pragma user_version=3;" ); }
   sqlite3_finalize( q );
   if( ! s->readonly ) detect_crash( s );
   return s;
@@ -240,6 +244,35 @@ int asp_store_poll( AspStore *s )
           }
       }
   return total;
+  }
+
+/* levels of a take, a byte a tick (asppeaks.h) */
+int asp_peaks_set( AspStore *s, int64_t id, const uint8_t *v, int n )
+  {
+  sqlite3_stmt *q; int rc;
+  if( s->readonly || id <= 0 || n <= 0 ) return -1;
+  if( sqlite3_prepare_v2( s->db, "insert or replace into peaks(take_id,n,data) values(?,?,?)", -1, &q, NULL ) ) return -1;
+  sqlite3_bind_int64( q, 1, id ); sqlite3_bind_int( q, 2, n ); sqlite3_bind_blob( q, 3, v, n, SQLITE_STATIC );
+  rc = sqlite3_step( q ); sqlite3_finalize( q );
+  return rc == SQLITE_DONE ? 0 : -1;
+  }
+int asp_peaks_get( AspStore *s, int64_t id, uint8_t *buf, int cap )
+  {
+  sqlite3_stmt *q; int n = 0;
+  if( sqlite3_prepare_v2( s->db, "select data from peaks where take_id=?", -1, &q, NULL ) ) return 0;
+  sqlite3_bind_int64( q, 1, id );
+  if( sqlite3_step( q ) == SQLITE_ROW ) { n = sqlite3_column_bytes( q, 0 ); if( n > cap ) n = cap; memcpy( buf, sqlite3_column_blob( q, 0 ), (size_t)n ); }
+  sqlite3_finalize( q );
+  return n;
+  }
+int asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max )
+  {
+  sqlite3_stmt *q; int n = 0;
+  if( sqlite3_prepare_v2( s->db, "select id from takes where id>? and id not in (select take_id from peaks) order by id limit ?", -1, &q, NULL ) ) return 0;
+  sqlite3_bind_int64( q, 1, after ); sqlite3_bind_int( q, 2, max );
+  while( sqlite3_step( q ) == SQLITE_ROW && n < max ) ids[n++] = sqlite3_column_int64( q, 0 );
+  sqlite3_finalize( q );
+  return n;
   }
 
 const char *asp_dir( AspStore *s ) { return s->dir; }

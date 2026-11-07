@@ -8,6 +8,7 @@
 #include "aspcore.h"
 #include "aspengine.h"
 #include "gate.h"
+#include "asppeaks.h"
 #include "takefile.h"
 #include "settings.h"
 
@@ -51,6 +52,7 @@ struct AspCore
   char     part[1200];
   int64_t  t_iter, t_sec, t_off, t_frames;
   int      t_wrapped, t_damaged, shh;
+  AspPk    pk;                      /* the take in progress: its level a tick, as far as it has got */
 
   /* takes in the loop, which the automix works on */
   LoopTake *lt; int nlt, caplt;
@@ -535,6 +537,30 @@ int asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ),
   return c->nlt;
   }
 
+/* the takes that start in iterations from..to, each with its levels; the take in progress last (open, no id yet) */
+int asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, void *u )
+  {
+  int k = 0; uint8_t buf[16384];
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    const LoopTake *t = c->lt + i; AspCoreTake o;
+    if( t->iter < from || t->iter > to ) continue;
+    o.id = t->id; o.iter = t->iter; o.off = t->off; o.len = t->len; o.in = t->in; o.mono = t->mono; o.mixed = t->now.mixed;
+    asp_place_to_mix( t->now, t->mono, &o.gdb, &o.pan );
+    o.pending = asp_core_pending( c, t->id );
+    cb( u, &o, 0, buf, asp_peaks_get( c->store, t->id, buf, sizeof buf ) );
+    k++;
+    }
+  if( c->enc && c->t_iter >= from && c->t_iter <= to )
+    {
+    AspCoreTake o = { 0 };
+    o.iter = c->t_iter; o.off = c->t_off; o.len = c->t_frames; o.in = c->t_feed;
+    cb( u, &o, 1, c->pk.v, c->pk.n );
+    k++;
+    }
+  return k;
+  }
+
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {
   c->cfg.automix.mode = mode; c->cfg.automix.n = n; c->cfg.automix.each = each;
@@ -553,6 +579,7 @@ static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
 static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
   {
   double t0 = now_ms();
+  asp_pk_add( &c->pk, pcm, n, c->t_frames, c->t_fix );
   int rc = asp_tw_put( c->enc, pcm, (unsigned)n );          /* both channels, as they came: what was heard is kept */
   lap( c, "take_write", &t0 );
   if( c->t_fix >= 0 )                                       /* one channel, put in the middle as it comes: no stereo, no conversion */
@@ -628,6 +655,7 @@ static void take_end_( AspCore *c, const int32_t *last )
     return;
     }
   lt.id = tk.id;
+  asp_peaks_set( c->store, tk.id, c->pk.v, c->pk.n );
   LoopTake *t = lt_add( c );
   *t = lt;
   t->ready_pass = c->pass + 1;
@@ -664,6 +692,7 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
   c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0;
+  asp_pk_reset( &c->pk );
   c->t_feed = c->cfg.feed && c->cfg.automix.mode != ASP_AUTOMIX_KEEP;     /* keep: stored, not put into the loop */
   {
   int32_t z[2 * 4096] = { 0 };                           /* frame 0 of a take is the start of its second */
@@ -881,7 +910,7 @@ int asp_core_close( AspCore *c )
   logf_( c, "core_close", "{}" );
   asp_gate_free( c->gate );
   asp_sync_free( c->sync );
-  free( c->lt ); free( c->mv );
+  free( c->lt ); free( c->mv ); asp_pk_free( &c->pk );
   free( c );
   return 0;
   }
