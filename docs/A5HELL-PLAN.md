@@ -180,6 +180,13 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   a take with no levels is drawn at a grey level 1 over its whole length. Pinned rows are display only. Checked on a copy of the
   original session with no peaks (`scratch/tl2`). The real session was not touched: `a5peaks` on it is the user's call.
 
+## Iteration count and live/safe memory (after step 6, user request)
+- `asp_core_new` raises `iter` to the highest take iteration below 90000 after loading the takes, so a rebuilt loop file (iter 0)
+  cannot send a new run back to low iterations. `a5pace run` without `--live`/`--safe` asks `asp_last_live` (newest of safe_on,
+  safe_off, core_open in the log). Checked on a copy of the real session: runs started at 111, 112, 113, 114; live stayed live,
+  safe stayed safe, `--live` overrode. The shell's pinned rows now matter only for the 90000 series and sessions made before this.
+  The shell takes `--safe` as well and passes it on. No automated test for either yet.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.

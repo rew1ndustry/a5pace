@@ -79,10 +79,10 @@ The loop is the sum of the takes in 64 bits. On the way out it is brought down b
 bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
 the change is a ramp and not a step.
 
-### The shell (`a5hell DIR [--live] [--loop] [--dim] [--no-start]`)
+### The shell (`a5hell DIR [--live|--safe] [--loop] [--dim] [--no-start]`)
 The guide for people is docs/A5HELL-GUIDE.md; this is how it works. It needs a terminal (stdin and stdout), uses the alternate
 screen, paints a black background (`paint_background 0` in the config turns that off) and redraws on resize. It keeps no state
-of its own: it shows what aspace reports and `l` / `s` ask it to go LIVE / SAFE. `--live` and `--loop` are passed on, or sent
+of its own: it shows what aspace reports and `l` / `s` ask it to go LIVE / SAFE. `--live` and `--safe` (a5pace remembers live or safe from its last run, safe at the very first; these override) and `--loop` are passed on, or sent
 as `AUTOMIX KEEP|LOOP`, only when the shell itself starts the space through `a5start DIR [options]` (which hands the options on
 to a5pace); a space that is already running is left as it is.
 
@@ -145,3 +145,9 @@ The card is taken only if it is free; if anything holds it, `a5card` names it an
 exclusive use). `A5CARD_RELEASE=1` is the opt-in: when only pipewire / wireplumber hold the card, switch its
 pipewire profile to "off" for the run and restore it after. Running through pipewire, or jack, would be other
 shells; this one does ALSA direct only.
+
+## Iterations only go up, and live/safe is remembered
+A run starts its iteration count above the highest recorded take (the generated 90000 series aside), whatever the loop file
+(a cache) says, so a restarted or rebuilt space never records into an old iteration. And a take is never written over: if the
+slot (iteration, second) exists, the next iteration is used. `a5pace run` starts live or safe as it was when it last ran (the
+log's newest `safe_on`, `safe_off` or `core_open`), safe if it never ran; `--live` / `--safe` override.

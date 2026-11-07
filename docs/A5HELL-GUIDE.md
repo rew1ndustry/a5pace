@@ -4,12 +4,12 @@ a5hell is the window you play with. It shows the loop as a map, tells you what h
 It does not record anything itself: the space (`a5pace`) does; a5hell only looks and asks.
 
 ```
-a5hell DIR              open the space DIR (it is started first if it is not running: safe, in keep mode)
-a5hell DIR --live       the same, but a space it starts is already recording
+a5hell DIR              open the space DIR (it is started first if it is not running: live or safe as it was last time, in keep mode)
+a5hell DIR --live       the same, but a space it starts is recording (--safe: not, whatever it was)
 a5hell DIR --loop       the same, but a space it starts puts every take into the loop
 a5hell DIR --dim        quieter colours
 ```
-`--live` and `--loop` only matter when a5hell starts the space. Opening a space that is already running changes nothing.
+`--live`, `--safe` and `--loop` only matter when a5hell starts the space. Opening a space that is already running changes nothing.
 It needs a terminal (a real one, any size; it follows the window when you resize it).
 
 ## What you see

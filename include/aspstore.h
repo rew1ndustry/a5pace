@@ -70,6 +70,8 @@ int  asp_take_export_d32( AspStore *s, int64_t id, const char *out_path );
 /* record a new state (any json object) for a take; appends a take_state event */
 int64_t asp_take_set_state( AspStore *s, int64_t id, const char *state_json, const char *actor, int64_t tick );
 
+int  asp_last_live( AspStore *s );          /* 1 if the space was recording when it last ran, 0 if safe, -1 if it never ran */
+
 /* the levels of a take, a byte a tick (asppeaks.h). set replaces; get returns the bytes (0 if none); need lists up to max take ids
    above after that have none yet, in order */
 int  asp_peaks_set( AspStore *s, int64_t id, const uint8_t *v, int n );

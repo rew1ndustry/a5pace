@@ -1,6 +1,6 @@
-/* a5hell DIR [--live] [--loop] [--dim] [--no-start]: a terminal shell for a running aspace. fills the terminal: the state in
+/* a5hell DIR [--live|--safe] [--loop] [--dim] [--no-start]: a terminal shell for a running aspace. fills the terminal: the state in
    the corners, what has just happened in words, a few keys; press ? for all of them. if the space is not running it is
-   started first (a5start; --no-start to not), safe and in keep mode unless --live / --loop.
+   started first (a5start; --no-start to not), live or safe as it last was, in keep mode unless --loop.
      l  LIVE   s  SAFE   h  history: go back to a place     w  wipe the loop     a  mode: al ak a0 a1-9 ap
      u  undo the last take   U  the last iteration   x  export (a5export)   arrows  the cursor on the map
      r  sync again   g  gate menu (l learn, + -)   f  profile   ?  help   q  leave   Q  stop aspace
@@ -255,7 +255,7 @@ static void help( void )
 "   keep mode: p puts a take in the loop.\n"
 "\n"
 " = in the loop, - out of it; green quiet, yellow right, red peaking.\n"
-" colours: ~/.local/etc/a5hell.cfg.  a5hell DIR --live --loop --dim\n" );
+" colours: ~/.local/etc/a5hell.cfg.  a5hell DIR --live --safe --loop --dim\n" );
   fflush( stdout );
   }
 
@@ -271,24 +271,25 @@ static int ask( const char *q )
 
 int main( int argc, char **argv )
   {
-  const char *dir = NULL; int nostart = 0, live_flag = 0, loop_flag = 0, dim = 0, started = 0;
+  const char *dir = NULL; int nostart = 0, live_flag = 0, safe_flag = 0, loop_flag = 0, dim = 0, started = 0;
   for( int i = 1; i < argc; i++ )
     {
     if( ! strcmp( argv[i], "--no-start" ) ) nostart = 1;
     else if( ! strcmp( argv[i], "--live" ) ) live_flag = 1;
+    else if( ! strcmp( argv[i], "--safe" ) ) safe_flag = 1;
     else if( ! strcmp( argv[i], "--loop" ) ) loop_flag = 1;
     else if( ! strcmp( argv[i], "--dim" ) ) dim = 1;
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
     else dir = NULL, i = argc;
     }
-  if( ! dir ) { fprintf( stderr, "usage: a5hell DIR [--live] [--loop] [--dim] [--no-start]\n  --live, --loop: how a space is started by the shell (safe and keep otherwise)\n" ); return 2; }
+  if( ! dir ) { fprintf( stderr, "usage: a5hell DIR [--live|--safe] [--loop] [--dim] [--no-start]\n  --live, --safe, --loop: how a space is started by the shell (it is as it was last time, in keep mode, otherwise)\n" ); return 2; }
   if( ! isatty( 0 ) || ! isatty( 1 ) ) { fprintf( stderr, "a5hell: needs a terminal\n" ); return 1; }
   int cmd = ctlc_connect( dir ), ev;
   if( cmd < 0 && ! nostart )                                      /* not running: start it (how is a5start's business) */
     {
     char line[1400];
     fprintf( stderr, "a5hell: %s is not running; starting it\n", dir );
-    snprintf( line, sizeof line, "a5start '%s'%s", dir, live_flag ? " --live" : "" );
+    snprintf( line, sizeof line, "a5start '%s'%s", dir, live_flag ? " --live" : safe_flag ? " --safe" : "" );
     if( system( line ) ) { fprintf( stderr, "a5hell: could not start it\n" ); return 1; }
     cmd = ctlc_connect( dir ); started = 1;
     }

@@ -246,6 +246,23 @@ int asp_store_poll( AspStore *s )
   return total;
   }
 
+/* was the space recording when it last ran? 1 live, 0 safe, -1 never ran: the newest of safe_on, safe_off and core_open in the log */
+int asp_last_live( AspStore *s )
+  {
+  sqlite3_stmt *q; int v = -1;
+  if( sqlite3_prepare_v2( s->db, "select type, args_json from log where type in ('safe_on','safe_off','core_open') order by seq desc limit 1", -1, &q, NULL ) ) return -1;
+  if( sqlite3_step( q ) == SQLITE_ROW )
+    {
+    const char *t = (const char *)sqlite3_column_text( q, 0 ), *j = (const char *)sqlite3_column_text( q, 1 );
+    if( ! strcmp( t, "safe_off" ) ) v = 1;
+    else if( ! strcmp( t, "safe_on" ) ) v = 0;
+    else if( j && strstr( j, "\"live\":1" ) ) v = 1;
+    else v = 0;
+    }
+  sqlite3_finalize( q );
+  return v;
+  }
+
 /* levels of a take, a byte a tick (asppeaks.h) */
 int asp_peaks_set( AspStore *s, int64_t id, const uint8_t *v, int n )
   {

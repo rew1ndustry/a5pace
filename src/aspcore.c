@@ -199,6 +199,9 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
+  for( int i = 0; i < c->nlt; i++ )                     /* the count only goes up: a new run starts above every take there is (not the generated 90000 series) */
+    if( c->lt[i].iter < 90000 && (uint64_t)c->lt[i].iter > c->iter ) c->iter = (uint64_t)c->lt[i].iter;
+  asp_tank_set_head( c->tank, c->iter, c->peak );
   if( cfg->declared_latency > 0 )                       /* declared, not measured: play from the first tick */
     {
     c->latency = cfg->declared_latency; c->origin = 0; c->hush = c->latency / ASP_TICK + 5; c->phase = 1;
