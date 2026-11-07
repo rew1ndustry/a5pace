@@ -18,6 +18,8 @@
 #include "ctlclient.h"
 #include "a5mixer.h"
 #include "a5term.h"
+#include "a5map.h"
+#include <time.h>
 
 #define EV 64
 static char status[400], events[EV][220], space[100]; static int nev;
@@ -71,22 +73,51 @@ static void corners( int r, int w, int live, const char *left, const char *right
 
 static const char *mode_word( int m ) { return m == 2 ? "hold" : m == 3 ? "ping-pong" : m == 1 ? "keep" : "loop"; }
 
+/* the map: the iterations shown end at mbottom (the current one while following); MAP is asked for them and some before, because
+   a take that began earlier runs into these rows. refreshed about once a second, and at once when the view or the takes change */
+static Map map; static long mbottom, mcur; static int mfollow = 1, loopT = 380, mdirty = 1; static long mtop_seen = -2, mbot_seen = -2; static double mlast;
+#define MAP_BACK 60
+static double ms_now( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+
+static void map_update( int cmd, int h )
+  {
+  static char st[1500]; int rows = h - 5; if( rows < 1 ) rows = 1;
+  st[0] = 0; ctlc_cmd( cmd, "STATE", keep_state, st );
+  if( st[0] ) { double lf = jfld( st, "loop_frames", 0 ); mcur = (long)jfld( st, "iter", 0 ); if( lf >= 9600 ) loopT = (int)( lf / 9600 ); }
+  if( mfollow || mbottom > mcur ) { mbottom = mcur; mfollow = 1; }
+  long top = mbottom - rows + 1;
+  if( ! mdirty && top == mtop_seen && mbottom == mbot_seen && ms_now() - mlast < 1000 ) return;
+  char c[80]; long from = top - MAP_BACK; if( from < 0 ) from = 0;
+  snprintf( c, sizeof c, "MAP %ld %ld", from, mbottom );
+  map_clear( &map ); ctlc_cmd( cmd, c, map_line, &map );
+  mtop_seen = top; mbot_seen = mbottom; mdirty = 0; mlast = ms_now();
+  }
+
+static void map_scroll( int key, int h )
+  {
+  int rows = h - 5; if( rows < 1 ) rows = 1;
+  if( key == K_PGUP ) { mfollow = 0; mbottom -= rows - 1; }
+  else if( key == K_PGDN ) { mbottom += rows - 1; if( mbottom >= mcur ) mfollow = 1; }
+  else if( key == K_HOME ) { mfollow = 0; mbottom = rows - 1; }
+  else if( key == K_END ) mfollow = 1;
+  if( ! mfollow && mbottom < rows - 1 ) mbottom = rows - 1;
+  if( mbottom > mcur ) mbottom = mcur;
+  if( mbottom < 0 ) mbottom = 0;
+  mdirty = 1;
+  }
+
 static void draw( int live, int amode )
   {
-  int w, h, n, rows; char t[300];
+  int w, h, rows; char t[300];
   term_size( &w, &h );
-  if( term_resized() ) term_cls();
-  snprintf( t, sizeof t, "%s    %s", mode_word( amode ), space[0] ? space : "?" );
+  if( term_resized() ) { term_cls(); mdirty = 1; }
+  snprintf( t, sizeof t, "%s    %s%s", mode_word( amode ), space[0] ? space : "?", mfollow ? "" : "    (scrolled: End follows)" );
   corners( 1, w, live, t, "" );
   put( 2, C_TEXT, status, w );
-  rows = h - 4; if( rows > EV ) rows = EV;                    /* rows 3 .. h-2: what has just happened, newest last */
-  n = nev < rows ? nev : rows;
-  for( int i = 0; i < rows; i++ )
-    {
-    int k = i - ( rows - n );                                 /* a short log sits at the bottom of its rows */
-    put( 3 + i, C_TEXT, k >= 0 ? events[( nev - n + k ) % EV] : "", w );
-    }
-  put( h - 1, C_TEXT, "", w );
+  rows = h - 5; if( rows < 1 ) rows = 1;                       /* rows 3 .. h-3: the map, the latest iteration at the bottom */
+  map_draw( &map, mbottom - rows + 1, rows, 3, w, loopT, mcur );
+  for( int i = 2; i > 0; i-- )                                  /* the last two things that happened, in words */
+    put( h - i, C_TEXT, nev >= i ? events[( nev - i ) % EV] : "", w );
   corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [t]mix [?]", "" );
   printf( "%s", term_sgr( C_TEXT ) );
   fflush( stdout );
@@ -103,6 +134,7 @@ static void help( void )
 "                          +  more sensitive   -  less sensitive, 3 dB a press\n"
 "   f       profile        choose a gate profile made with a5cal\n\n"
 " the loop\n"
+"   PgUp / PgDn / Home / End   scroll the map; End follows the latest iteration\n"
 "   u / U   undo           the last take / every take of the last iteration: out of the loop, and anything\n"
 "                          the automix took out because of it comes back. heard from the next start.\n"
 "                          no effect in keep mode, where m / M mix or mute the most recent take instead\n"
@@ -183,6 +215,7 @@ int main( int argc, char **argv )
     live = strstr( status, "SAFE" ) == NULL;
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
+    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); }
     draw( live, amode );
     struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
     if( poll( p, 3, 250 ) <= 0 ) continue;
@@ -196,6 +229,7 @@ int main( int argc, char **argv )
       {
       char b[1200];
       if( ctlc_readline( ev, b, sizeof b, 10 ) < 0 ) break;
+      mdirty = 1;
       { char pr[240]; if( pretty( b, pr, sizeof pr ) ) snprintf( events[nev++ % EV], 220, "%.200s", pr ); }
       }
     if( p[0].revents & POLLIN )
@@ -205,6 +239,7 @@ int main( int argc, char **argv )
       char c[100] = "";
       switch( k )
         {
+        case K_PGUP: case K_PGDN: case K_HOME: case K_END: { int ww, hh; term_size( &ww, &hh ); map_scroll( k, hh ); break; }
         case 'l': strcpy( c, "LIVE" ); break;
         case 's': strcpy( c, "SAFE" ); break;
         case 'r': strcpy( c, "SYNC" ); break;
@@ -319,6 +354,7 @@ int main( int argc, char **argv )
         case 'Q': ctlc_cmd( cmd, "QUIT", NULL, NULL ); return 0;
         case 'q': return 0;
         }
+      mdirty = 1;
       if( c[0] ) ctlc_cmd( cmd, c, quiet, NULL );
       }
     }

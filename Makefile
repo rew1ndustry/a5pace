@@ -187,9 +187,9 @@ bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
-bin/a5hell: src/a5hell.c src/a5term.c src/a5term.h src/a5mixer.c src/a5mixer.h src/ctlclient.c
+bin/a5hell: src/a5hell.c src/a5term.c src/a5term.h src/a5map.c src/a5map.h src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5term.c src/a5mixer.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5term.c src/a5map.c src/a5mixer.c src/ctlclient.c
 
 bin/test_mixparse: tests/test_mixparse.c src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	$(CC) $(CFLAGS) $(INC) -o $@ tests/test_mixparse.c src/a5mixer.c src/ctlclient.c

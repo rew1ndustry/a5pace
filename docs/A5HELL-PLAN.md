@@ -79,7 +79,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 0. DONE 2026-11-06: read `a5mixer.c`, `gate.c`, `tools/a5start`, `aspcore.c` take close; key clashes settled; findings below.
 1. DONE 2026-11-06 (notes below): `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
 2. DONE 2026-11-06 (notes below): Core peaks + `MAP` + backfill; check against decoded audio on a test take.
-3. Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
+3. DONE 2026-11-06 (notes below): Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
 4. Cursor, selection, editing keys wired to the mixer language; remove `t`.
 5. Meters.
 6. Docs: `SHELL.md` and the help screen, the user guide, a README line.
@@ -135,6 +135,20 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   simulated space (SIM BURST 0.3, 0.1, 0.02) gave 206, 186, 159 (-17.5, -27.5, -41 dB) and the open take showed the same.
 - `a5recover` does not make peaks for takes it puts back: run `a5peaks` after it. `tests/test_start.sh` runs a5hell
   under `script` now (it needs a terminal). No unit test for `asp_pk_add` yet.
+
+## Step 3 notes
+- `src/a5map.c/.h`: `map_line` (MAP reply into a take list, chunks joined), `map_scale` (ticks and characters per cell),
+  `map_draw` (rows of iterations from a screen row; live `=` over muted `-`, colour by the cell's peak using the cfg thresholds;
+  takes run into later rows from the start iteration). `a5hell.c`: `map_update` asks STATE and `MAP top-60 bottom` about once a
+  second, at once on a key, an event or a scroll; PgUp/PgDn/Home/End scroll, End follows. Layout: row 1 corners, 2 status, 3..h-3
+  map, h-2 and h-1 the last two events, h keys. Meters (step 5) will take the row above the keys.
+- Follows the loop's current iteration (`iter` in STATE), not the newest take: after a restart the count starts again and new
+  takes fill low numbers (they were found at iteration 3, 4 on the test copy while old ones go up to 110). Tried a `last_iter`
+  in STATE, reverted. A take that began more than 60 iterations above the top row is not drawn into it.
+- Tested in `screen`/`script` on the copy (`scratch/tl`, a simulated space): 80x24 and 100x30, scrolling, colours present
+  (green, yellow, red), live burst appears as `=` in the current row while REC. Not tried: terminals above 380 columns
+  (several characters per tick), a real card.
+- The `t` screen still exists (step 4 retires it) and still draws its own way.
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
