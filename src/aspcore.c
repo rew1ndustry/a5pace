@@ -8,6 +8,7 @@
 #include "aspcore.h"
 #include "aspengine.h"
 #include "gate.h"
+#include "asppeaks.h"
 #include "takefile.h"
 #include "settings.h"
 
@@ -51,6 +52,7 @@ struct AspCore
   char     part[1200];
   int64_t  t_iter, t_sec, t_off, t_frames;
   int      t_wrapped, t_damaged, shh;
+  AspPk    pk;                      /* the take in progress: its level a tick, as far as it has got */
 
   /* takes in the loop, which the automix works on */
   LoopTake *lt; int nlt, caplt;
@@ -60,6 +62,7 @@ struct AspCore
   int      t_fix, t_in;             /* its input: the one channel it is recorded from (mono from the start), or -1; and the input setting then */
   char     profile[64], settings[1100];
   int      started;
+  double   m_in[2], m_out[2];       /* the meters: rms of the last tick in dB */
   int      out_shift;               /* how far the last output tick was brought down to fit */
   int      mix_now;                 /* the change being made is to be heard at once, not at the take's next start */
 
@@ -181,7 +184,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     { if( err ) snprintf( err, errn, "the loop is too short" ); return NULL; }
   AspCore *c = calloc( 1, sizeof *c );
   c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t );
-  c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 1;
+  c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 0;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
   if( cfg->lowcut > 0 ) asp_gate_set_lowcut( c->gate, cfg->lowcut );
@@ -196,6 +199,15 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
+  { /* the count only goes up, and only a take moves it. a run starts in the next empty iteration: the one after the newest take's
+       (not counting the generated 90000 series), 1 for a space with none. the store says so, not the loop file's header (a cache:
+       it is lost when the loop is rebuilt, and an old run could have left it wrong). during the run the count moves at the top of a
+       pass, only if a take was in any tick of the iteration that ended (newt) */
+    int64_t top = 0;
+    for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter < 90000 && c->lt[i].iter > top ) top = c->lt[i].iter;
+    c->iter = (uint64_t)top + 1; c->newt = 0;
+  }
+  asp_tank_set_head( c->tank, c->iter, c->peak );
   if( cfg->declared_latency > 0 )                       /* declared, not measured: play from the first tick */
     {
     c->latency = cfg->declared_latency; c->origin = 0; c->hush = c->latency / ASP_TICK + 5; c->phase = 1;
@@ -535,6 +547,45 @@ int asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ),
   return c->nlt;
   }
 
+/* the takes that start in iterations from..to, each with its levels; the take in progress last (open, no id yet) */
+int asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, void *u )
+  {
+  int k = 0; uint8_t buf[16384];
+  for( int i = 0; i < c->nlt; i++ )
+    {
+    const LoopTake *t = c->lt + i; AspCoreTake o;
+    if( t->iter < from || t->iter > to ) continue;
+    o.id = t->id; o.iter = t->iter; o.off = t->off; o.len = t->len; o.in = t->in; o.mono = t->mono; o.mixed = t->now.mixed;
+    asp_place_to_mix( t->now, t->mono, &o.gdb, &o.pan );
+    o.pending = asp_core_pending( c, t->id );
+    cb( u, &o, 0, buf, asp_peaks_get( c->store, t->id, buf, sizeof buf ) );
+    k++;
+    }
+  if( c->enc && c->t_iter >= from && c->t_iter <= to )
+    {
+    AspCoreTake o = { 0 };
+    o.iter = c->t_iter; o.off = c->t_off; o.len = c->t_frames; o.in = c->t_feed;
+    cb( u, &o, 1, c->pk.v, c->pk.n );
+    k++;
+    }
+  return k;
+  }
+
+static int cmp_desc( const void *a, const void *b ) { int64_t x = *(const int64_t *)a, y = *(const int64_t *)b; return x < y ? 1 : x > y ? -1 : 0; }
+int asp_core_map_high( const AspCore *c, int64_t above, int n, AspMapCb cb, void *u )
+  {
+  int64_t *its = malloc( ( c->nlt + 1 ) * sizeof *its ); int m = 0, k = 0;
+  if( ! its ) return 0;
+  for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter > above ) its[m++] = c->lt[i].iter;
+  qsort( its, m, sizeof *its, cmp_desc );
+  int d = 0;
+  for( int i = 0; i < m; i++ ) if( ! i || its[i] != its[i-1] ) its[d++] = its[i];      /* distinct, highest first */
+  if( d > n ) d = n;
+  for( int i = d - 1; i >= 0; i-- ) k += asp_core_map( c, its[i], its[i], cb, u );
+  free( its );
+  return k;
+  }
+
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {
   c->cfg.automix.mode = mode; c->cfg.automix.n = n; c->cfg.automix.each = each;
@@ -553,6 +604,7 @@ static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
 static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
   {
   double t0 = now_ms();
+  asp_pk_add( &c->pk, pcm, n, c->t_frames, c->t_fix );
   int rc = asp_tw_put( c->enc, pcm, (unsigned)n );          /* both channels, as they came: what was heard is kept */
   lap( c, "take_write", &t0 );
   if( c->t_fix >= 0 )                                       /* one channel, put in the middle as it comes: no stereo, no conversion */
@@ -628,6 +680,7 @@ static void take_end_( AspCore *c, const int32_t *last )
     return;
     }
   lt.id = tk.id;
+  asp_peaks_set( c->store, tk.id, c->pk.v, c->pk.n );
   LoopTake *t = lt_add( c );
   *t = lt;
   t->ready_pass = c->pass + 1;
@@ -664,6 +717,7 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   if( ! c->enc ) return -1;
   c->t_iter = (int64_t)c->iter; c->t_sec = sec; c->t_off = sec; c->t_frames = 0;
   c->t_wrapped = wrapped; c->t_damaged = 0; c->shh = 0;
+  asp_pk_reset( &c->pk );
   c->t_feed = c->cfg.feed && c->cfg.automix.mode != ASP_AUTOMIX_KEEP;     /* keep: stored, not put into the loop */
   {
   int32_t z[2 * 4096] = { 0 };                           /* frame 0 of a take is the start of its second */
@@ -708,7 +762,7 @@ static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
       c->latency = res->frames;
       c->origin = c->tick + 1;                           /* the loop starts at its top on the next tick */
       c->hush = c->origin + c->latency / ASP_TICK + 5;   /* the sync still in flight comes back first */
-      c->phase = 1; c->gate_ready = 0; c->have_prev = 0; c->newt = 1;
+      c->phase = 1; c->gate_ready = 0; c->have_prev = 0;     /* (newt stays: the iteration moves on only if a take is in it) */
       logf_( c, "sync_found", "{\"frames\":%lld,\"inverted\":%d,\"channel\":%d,\"out_db\":%.1f,\"in_peak_db\":%.1f,\"seconds\":%d,\"spread\":%d}",
              (long long)res->frames, res->inverted, res->channel, res->out_db, res->in_peak_db, res->seconds, res->spread );
       return;
@@ -788,10 +842,18 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   c->have_prev = 1;
   }
 
+static double rms_db( const int32_t *p, int ch )
+  {
+  double s = 0;
+  for( int i = 0; i < ASP_TICK; i++ ) { double v = p[2*i+ch]; s += v * v; }
+  return s > 0 ? 10 * log10( s / ASP_TICK / 4.611686018427388e18 ) : -200;
+  }
+
 int asp_core_tick( AspCore *c, const int32_t *in, int32_t *out )
   {
   if( c->phase == 0 ) sync_tick( c, in, out );
   else play_tick( c, in, out );
+  for( int ch = 0; ch < 2; ch++ ) { c->m_in[ch] = rms_db( in, ch ); c->m_out[ch] = rms_db( out, ch ); }
   c->tick++;
   return 0;
   }
@@ -843,6 +905,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   for( int i = 0; i < c->nlt; i++ ) in += c->lt[i].in;
   st->phase = c->phase; st->tick = c->tick; st->origin = c->origin; st->latency = c->latency; st->hush = c->hush;
   st->iter = c->iter; st->live = c->live; st->take_open = c->enc != NULL;
+  for( int ch = 0; ch < 2; ch++ ) { st->in_db[ch] = c->m_in[ch]; st->out_db[ch] = c->m_out[ch]; }
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
@@ -881,7 +944,7 @@ int asp_core_close( AspCore *c )
   logf_( c, "core_close", "{}" );
   asp_gate_free( c->gate );
   asp_sync_free( c->sync );
-  free( c->lt ); free( c->mv );
+  free( c->lt ); free( c->mv ); asp_pk_free( &c->pk );
   free( c );
   return 0;
   }

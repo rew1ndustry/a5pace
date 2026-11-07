@@ -4,7 +4,7 @@
 a5pace new DIR NAME SECONDS          make a session (a later create tool will build one from bpm, time
                                      signature and bars, with a metronome track made from samples)
 a5pace run [options] DIR             run it
-a5hell DIR                            terminal window on a running aspace: status line, events, a few keys
+a5hell DIR                            terminal window on a running aspace: the map of the loop, meters, a few keys (docs/A5HELL-GUIDE.md)
 a5control DIR [COMMAND...]              one command to a running aspace; no command prints the status line
 ```
 
@@ -24,6 +24,9 @@ or `ERR text`. `WATCH` turns a connection into a stream of `@tick type json`, th
 | `STATE` / `LINE` | the state as json / as one readable line |
 | `SAFE` / `LIVE` | stop / resume recording takes (the loop keeps playing) |
 | `SYNC` | hunt the round trip again |
+| `METER` | `in_l in_r out_l out_r`: rms of the last tick (0.2 s) in dB against full scale, -200 for silence |
+| `MAP HIGH n above` | the same for the takes of the n highest iterations above `above` (the shell's pinned rows) |
+| `MAP [from [to]]` | the levels of the takes starting in those iterations: lines `iter off frames in\|out\|open tick0 hex`, a byte (two hex digits) a 0.2 s tick, `-` if a take has none yet; long takes come in chunks of 500 ticks |
 | `GATE n`, `GATE +n`, `GATE -n`, `RING n`, `RELEARN` | gate margin dB, ring rule, learn the floor again |
 | `AUTOMIX LOOP`, `KEEP`, `OVERLAP n`, `SWAP [each]` | the mode, one at a time, see below |
 | `TAKES` | every take with its state |
@@ -43,7 +46,7 @@ A loop that was not closed cleanly (dirty flag in its header), is the wrong leng
 rebuilt from the store on the next start.
 
 ## Starting a space, and the tape
-`a5start DIR` makes sure the space is running and starts it if not; `a5hell DIR` and `a5control --start DIR ...` call it
+`a5start DIR` makes sure the space is running and starts it if not; `a5hell DIR` and `a5control --start DIR ...` call it (`a5start DIR --live` passes options on to a5pace)
 (and so will the gui and the backend), so how a space is started is decided in one place: the file `DIR/start` (lines
 `edge card|sim`, `args ...` extra options for a5pace, `release 1` to let go of pipewire for the card), else an `edge` line
 in `~/.config/a5pace/defaults`, else the sound card if there is one, else a simulated card. `A5START_EDGE=sim|card`
@@ -76,16 +79,29 @@ The loop is the sum of the takes in 64 bits. On the way out it is brought down b
 bits. When that shift changes, the output fades from the old scale to the new one across the next output tick, so
 the change is a ramp and not a step.
 
-### The shell's keys (`a5hell DIR`; press `?` in it)
-aspace starts SAFE (nothing is recorded) unless run with `--live`; the shell keeps no state of its own, it shows what aspace reports and `space` asks aspace to switch.
-The top line names the space. `space` safe/live. `u` undoes the last take and `U` every take of the last iteration: they go
-out of the loop, and takes the automix removed because of them come back; it is heard from each take's next start, and does
-nothing in keep mode (where `m` / `M` mix or mute the most recent take, queued / now). `h` history: up/down to a row, `.`
-puts the loop back as it was then (from each take's next start), `!` at once, esc leaves; no rebuild and no safe mode needed.
-`x` export: `a` all takes, `m` the mix, `l` the loop, by running `a5export` at low priority (docs/EXPORT.md). `t` the mixing
-screen, `T` takes as text, `w` wipe (asks), `a` the mode (a short list), `r` sync again, `l` relearn the gate floor,
-`g`/`G` gate more/less sensitive, `p` choose a profile, `?` help, `q` leave (aspace carries on), `Q` stop
-aspace. Under it, in words, what has just happened; the status line shows the mode as `loop`, `keep`, `overlap 4` or `swap each`.
+### The shell (`a5hell DIR [--live|--safe] [--loop] [--dim] [--no-start]`)
+The guide for people is docs/A5HELL-GUIDE.md; this is how it works. It needs a terminal (stdin and stdout), uses the alternate
+screen, paints a black background (`paint_background 0` in the config turns that off) and redraws on resize. It keeps no state
+of its own: it shows what aspace reports and `l` / `s` ask it to go LIVE / SAFE. `--live` and `--safe` (a5pace remembers live or safe from its last run, safe at the very first; these override) and `--loop` are passed on, or sent
+as `AUTOMIX KEEP|LOOP`, only when the shell itself starts the space through `a5start DIR [options]` (which hands the options on
+to a5pace); a space that is already running is left as it is.
+
+Screen: row 1 the corners (LIVE red / SAFE green at both ends, the mode and the name), row 2 the status line, the map, one
+line for the last event (a command being typed replaces it), the meters, the keys. The map asks the control port for `STATE`
+and `MAP top-60 bottom` (about once a second, at once after a key, an event or a scroll) and for `METER` on every round.
+Each row is an iteration; a loop of T ticks (0.2 s) in W columns is drawn one character a tick, or `ceil(T/W)` ticks a
+character when it does not fit. A take starting in iteration i at second `off` has its tick k at row `i + (5 off + k) / T`,
+column `(5 off + k) mod T`. `=` in the loop, `-` out of it, colour by the loudest tick in the cell, live over muted.
+
+Keys: `l` `s`; `g` then `l` / `+` / `-` (`GATE -3` is more sensitive); `a` mode; `u` `U` undo (nothing in keep mode); `h`
+history (`.` next start, `!` now); `x` export (`a5export`, low priority); `w` wipe; `r` sync; `f` profile; `T` takes as text;
+PgUp PgDn Home End scroll; arrows and shift+arrows the cursor and selection; digits, `+ - / \` and `. ! m p M P` the mixing
+language (`a5mix_parse`, `a5mix_line`: `MIX iter off [gN] [pN] MUTE|PLAY|TOGGLE [NOW]` for each affected take); `?` `q` `Q`.
+
+Colours and thresholds: `~/.local/etc/a5hell.cfg` (`$A5HELL_CFG`; `make install` writes the defaults from `share/a5hell.cfg` if
+there is none): `green_below_db -24`, `red_above_db -6`, `paint_background 1`, `dim 0`, and `col_text col_live col_safe col_low
+col_mid col_high` as ANSI foreground codes (37 grey, 91 red, 92 green, 93 yellow). `--dim` is `dim 1` for one run: normal
+intensity instead of bright, grey dimmed. The terminal handling is all in `src/a5term.c`, the only file using termios.
 
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
@@ -129,3 +145,12 @@ The card is taken only if it is free; if anything holds it, `a5card` names it an
 exclusive use). `A5CARD_RELEASE=1` is the opt-in: when only pipewire / wireplumber hold the card, switch its
 pipewire profile to "off" for the run and restore it after. Running through pipewire, or jack, would be other
 shells; this one does ALSA direct only.
+
+## Iterations only go up, and live/safe is remembered
+The iteration count only goes up, and only a take moves it: it moves on at the top of a pass if a take was in any tick of the
+iteration that has just ended (or is still open). Safe, restarts and resyncs do not move it. A run starts in the next empty iteration: the one
+after the newest recorded take (the generated 90000 series aside), or 1 in a new space. The store says so; the iteration count in the
+loop file's header is only a cache (it is lost when the loop is rebuilt) and is not read, so a restarted or rebuilt space never records
+into an old iteration. And a take is never written over: if the
+slot (iteration, second) exists, the next iteration is used. `a5pace run` starts live or safe as it was when it last ran (the
+log's newest `safe_on`, `safe_off` or `core_open`), safe if it never ran; `--live` / `--safe` override.

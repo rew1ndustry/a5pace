@@ -59,7 +59,14 @@ log(seq INTEGER PRIMARY KEY, tick, wall, actor, type, args_json)
 mixes(name PRIMARY KEY, seq)            -- label on a log point
 notes(id, take_id, seq, text, kind)     -- ledger, cues, journal lines
 peers(id, addr, last_seen)
+peaks(take_id PRIMARY KEY, n, data BLOB)  -- schema v3: the level of a take, a byte a tick
 ```
+
+`peaks.data` has one byte for each 0.2 s tick (9600 frames) of a take, counted from frame 0 of the take file, which is the
+start of the take's second of the loop (so tick k of a take at second s is loop tick 5s + k). 0 means nothing there (digital
+silence, or before the take began); otherwise 1 + 2 x (dB + 120), dB being the rms of that tick against full scale, the
+louder channel (or the chosen one for a take recorded from one input), 0.5 dB steps, -120 to 0 dB. aspace writes it when a
+take ends; `a5peaks DIR` makes it for older takes. A v2 session is upgraded to v3 the first time a writer opens it.
 
 `status` replaces the `.trk/.mix/.off` extensions. Session id is SHA-256 of a versioned
 canonical descriptor (name, artist, conception date, optional fields).

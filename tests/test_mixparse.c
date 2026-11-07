@@ -28,6 +28,8 @@ int main( void )
   CHECK( a5mix_parse( ".", &c ) == MP_DONE && ! c.has_iter && c.act == 3 );
   CHECK( a5mix_parse( "!", &c ) == MP_DONE && c.act == 3 && c.now );
   CHECK( a5mix_parse( "m", &c ) == MP_DONE && c.act == 1 );
+  { char b[100]; a5mix_parse( "-2/20M", &c ); a5mix_line( b, sizeof b, 3, 17, &c ); CHECK( ! strcmp( b, "MIX 3 17 g-2 p20 MUTE NOW" ) );
+    a5mix_parse( ".", &c ); a5mix_line( b, sizeof b, 3, -1, &c ); CHECK( ! strcmp( b, "MIX 3 * TOGGLE" ) ); }
   CHECK( a5mix_parse( "+", &c ) == MP_WAIT && a5mix_parse( "+3", &c ) == MP_WAIT && a5mix_parse( "12.3/", &c ) == MP_WAIT );
   CHECK( a5mix_parse( "123x", &c ) == MP_BAD );
   CHECK( a5mix_parse( "123.15.5", &c ) == MP_BAD );

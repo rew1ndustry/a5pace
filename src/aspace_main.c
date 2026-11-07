@@ -5,7 +5,7 @@
      arecord ... | a5pace run DIR | aplay ...      (the edge does the device, and the loopback, see docs/EDGE.md)
    options: -S LAT  simulated card with LAT frames of round trip (no pipe), paced in real time
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
-            -C PORT control port (0 any free; default 0)  --live  start recording (aspace starts SAFE: recording off)
+            -C PORT control port (0 any free; default 0)  --live / --safe  record / do not (default: as it was last time, safe at the first)
             --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
@@ -121,7 +121,7 @@ static int cmd_profiles( int argc, char **argv )
 
 static int usage( void )
   {
-  fprintf( stderr, "usage: a5pace new DIR NAME SECONDS [--profile NAME]\n       a5pace profiles | profiles show NAME | profiles install\n       a5pace run [-S LAT [--fast|--step]] [-C PORT] [--live] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
+  fprintf( stderr, "usage: a5pace new DIR NAME SECONDS [--profile NAME]\n       a5pace profiles | profiles show NAME | profiles install\n       a5pace run [-S LAT [--fast|--step]] [-C PORT] [--live|--safe] [-g DB] [-r DB] [--automix SPEC] DIR\n" );
   return 2;
   }
 
@@ -170,6 +170,20 @@ static void grid_cb( void *u, const AspCoreTake *t )
   {
   Run *r = u;
   ctl_say( r->ctl, r->run, "%lld %lld %lld %d %d %d %d %d %d %lld", (long long)t->iter, (long long)t->off, (long long)t->id, t->in, t->mixed, t->gdb, t->pan, t->pending, t->mono, (long long)t->len );
+  }
+
+/* MAP: iter off frames state tick0 hex; the levels in chunks of 500 ticks so a long take fits a line. state: open (being recorded),
+   in (in the loop) or out. no levels (an old take not yet through a5peaks): one line with tick0 0 and "-" */
+static void map_cb( void *u, const AspCoreTake *t, int open, const uint8_t *pk, int n )
+  {
+  Run *r = u; char hex[1010]; const char *st = open ? "open" : t->in ? "in" : "out";
+  if( n <= 0 ) { ctl_say( r->ctl, r->run, "%lld %lld %lld %s 0 -", (long long)t->iter, (long long)t->off, (long long)t->len, st ); return; }
+  for( int k = 0; k < n; k += 500 )
+    {
+    int m = n - k < 500 ? n - k : 500;
+    for( int i = 0; i < m; i++ ) snprintf( hex + 2 * i, 3, "%02x", pk[k + i] );
+    ctl_say( r->ctl, r->run, "%lld %lld %lld %s %d %s", (long long)t->iter, (long long)t->off, (long long)t->len, st, k, hex );
+    }
   }
 
 static const char *space_name( Run *r )
@@ -292,6 +306,8 @@ static void handle( void *u, int cl, const char *line )
       mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.input == 1 ? "left" : st.input == 2 ? "right" : st.input == 3 ? "stereo" : "auto", st.gate_learnt, st.sync_level_db, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
+  else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence) */
+    { ctl_say( c, cl, "%.1f %.1f %.1f %.1f", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1] ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0; char atx[40];
@@ -352,6 +368,8 @@ static void handle( void *u, int cl, const char *line )
       "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
+      "MAP HIGH n above | MAP [from [to]]   iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
+      "METER                                in_l in_r out_l out_r: rms of the last tick, dB",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
       "EDGE drop|starve frames              the audio edge reports lost samples",
@@ -429,6 +447,9 @@ static void handle( void *u, int cl, const char *line )
     }
   else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
     { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "MAP" ) )                   /* MAP [from [to]]: the levels of the takes starting in those iterations, a byte a 0.2 s tick (asppeaks.h) */
+    { if( n > 3 && ! strcasecmp( w[1], "HIGH" ) ) asp_core_map_high( r->core, atoll( w[3] ), atoi( w[2] ), map_cb, r );
+      else asp_core_map( r->core, n > 1 ? atoll( w[1] ) : 0, n > 2 ? atoll( w[2] ) : INT64_MAX, map_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {
@@ -503,7 +524,7 @@ static void nap( long ms ) { struct timespec t = { ms / 1000, ( ms % 1000 ) * 10
 static int cmd_run( int argc, char **argv )
   {
   Run r; memset( &r, 0, sizeof r ); r.step_cl = -1;
-  AspCoreCfg cfg; asp_core_defaults( &cfg ); cfg.live = 0;          /* aspace starts safe: recording is turned on on purpose */
+  AspCoreCfg cfg; asp_core_defaults( &cfg ); cfg.live = -1;         /* -1: as it was when it last ran (the log says), safe if it never ran; --live / --safe say it */
   int port = 0, fast = 0, quiet = 0; int64_t lat = 0;
   const char *dir = NULL, *profile = NULL, *tankpath = NULL; int tape_in = 0, tape_loop = 0;
   char flagtext[600] = "", settings[1100] = "", stored[1100] = "", pname[64] = "";
@@ -513,7 +534,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--fast" ) ) fast = 1;
     else if( ! strcmp( argv[i], "--step" ) ) r.step = 1;
     else if( ! strcmp( argv[i], "-C" ) && i + 1 < argc ) port = atoi( argv[++i] );
-    else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;                                  /* (the default now) */
+    else if( ! strcmp( argv[i], "--safe" ) ) cfg.live = 0;
     else if( ! strcmp( argv[i], "--live" ) ) cfg.live = 1;
     else if( ! strcmp( argv[i], "--tape" ) ) tape_in = 1;                                   /* the input as it came, flac, in DIR/tape/ */
     else if( ! strcmp( argv[i], "--tape-loop" ) ) tape_loop = 1;                            /* and the loop as it went out: heavy, does not compress */
@@ -538,6 +559,7 @@ static int cmd_run( int argc, char **argv )
   char err[ASP_ERR], tp[1100], ctlp[1100];
   r.store = asp_open( dir, 0, err );
   if( ! r.store ) { fprintf( stderr, "%s\n", err ); return 1; }
+  if( cfg.live < 0 ) cfg.live = asp_last_live( r.store ) > 0;       /* it remembers: live stays live, safe stays safe */
   { int64_t cpid;                                    /* said once, plainly, and in the log where a5hell shows it */
     if( asp_store_crashed( r.store, &cpid ) )
       {

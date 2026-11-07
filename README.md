@@ -11,7 +11,8 @@ plain C99 plus one servant thread, meant to build on Linux, macOS, Windows and A
 ## Parts
 (Names: the project is `rew1ndustry/a5pace`; every tool is `a5` + its name, and a name that starts with s lets the `5` be that S. See docs/NAMING.md.)
 - `a5pace` the runner: a pipe (raw s32 stereo 48 kHz on stdin/stdout) or a simulated card, and a control port
-- `a5hell` a terminal shell: status line, events and a few keys (safe/live, mixing screen, undo, history, export, automix, profile; docs/SHELL.md)
+- `a5hell` a terminal shell that fills the window: a map of the loop (an iteration a row, coloured by level), meters, a cursor to mix takes, and a few keys (live/safe, undo, history, export, automix, profile; guide docs/A5HELL-GUIDE.md, how it works docs/SHELL.md)
+- `a5peaks` works out the level of takes that have none yet (older takes, or after a5recover)
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
 - `a5create` makes a space (seconds, bars, or an audio file); `a5click` makes metronome tracks and `a5import` brings in an audio file as a track, for a space that is closed or running (docs/CREATE.md)
 - `a5recover` after a run that died: finds the takes it left behind and puts them back (docs/RECOVER.md)
@@ -36,10 +37,10 @@ bin/a5pace new /tmp/demo demo 8
 bin/a5pace run -S 7001 /tmp/demo &      # a simulated card, 7001 frames of round trip
 bin/a5control /tmp/demo SIM BURST 2 0.1    # a tone burst in
 bin/a5control /tmp/demo TAKES
-bin/a5hell /tmp/demo
+bin/a5hell /tmp/demo                    # the map, meters and keys: docs/A5HELL-GUIDE.md
 ```
 ## Read next
-`docs/SHELL.md` (running it), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` and `docs/STORE-DESIGN.md` (the store: how a take is kept, the
+`docs/SHELL.md` (running it), `docs/A5HELL-GUIDE.md` (the shell, for people), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` and `docs/STORE-DESIGN.md` (the store: how a take is kept, the
 codec seam, the keeper thread, measurements), `docs/RECOVER.md` (when a run dies, `a5recover`), `docs/CUBIE.md` (running on a cubieboard),
 `docs/CREATE.md`, `docs/EXPORT.md`, `docs/CALIBRATION.md`, `docs/PROFILES.md`, `docs/PORTABILITY.md`, `docs/NAMING.md` (why the tools are called what they are),
 `docs/LESSONS.md`, `docs/TODO.md`.

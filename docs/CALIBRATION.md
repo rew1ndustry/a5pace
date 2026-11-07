@@ -2,7 +2,7 @@
 
 Engineering a setup is kept apart from recording. `a5cal` is run **outside any loop session**, once per setup (an
 instrument and interface, a room, a signal chain), and leaves a finished **profile** that the loop shell (`a5hell`, key
-`p`) picks from its list. Nothing in `a5cal` touches a session.
+`f`) picks from its list. Nothing in `a5cal` touches a session.
 
 ```
 a5cal violin                      the guided way: lowest note, capture, search, look, save
