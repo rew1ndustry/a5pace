@@ -245,3 +245,7 @@ Facts about the current code (as read 2026-11-06):
 Decisions (all from the user): see sections above; plus colours bright by default with `--dim`; thresholds -24 / -6 dB in
 `a5hell.cfg`; black background painted; `l`/`s`/`g`-menu keys; start safe unless `--live`; keep mode unless `--loop`;
 no automix persistence; wrapped takes continue into later rows; overlapping takes all affected and all highlighted.
+
+## Follow-up (2026-11-06)
+- a5hell line above the meters (row h-2): the gain and pan of the take under the cursor, pinned left (`gain 3 pan left 20`, `gain 0 center`), always shown; typing or the last message follows. It asks `GRID` on each redraw (`gain_note` in `src/a5hell.c`). Takes with no mix of their own show the gain worked out from their tank levels.
+- `mono_lev` now defaults to 0: new mono takes go in at no shift (were 1, which showed as gain -1 on every keep take). Takes stored earlier keep -1; set them with the mixing language (`+1!`). Mono takes are about 6 dB louder than before; not yet listened to.
