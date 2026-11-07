@@ -49,8 +49,10 @@ LIVE keep   transylvanianLullaby    PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 
 
 ## Cursor and editing (the `t` screen, on the front page)
 - Arrows move a cursor over the map (row = iteration, column = place in the loop); shift+arrows select; PgUp/PgDn/Home/End
-  scroll; the cursor at the bottom row follows the latest iteration. The take under the cursor is the one covering that
-  cell in that row, newest first if several (Tab to cycle; to confirm). It is highlighted.
+  scroll; the cursor at the bottom row follows the latest iteration. **Every take covering the cursor's cell is
+  affected** (no choosing, no cycling: takes never overlap completely, and if they do it is allowed to happen). All the
+  cells of all those takes are highlighted, underlined where the terminal can (SGR 4; reverse video as the fallback),
+  including their continuation segments in later rows. A shift+arrow selection affects every take it touches, the same way.
 - The `a5mix_parse` language is reused unchanged: `[ITER[.TAKE]] [+N|-N] [/N|\N] then . ! m p M P`, with no ITER meaning
   the cursor or selection. A command starts at a digit, `+`, `-`, `/` or `\`, so these do not collide with menu keys.
   `iter.take` addressing is as now (`123.15`, `123..` the whole iteration).
@@ -90,7 +92,37 @@ processing); the shell also uses `poll`, sockets and `fork` for export, so nativ
 export call; WSL works as is. Plan: do the split now, port later if wanted.
 
 ## Open points
-- Take under the cursor when several overlap (proposal above).
+- (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - 23 pairs of takes overlap inside one iteration in the test data (old ones, e.g. 1.3 and 1.50). The user's view is that the
   gate is too quick. Check in `gate.c` at step 0 and note it here; the map will show such overlaps as live over muted.
 - Whether the space or the shell should hold `--loop`/keep after a restart is not needed: keep is the shell's default at start.
+
+## Resume notes (everything learnt, so a cleared session can carry on from this file alone)
+Working rules (CLAUDE.md): plan before acting; no repo-wide scans; `grep -I`; talk to the user first; commit on branches;
+installs go to `~/.local/bin` (.sh shells, .py python, else binary), config in `~/.local/etc`; system names prefixed a5.
+The user wants usage kept low and asked for the plan before any code; the go-ahead for step 0 has not been given yet.
+
+Facts about the current code (as read 2026-11-06):
+- `src/a5hell.c` (273 lines): poll loop on stdin, the event socket and the export pipe; `LINE` is asked every 250 ms and
+  parsed with `strstr` ("SAFE", "automix ..."); keys are a `switch`; `a` `x` `w` `p` `h` are sub-prompts that clear the
+  screen and block on `read`. `draw()` prints the header, up to 8 events (`events[8][220]`) and the status line.
+  `pretty()` turns `@tick type json` log lines into words. Commands: `ctlc_cmd(fd, "CMD", callback, user)`, replies are
+  lines then `OK`/`ERR`. Keys now: space safe/live, r sync, l relearn, g/G gate -3/+3, a mode, t mixing, T takes, u/U undo,
+  m/M lastmix (keep mode), x export, p profile, w wipe, h history, ? help, q leave, Q stop aspace.
+- `src/a5mixer.h/.c`: `a5mix_parse(str, MixCmd*)` (kept) and `a5mixer(cmd, ev, space)` (the screen, to be retired).
+- `docs/SHELL.md` documents the shell (keys section near the end); the help screen text is in `help()` in a5hell.c.
+- Control: `STATE` json (live, tick, iter, loop_frames, loop_takes, automix, gate_db, take_open, take_iter, take_off ...),
+  `LINE`, `SAFE`/`LIVE`, `AUTOMIX LOOP|KEEP|OVERLAP n|SWAP`, `TAKES`, `HISTORY n`, `UNDO`, `RESTORE`, `WIPE`, `GATE n|+n|-n`,
+  `RELEARN`, `SIM BURST`, `STEP`. `aspace_main.c` handles them (~line 285 on). aspace starts SAFE unless run `--live`.
+  `a5start DIR` starts a space; `DIR/start` can hold `args ...`; `A5START_EDGE=sim|card`.
+- Store: `session.db` (sqlite, schema v2 in `src/schema_sql.h`): `takes(id, artist, iter, off, frames, rate, channels, bits,
+  status trk|mix|off, lev_l, lev_r, wrapped, len, gone, t_start)`, `log(seq, tick, wall, actor, type, args_json)`.
+  Takes are files `takes.<artist>/<iter>/<off>.a5t`. `off` is whole seconds into the loop. 48000 Hz; a tick is 9600 frames
+  (0.2 s). The log's `end` event has `peak_db:[L,R]` for the whole take only: no per-tick level exists yet.
+- Test data `~/Desktop/transylvanianLullaby` (do not modify; copy to `scratch/` first): loop 3,648,000 frames (76 s, 380 ticks),
+  180 takes in 98 iterations (0..110), 173 status `off`, 7 `mix`; 56 takes run past the loop end; 60 iterations have more than
+  one take; 23 pairs overlap inside an iteration. `sqlite3 -readonly` works for looking.
+
+Decisions (all from the user): see sections above; plus colours bright by default with `--dim`; thresholds -24 / -6 dB in
+`a5hell.cfg`; black background painted; `l`/`s`/`g`-menu keys; start safe unless `--live`; keep mode unless `--loop`;
+no automix persistence; wrapped takes continue into later rows; overlapping takes all affected and all highlighted.
