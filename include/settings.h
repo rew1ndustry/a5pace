@@ -4,7 +4,7 @@
      <config>/defaults             inherited by every new session
      <config>/profiles/NAME        one setup: a gate and sync setting for an instrument, a room, a signal chain
    <config> is $A5PACE_CONFIG, else $XDG_CONFIG_HOME/a5pace, else ~/.config/a5pace.
-   keys: gate ring lowcut strict mono sync_max sync_start sync_target automix  (see docs/PROFILES.md) */
+   keys: gate ring lowcut strict mono sync_loudest sync_start sync_target automix  (see docs/PROFILES.md) */
 #ifndef ASPSETTINGS_H
 #define ASPSETTINGS_H
 #include <stddef.h>

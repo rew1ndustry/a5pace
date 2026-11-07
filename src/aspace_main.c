@@ -6,7 +6,7 @@
    options: -S LAT  simulated card with LAT frames of round trip (no pipe), paced in real time
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --live / --safe  record / do not (default: as it was last time, safe at the first)
-            --sync-max DB --sync-start DB --sync-target DB --sync-muted  the sync tone: ceiling, first level, wanted input peak
+            --sync-loudest N --sync-start N --sync-target N --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
@@ -169,7 +169,7 @@ static void fold_cb( int64_t id, const char *st, void *u )
 static void grid_cb( void *u, const AspCoreTake *t )
   {
   Run *r = u;
-  ctl_say( r->ctl, r->run, "%lld %lld %lld %d %d %d %d %d %d %lld", (long long)t->iter, (long long)t->off, (long long)t->id, t->in, t->mixed, t->gdb, t->pan, t->pending, t->mono, (long long)t->len );
+  ctl_say( r->ctl, r->run, "%lld %lld %lld %d %d %d %d %d %d %lld", (long long)t->iter, (long long)t->off, (long long)t->id, t->in, t->mixed, t->gsh, t->pan, t->pending, t->mono, (long long)t->len );
   }
 
 /* MAP: iter off frames state tick0 hex; the levels in chunks of 500 ticks so a long take fits a line. state: open (being recorded),
@@ -218,9 +218,9 @@ static void hist_cb( int64_t seq, int64_t tick, double wall, const char *actor, 
   if( ! strcmp( type, "relevel" ) && strstr( args, "\"why\":\"overlap\"" ) ) { if( h->n ) h->row[h->n-1].removed++; return; }
   if( ! strcmp( type, "relevel" ) && strstr( args, "\"why\":\"mix\"" ) )
     {
-    char b[120]; snprintf( b, sizeof b, "mix %lld.%lld: %s%s", (long long)jnum( args, "iter", 0 ), (long long)jnum( args, "off", 0 ),
+    char b[120]; snprintf( b, sizeof b, "mix %lld.%lld: %s", (long long)jnum( args, "iter", 0 ), (long long)jnum( args, "off", 0 ),
                            jnum( args, "in", 1 ) > 0 ? "in" : "muted" );
-    if( jnum( args, "mixed", 0 ) > 0 ) { size_t l = strlen( b ); snprintf( b + l, sizeof b - l, ", %+d dB, pan %d", (int)jnum( args, "gdb", 0 ), (int)jnum( args, "pan", 0 ) ); }
+    if( jnum( args, "mixed", 0 ) > 0 ) { size_t l = strlen( b ); snprintf( b + l, sizeof b - l, ", shift %+d, pan %d", (int)jnum( args, "gsh", 0 ), (int)jnum( args, "pan", 0 ) ); }
     if( h->n == 400 ) { memmove( h->row, h->row + 1, 399 * sizeof *h->row ); h->n--; }
     HRow *q = h->row + h->n++; memset( q, 0, sizeof *q ); q->seq = seq; q->wall = wall; q->iter = -1; snprintf( q->text, sizeof q->text, "%s", b );
     return;
@@ -300,10 +300,10 @@ static void handle( void *u, int cl, const char *line )
     {
     ctl_say( c, cl, "{\"name\":\"%s\",\"phase\":\"%s\",\"tick\":%lld,\"seconds\":%.1f,\"iter\":%llu,\"live\":%d,\"take_open\":%d,\"take_iter\":%lld,\"take_off\":%lld,"
       "\"take_frames\":%lld,\"latency\":%lld,\"origin\":%lld,\"loop_frames\":%lld,\"loop_takes\":%d,\"jobs\":%d,"
-      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"input\":\"%s\",\"gate_learnt\":%d,\"sync_db\":%.1f,\"log_seq\":%lld,\"tick_ms_avg\":%.2f,\"tick_ms_max\":%.2f,\"slow_ticks\":%lld,\"profile\":\"%s\",\"session\":\"%.12s\"}",
+      "\"automix\":\"%s\",\"automix_n\":%d,\"gate_db\":%.1f,\"ring_db\":%.1f,\"lowcut\":%.0f,\"strict\":%d,\"input\":\"%s\",\"gate_learnt\":%d,\"sync_shift\":%d,\"log_seq\":%lld,\"tick_ms_avg\":%.2f,\"tick_ms_max\":%.2f,\"slow_ticks\":%lld,\"profile\":\"%s\",\"session\":\"%.12s\"}",
       space_name( r ), st.phase ? "play" : "sync", (long long)st.tick, st.tick / 5.0, (unsigned long long)st.iter, st.live, st.take_open, (long long)st.take_iter,
       (long long)st.take_off, (long long)st.take_frames, (long long)st.latency, (long long)st.origin, (long long)st.loop_frames, st.loop_takes, st.jobs,
-      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.input == 1 ? "left" : st.input == 2 ? "right" : st.input == 3 ? "stereo" : "auto", st.gate_learnt, st.sync_level_db, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
+      mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.input == 1 ? "left" : st.input == 2 ? "right" : st.input == 3 ? "stereo" : "auto", st.gate_learnt, st.sync_shift, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence) */
@@ -363,7 +363,7 @@ static void handle( void *u, int cl, const char *line )
       "HISTORY [n]                          the moments the loop changed, newest first",
       "REVERT seq | REVERT TAKE iter off    go back to a log point / to just after a take (needs SAFE)",
       "TAKES                                every take and its state",
-      "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (dB) and pan (-100..100), absolute; mute takes it out of the loop",
+      "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (bit shift, + quieter) and pan (bit shift, + right), absolute; mute takes it out of the loop",
       "UNDO TAKE|ITER [NOW] | RESTORE seq [NOW] | LASTMIX [NOW]   undo the last take / iteration; the mix at a history point; toggle the latest take",
       "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
@@ -398,13 +398,13 @@ static void handle( void *u, int cl, const char *line )
     q = asp_core_revert( r->core, q );
     if( q < 0 ) ctl_err( c, cl, "REVERT needs SAFE first" ); else { ctl_say( c, cl, "%lld", (long long)q ); ctl_ok( c, cl ); }
     }
-  else if( ! strcmp( w[0], "MIX" ) && n > 3 )          /* MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]: gain in dB, pan -100 left .. 100 right, both absolute */
+  else if( ! strcmp( w[0], "MIX" ) && n > 3 )          /* MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]: gain and pan in bit shifts (+N right-shifts N bits; pan + is right), both absolute */
     {
     AspMixCmd m; memset( &m, 0, sizeof m );
     for( int i = 3; i < n; i++ )
       {
       for( char *q = w[i]; *q; q++ ) if( *q >= 'a' && *q <= 'z' ) *q -= 32;
-      if( w[i][0] == 'G' ) { m.set_gain = w[i][1] ? 1 : 2; m.gdb = atoi( w[i] + 1 ); }          /* G alone: keep its gain, as a mix of its own */
+      if( w[i][0] == 'G' ) { m.set_gain = w[i][1] ? 1 : 2; m.gsh = atoi( w[i] + 1 ); }          /* G alone: keep its gain, as a mix of its own */
       else if( w[i][0] == 'P' && strcmp( w[i], "PLAY" ) ) { m.set_pan = w[i][1] ? 1 : 2; m.pan = atoi( w[i] + 1 ); }
       else if( ! strcmp( w[i], "MUTE" ) ) m.act = ASP_MIX_MUTE;
       else if( ! strcmp( w[i], "PLAY" ) ) m.act = ASP_MIX_PLAY;
@@ -542,7 +542,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "-q" ) ) quiet = 1;
     else if( ! strcmp( argv[i], "--tank" ) && i + 1 < argc ) tankpath = argv[++i];                   /* where the loop file lives (it is a cache: /dev/shm on a board with an sd card) */
     else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (a5pace profiles) */
-    else if( ! strcmp( argv[i], "--sync-max" ) && i + 1 < argc ) addflag( flagtext, "sync_max", argv[++i] );   /* never louder than this, dB re asp4's sync */
+    else if( ! strcmp( argv[i], "--sync-loudest" ) && i + 1 < argc ) addflag( flagtext, "sync_loudest", argv[++i] );   /* never shifted less than N bits down from asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) addflag( flagtext, "sync_start", argv[++i] );
     else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */
     else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */

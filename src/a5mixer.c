@@ -20,7 +20,7 @@ int a5mix_parse( const char *s, MixCmd *c )
       {
       char o = *p++; int have = isdigit( (unsigned char)*p ); long v = have ? strtol( p, (char **)&p, 10 ) : 0;
       if( ! *p ) return MP_WAIT;                                  /* the number may not be finished */
-      if( o == '+' || o == '-' ) { c->set_gain = have ? 1 : 2; c->gdb = (int)( o == '-' ? -v : v ); }
+      if( o == '+' || o == '-' ) { c->set_gain = have ? 1 : 2; c->gsh = (int)( o == '-' ? -v : v ); }
       else { c->set_pan = have ? 1 : 2; c->pan = (int)( o == '\\' ? -v : v ); }
       ops++;
       continue;
@@ -38,7 +38,7 @@ int a5mix_line( char *b, size_t n, long iter, long off, const MixCmd *c )
   size_t o = (size_t)snprintf( b, n, "MIX %ld ", iter );
   #define ADD( ... ) do { if( o < n ) o += (size_t)snprintf( b + o, n - o, __VA_ARGS__ ); } while( 0 )
   if( off < 0 ) ADD( "*" ); else ADD( "%ld", off );
-  if( c->set_gain ) { if( c->set_gain == 2 ) ADD( " g" ); else ADD( " g%d", c->gdb ); }
+  if( c->set_gain ) { if( c->set_gain == 2 ) ADD( " g" ); else ADD( " g%d", c->gsh ); }
   if( c->set_pan ) { if( c->set_pan == 2 ) ADD( " p" ); else ADD( " p%d", c->pan ); }
   if( c->act ) ADD( c->act == 1 ? " MUTE" : c->act == 2 ? " PLAY" : " TOGGLE" );
   if( c->now ) ADD( " NOW" );

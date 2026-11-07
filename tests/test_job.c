@@ -77,19 +77,20 @@ int main( void )
   CHECK( same( t ) );
   }
 
-  /* an explicit mix: gain and pan in whole dB / percent, exact to take out again; a stereo take's pan does nothing */
+  /* an explicit mix: gain and pan in bit shifts, exact to take out again; a stereo take's pan does nothing */
   {
-  AspPlace mx = { 0, 0, 0, -6, 50, 1 }, mx2 = { 0, 0, 0, 3, -100, 1 };
-  int64_t ml, mr, ms[2];
-  asp_place_mult( (AspPlace){ 0, 0, 0, 0, 0, 1 }, 1, &ml, &mr );  CHECK( ml == ( 1 << 23 ) && mr == ml );          /* centre = half each = level shift 1 */
-  asp_place_mult( (AspPlace){ 0, 0, 0, 0, -100, 1 }, 1, &ml, &mr ); CHECK( ml == ( 1 << 24 ) && mr == 0 );
-  asp_place_mult( (AspPlace){ 0, 0, 0, 0, 80, 1 }, 0, &ml, &mr );   CHECK( ml == ( 1 << 24 ) && mr == ml );
-  { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == 0 && p == -100 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == 0 && p == 0 ); }
+  AspPlace mx = { 0, 0, 0, 1, 2, 1 }, mx2 = { 0, 0, 0, -1, -4, 1 };
+  int sl, sr, ms[2];
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, 0, 1 }, 1, &sl, &sr );   CHECK( sl == 0 && sr == 0 );     /* centre: both unshifted */
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, -3, 1 }, 1, &sl, &sr );  CHECK( sl == 0 && sr == 3 );     /* left: the right shifted */
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 1, 2, 1 }, 1, &sl, &sr );   CHECK( sl == 3 && sr == 1 );
+  asp_place_shifts( (AspPlace){ 0, 0, 0, 0, 5, 1 }, 0, &sl, &sr );   CHECK( sl == 0 && sr == 0 );     /* stereo: pan does nothing */
+  { int g, p; asp_place_to_mix( hl, 1, &g, &p ); CHECK( g == 0 && p == -31 ); asp_place_to_mix( c11, 1, &g, &p ); CHECK( g == 1 && p == 0 ); }
   CHECK( asp_move_take( t, s, b.id, -1, 0, -1, hr, mx ) == 0 );
   int32_t *bm = malloc( 30000 * 4 ); for( int i = 0; i < 30000; i++ ) bm[i] = S[2*i];     /* a is, since the conversion, its left channel as mono */
   memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );
-  asp_place_mult( mx, 1, &ms[0], &ms[1] );
-  for( int i = 0; i < 9000; i++ ) { int64_t at = ( 48000 + i ) % LOOP; model[2*at] += asp_gain( M[i], ms[0] ); model[2*at+1] += asp_gain( M[i], ms[1] ); }
+  asp_place_shifts( mx, 1, &ms[0], &ms[1] );
+  for( int i = 0; i < 9000; i++ ) { int64_t at = ( 48000 + i ) % LOOP; model[2*at] += asp_level( M[i], ms[0] ); model[2*at+1] += asp_level( M[i], ms[1] ); }
   CHECK( same( t ) );
   CHECK( asp_move_take( t, s, b.id, -1, 0, -1, mx, mx2 ) == 0 );  CHECK( asp_move_take( t, s, b.id, -1, 0, -1, mx2, ASP_PLACE_OFF ) == 0 );
   memset( model, 0, sizeof model ); mput( bm, 30000, 1, 0, 1, c11 );  CHECK( same( t ) );

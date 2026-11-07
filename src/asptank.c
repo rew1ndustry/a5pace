@@ -171,7 +171,7 @@ int asp_tank_level( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n, int 
   return 0;
   }
 
-uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int64_t gain, int *shift )
+uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int *shift )
   {
   int msb = 0, sh, old;
   uint64_t p = peak | 1;
@@ -183,7 +183,6 @@ uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix
   for( int64_t i = 0; i < 2 * n; i++ )
     {
     int64_t sam = mix[i], v;
-    if( gain ) sam += ( sam * gain ) >> 31;
     if( old == sh ) v = sam >> sh;                   /* steady: exact, as asp4 */
     else
       {

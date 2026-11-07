@@ -52,13 +52,13 @@ $c QUIT > /dev/null; wait $pid || true
 export A5PACE_CONFIG=$t/cfg
 $here/bin/a5pace profiles install > /dev/null
 chk "the shipped profiles are listed" "$here/bin/a5pace profiles | grep -q '^violin-line .*G3'"
-printf 'sync_max -40\n' > $t/cfg/defaults
+printf 'sync_loudest 7\n' > $t/cfg/defaults
 d2=$t/s2; $here/bin/a5pace new $d2 prof 6.25 --profile violin-line > /dev/null
 $here/bin/a5pace run --live -q -S 7001 --fast $d2 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d2/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 c2="$here/bin/a5control $d2"
-chk "a new session carries the defaults and the chosen profile" "$c2 SETTINGS | grep -q 'sync_max=-40' && $c2 SETTINGS | grep -q 'lowcut=190' && $c2 STATE | grep -q '\"profile\":\"violin-line\"'"
+chk "a new session carries the defaults and the chosen profile" "$c2 SETTINGS | grep -q 'sync_loudest=7' && $c2 SETTINGS | grep -q 'lowcut=190' && $c2 STATE | grep -q '\"profile\":\"violin-line\"'"
 chk "the profile is in force" "$c2 STATE | grep -q '\"lowcut\":190,\"strict\":1'"
 chk "the loop shell can list them" "$c2 PROFILES | grep -q 'bass-line'"
 $c2 PROFILE bass-line > /dev/null

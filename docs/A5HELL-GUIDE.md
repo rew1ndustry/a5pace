@@ -68,12 +68,12 @@ the block touches is changed.
 | `m` / `p` | mute / play (take out of / back into the loop), heard from the take's next start |
 | `M` / `P` | the same, at once |
 | `.` / `!` | switch it the other way, next start / at once |
-| `+3.` `-2.` | gain 3 dB up / 2 dB down; `/20.` pan 20% right, `\90.` 90% left; end with `. ! m p M P` |
-| `-2/20M` | gain and pan together, and mute at once |
+| `+3.` `-2.` | gain by bit shifts: `+3` shifts every sample right 3 bits (quieter, about 18 dB), `-2` left 2 bits (louder, it saturates); `/2.` pan 2 bits right (the left side shifted 2 more), `\3.` 3 bits left; end with `. ! m p M P` |
+| `+1/2M` | gain and pan together, and mute at once |
 
 Gain and pan are absolute: typed again, they replace. A sign or slash with no number keeps the take's value but makes it a
 mix of its own, which the automix then leaves alone. esc throws away what you have typed and the selection.
-To name a take instead of using the cursor, type its place: `123.15-2/20.` (iteration 123, the take at second 15),
+To name a take instead of using the cursor, type its place: `123.15-2/2.` (iteration 123, the take at second 15),
 `123m` mutes every take that starts in iteration 123, `123..` switches them all.
 
 In **keep** mode takes are recorded but not put into the loop; put one in with `p`.

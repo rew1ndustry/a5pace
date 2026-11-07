@@ -10,10 +10,10 @@
 
 typedef struct
   {
-  double start_db;    /* first output level, dB re asp4's sync (0 = asp4's level). default -48 */
-  double max_db;      /* never louder than this. default 0 */
-  double step_db;     /* rise per second that is not heard. default 6 */
-  double target_db;   /* wanted input peak in dBFS once heard. default -12 */
+  int    start_shift; /* first output: asp4's sync tone right-shifted this many bits (one bit is about 6 dB). default 8 */
+  int    loudest;     /* never shifted less than this (0 = asp4's level). default 0 */
+  int    step_shift;  /* bits it comes up each second that is not heard. default 1 */
+  int    target_shift;/* wanted input peak once heard, in bits below full scale. default 2 */
   int    need;        /* readings whose median is the answer. default 3 */
   int    tol;         /* widest spread among them, in samples. default 2 */
   int    give_up;     /* seconds before giving up, 0 never. default 60 */
@@ -25,8 +25,8 @@ typedef struct
   int64_t frames;     /* round trip, output to input, in frames (may exceed one second) */
   int     inverted;   /* the path inverts the signal */
   int     channel;    /* 0 left, 1 right: the input channel read */
-  double  out_db;     /* output level it settled at, re asp4's */
-  double  in_peak_db; /* input peak in dBFS at that level */
+  int     out_shift;  /* output shift it settled at, bits below asp4's */
+  int     in_peak_shift; /* input peak, bits below full scale, at that level */
   int     seconds;    /* seconds taken */
   int     spread;     /* widest difference among the readings used */
   } AspSyncResult;
@@ -40,7 +40,7 @@ void     asp_sync_out( AspSync *s, int32_t *out );
 /* the second just recorded. 0 still looking, 1 found (see result), -1 gave up */
 int      asp_sync_in( AspSync *s, const int32_t *in );
 const AspSyncResult *asp_sync_result( const AspSync *s );
-double   asp_sync_level( const AspSync *s );           /* output level now, dB re asp4's */
+int      asp_sync_level( const AspSync *s );           /* output shift now, bits below asp4's */
 
 /* asp4's own routines, for the differential test: out_asp4 is asp4's putSync at full level; find_asp4
    is findSync with asp4's alternating polarity (inverted on odd seconds) */

@@ -255,7 +255,7 @@ int main( int argc, char **argv )
       {
       Tk *t = sn.t + i; if( ! t->in ) continue;
       h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->st.l, sizeof t->st.l ); h = fnv( h, &t->st.r, sizeof t->st.r ); h = fnv( h, &t->st.flip, sizeof t->st.flip );
-      h = fnv( h, &t->st.gdb, sizeof t->st.gdb ); h = fnv( h, &t->st.pan, sizeof t->st.pan ); h = fnv( h, &t->st.mixed, sizeof t->st.mixed ); h = fnv( h, &t->off, sizeof t->off );
+      h = fnv( h, &t->st.gsh, sizeof t->st.gsh ); h = fnv( h, &t->st.pan, sizeof t->st.pan ); h = fnv( h, &t->st.mixed, sizeof t->st.mixed ); h = fnv( h, &t->off, sizeof t->off );
       }
     snprintf( jobs[nj].name, 120, "mix_%05lld.flac", (long long)cur ); jobs[nj++].key = h;
     }

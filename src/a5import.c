@@ -1,8 +1,8 @@
 /* a5import: put an audio file into a session as a take. whether or not the session is running.
      a5import DIR FILE [--play] [--level N] [--pan l|c|r]
    FILE is wav or flac at 48 kHz, one or two channels. it becomes a generated track in the next free place of the 90000
-   series (90001, 90002 ...), starting at the loop's start. it is kept, muted: --play puts it into the loop as well, at --level (a right shift, 6 dB a step: the
-   default is 1 for a mono track, which sits centred at 0 dB, and 0 for a stereo one). --mute keeps it as a take that is not in the loop. a running session is told (IMPORT) and the track joins
+   series (90001, 90002 ...), starting at the loop's start. it is kept, muted: --play puts it into the loop as well, at --level (a right shift: the
+   default is 1 for a mono track, which is shared between the two outputs, and 0 for a stereo one). --mute keeps it as a take that is not in the loop. a running session is told (IMPORT) and the track joins
    the loop behind the play head like any other change; a closed one is written to. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -55,7 +55,7 @@ int main( int argc, char **argv )
   { AspAudio *a = asp_audio_open( file, &ch, &told, err, sizeof err );        /* what it is, before any of it is read */
     if( ! a ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }
     asp_audio_close( a ); }
-  if( level == -99 ) level = ch == 1 ? 1 : 0;                      /* a mono track is shared between the two outputs: one step down is 0 dB centred */
+  if( level == -99 ) level = ch == 1 ? 1 : 0;                      /* a mono track is shared between the two outputs: one bit down keeps it from doubling */
   ll = lr = level;
   if( ! strcmp( pan, "l" ) ) lr = ASP_LEV_OFF; else if( ! strcmp( pan, "r" ) ) ll = ASP_LEV_OFF; else if( strcmp( pan, "c" ) ) { fprintf( stderr, "a5import: --pan l, c or r\n" ); return 2; }
   int64_t id = -1, iter = 0;

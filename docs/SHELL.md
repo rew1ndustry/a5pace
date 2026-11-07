@@ -68,7 +68,7 @@ start and stop either while running; both are off unless asked for. On a board w
 Set from the control port with `AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]`, from `a5hell` with `a` (a short list, then
 the one question that mode asks), or from a profile (`automix loop`, `automix keep`, `automix overlap 4`, `automix swap each`).
 Fading is not a mode yet. A take's gain and pan are, for now, one constant setting across the whole take
-(`lev`: a right shift per output channel, 6 dB a step, or off); fades will be envelopes on a take (a perceived
+(`lev`: a right shift per output channel, or off; a mixed take is a gain shift and a pan shift, `MIX iter off [gN] [pN]`: +N right-shifts every sample N bits, -N left-shifts; pan +N shifts the left side N more, -N the right. No dB and no multiplies anywhere in gain; only envelopes will do real gain maths); fades will be envelopes on a take (a perceived
 linear drop over the whole take) once envelopes are mapped out.
 A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
 (a fifth of a second of work a tick), started when the playhead is not in the take and will not reach it before
@@ -105,7 +105,7 @@ intensity instead of bright, grey dimmed. The terminal handling is all in `src/a
 
 ## Mono
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
-stored as one channel and placed in the middle (a level shift of 1, 6 dB down, on both outputs); with SWAP
+stored as one channel and placed in the middle (a level shift of 1 on both outputs); with SWAP
 it goes hard left / right instead. While it is being recorded it is heard as stereo, and is replaced by the mono
 placement when it ends. `mono_detect` and `mono_lev` are in the core's config.
 
@@ -124,8 +124,8 @@ It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind o
 `arecord | a5pace run | aplay` on ALSA (the UR22C here; add a case for another card), with the shell's jobs done
 for aspace: the loopback goes on for the sync hunt and off for playing (it follows `sync_start` / `sync_found` /
 `resync` in the log), and the card's `overrun` / `underrun` reports become `EDGE drop` / `EDGE starve`. The sync
-tone is capped (`A5CARD_SYNCMAX`, default -36 dB re asp4's) because the monitor may be in headphones; it starts at
--48 and only rises if it is not heard. It never stops anything it did not start. If only pipewire holds the card,
+tone is capped (`A5CARD_SYNCMAX`, default 6 bits down from asp4's, about 36 dB) because the monitor may be in headphones; it starts at
+8 bits down and only rises if it is not heard. It never stops anything it did not start. If only pipewire holds the card,
 `A5CARD_RELEASE=1` sets the card's pipewire profile to "off" for the run and puts it back on exit. `A5CARD_DRY=1`
 checks everything and starts nothing. First real run (2026-10-27, UR22C, loopback): sync found on the first
 attempt, 30123 frames (0.63 s: the pipes and card buffers), spread 1 sample, no drops or starves, loopback off and

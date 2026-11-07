@@ -28,7 +28,7 @@ a5click DIR --clear                                         take the generated c
 ```
 Each `--style` is a take of its own, so a loop can carry several. Styles: `beats` (accent on 1), `bars` (downbeats only),
 `eighths`, `triplets`, `sixteenths` (the beat plus quieter subdivisions), `offbeat` (only between the beats).
-`--pan l|c|r` puts it left, middle or right; `--level N` is a right shift, 6 dB a step (default 1: -6 dB; 0 is full).
+`--pan l|c|r` puts it left, middle or right; `--level N` is a right shift in bits (default 1; 0 is full).
 
 **Fitting a loop.** The bars are spread evenly over the loop, whatever its length: so a loop that is not exactly that many
 bars at that tempo gets the tempo that fits, and `a5click` says so (`--strict` refuses instead). Because the clicks
@@ -49,7 +49,7 @@ a5import DIR guide.wav --play --level 2 --pan l
 ```
 wav or flac, 48 kHz, one or two channels (anything else: convert first, for example with `sox`). The track starts at the
 loop's start, whatever its length, and is a generated track in the next free place of the 90000 series (90001, 90002 ...,
-the same series the clicks use; `a5export` writes it as `loop_90001_00000.flac`). `--level N` is a right shift, 6 dB a step;
+the same series the clicks use; `a5export` writes it as `loop_90001_00000.flac`). `--level N` is a right shift in bits;
 the default is 1 for a mono file (centred at 0 dB, like a recorded mono take) and 0 for a stereo one. It works on a closed
 session and on a running one (the track joins the loop behind the play head, like any mix change).
 Planned: importing an export folder over the original takes (see docs/TODO.md).

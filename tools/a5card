@@ -5,7 +5,7 @@
 # not in the core. alsa + the UR22C on this host; add a case to mixer() and DEV for another card.
 #
 #   A5CARD_DEV     the alsa device          (default hw:UR22C)
-#   A5CARD_SYNCMAX highest sync tone, dB re asp4's, kept low for headphones (default -36)
+#   A5CARD_SYNCMAX least bits the sync tone is shifted down from asp4's (default 6, about 36 dB), kept quiet for headphones
 #   A5CARD_BUFFER_MS  alsa buffer for both directions (default: alsa's 500). stability comes before latency: under
 #                   about 600 ms (three ticks) a stall of the storage can become a dropout; a warning says so
 #   A5CARD_DRY=1   check everything, start nothing
@@ -29,7 +29,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 if [ -f "$HERE/src/aspace_main.c" ]; then A5PACE="$HERE/bin/a5pace"; A5CONTROL="$HERE/bin/a5control"
 else A5PACE=$(command -v a5pace); A5CONTROL=$(command -v a5control); fi
 DEV=${A5CARD_DEV:-hw:UR22C}
-SYNCMAX=${A5CARD_SYNCMAX:--36}
+SYNCMAX=${A5CARD_SYNCMAX:-6}
 BUF=""; if [ -n "${A5CARD_BUFFER_MS:-}" ]; then BUF="--buffer-time=$((A5CARD_BUFFER_MS*1000))"; [ "$A5CARD_BUFFER_MS" -lt 600 ] && echo "a5card: buffer $A5CARD_BUFFER_MS ms is under three ticks: a slow write on the storage may drop samples" >&2; fi
 FMT="-q -D $DEV -f S32_LE -c 2 -r 48000 -t raw"
 CARD=${DEV#hw:}; CARD=${CARD%%,*}
@@ -89,8 +89,8 @@ mixer() {   # on | off
 }
 
 if [ "${A5CARD_DRY:-0}" = 1 ]; then
-  say_ "dry run: card $DEV free, session $DIR, sync ceiling $SYNCMAX dB; would run:"
-  echo "  arecord $FMT | a5pace run --sync-max $SYNCMAX $* $DIR | aplay $FMT" >&2
+  say_ "dry run: card $DEV free, session $DIR, sync tone shifted at least $SYNCMAX bits; would run:"
+  echo "  arecord $FMT | a5pace run --sync-loudest $SYNCMAX $* $DIR | aplay $FMT" >&2
   exit 0
 fi
 
@@ -151,7 +151,7 @@ latency_report() {   # measured frames
 mixer on
 # the pipeline; the first stage's stderr goes to the drop monitor, the last to the starve monitor
 ( "$(command -v arecord)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun drop) \
-  | "$A5PACE" run -C 0 --sync-max "$SYNCMAX" "$@" "$DIR" \
+  | "$A5PACE" run -C 0 --sync-loudest "$SYNCMAX" "$@" "$DIR" \
   | "$(command -v aplay)" -D "$DEV" -f S32_LE -c 2 -r 48000 -t raw $BUF 2> >(xrun starve) ) &
 pipe=$!; pids="$pipe"
 

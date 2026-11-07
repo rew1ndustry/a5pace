@@ -186,9 +186,9 @@ static int32_t *putOctal( int32_t *now, int32_t *end, int oct, int fix )
   }
 
 
-static void putSync( char *data, int len, int second, double scale )
+static void putSync( char *data, int len, int second, int shift )
   {
-  sync_scale = scale;
+  sync_scale = ldexp( 1.0, -shift );                    /* the tone is shifted down shift bits: an exact power of two */
   int32_t *top = (int32_t*)data;
   int32_t *one = (int32_t*)(data+(len/3));
   int32_t *two = (int32_t*)(data+((len*2)/3));
@@ -326,7 +326,7 @@ static int64_t readSync( int32_t *pad, int32_t *end, uint64_t second, int noise,
 /* --- what asp4's findSync does, for the differential test --- */
 
 void asp_sync_out_asp4( int32_t *out, int second )
-  { putSync( (char *)out, ASP_SYNC_FRAMES * 8, second, 1.0 ); }
+  { putSync( (char *)out, ASP_SYNC_FRAMES * 8, second, 0 ); }
 
 int64_t asp_sync_find_asp4( const int32_t *in, int second )
   {
@@ -347,7 +347,7 @@ struct AspSync
   {
   AspSyncCfg c;
   AspSyncResult r;
-  double out_db;
+  int out_shift;                   /* bits the tone is shifted down (bigger is quieter) */
   int n;                           /* seconds sent */
   int64_t read[MAXREAD];
   int nread, inv, ch, fails;
@@ -355,7 +355,7 @@ struct AspSync
 
 void asp_sync_defaults( AspSyncCfg *c )
   {
-  c->start_db = -48; c->max_db = 0; c->step_db = 6; c->target_db = -12;
+  c->start_shift = 8; c->loudest = 0; c->step_shift = 1; c->target_shift = 2;
   c->need = 3; c->tol = 2; c->give_up = 60; c->output_muted = 0;
   }
 
@@ -365,25 +365,28 @@ AspSync *asp_sync_new( const AspSyncCfg *c )
   if( c ) s->c = *c; else asp_sync_defaults( &s->c );
   if( s->c.need < 1 ) s->c.need = 1;
   if( s->c.need > MAXREAD ) s->c.need = MAXREAD;
-  s->out_db = s->c.output_muted ? s->c.max_db : s->c.start_db;
-  if( s->out_db > s->c.max_db ) s->out_db = s->c.max_db;
+  s->out_shift = s->c.output_muted ? s->c.loudest : s->c.start_shift;
+  if( s->out_shift < s->c.loudest ) s->out_shift = s->c.loudest;
   return s;
   }
 void asp_sync_free( AspSync *s ) { free( s ); }
 const AspSyncResult *asp_sync_result( const AspSync *s ) { return &s->r; }
-double asp_sync_level( const AspSync *s ) { return s->out_db; }
+int asp_sync_level( const AspSync *s ) { return s->out_shift; }
 
 void asp_sync_out( AspSync *s, int32_t *out )
-  { putSync( (char *)out, ASP_SYNC_FRAMES * 8, s->n++, pow( 10, s->out_db / 20 ) ); }
+  { putSync( (char *)out, ASP_SYNC_FRAMES * 8, s->n++, s->out_shift ); }
 
 static int cmp64( const void *a, const void *b )
   { int64_t x = *(const int64_t *)a, y = *(const int64_t *)b; return x < y ? -1 : x > y; }
 
-static double peak_db( const int32_t *p, int ch )
+/* the peak as a number of bits below full scale: 0 when it is in the top bit, 1 in the next ... (40 for silence) */
+static int peak_shift( const int32_t *p, int ch )
   {
-  int64_t pk = 0;
+  int64_t pk = 0; int k = 0;
   for( int i = 0; i < ASP_SYNC_FRAMES; i++ ) { int64_t v = llabs( (int64_t)p[2*i+ch] ); if( v > pk ) pk = v; }
-  return pk ? 20 * log10( pk / 2147483648.0 ) : -200;
+  if( ! pk ) return 40;
+  while( pk >> k ) k++;                                /* its length in bits */
+  return k >= 31 ? 0 : 31 - k;
   }
 
 int asp_sync_in( AspSync *s, const int32_t *in )
@@ -408,24 +411,24 @@ int asp_sync_in( AspSync *s, const int32_t *in )
   if( ! got )
     {
     if( ++s->fails >= 3 ) s->nread = 0;                /* lost it: start the readings again */
-    s->out_db += s->c.step_db;
-    if( s->out_db > s->c.max_db ) s->out_db = s->c.max_db;
+    s->out_shift -= s->c.step_shift;
+    if( s->out_shift < s->c.loudest ) s->out_shift = s->c.loudest;
     s->r.seconds = s->n;
     return s->c.give_up && s->n >= s->c.give_up ? -1 : 0;
     }
   s->fails = 0;
 
-  double pk = peak_db( pad, ch ), err = s->c.target_db - pk;
+  int pk = peak_shift( pad, ch ), err = pk - s->c.target_shift;     /* err > 0: it comes in too quiet */
   if( ( s->nread && ( inv != s->inv || ch != s->ch ) ) )
     s->nread = 0;                                      /* the path changed under us */
   s->inv = inv; s->ch = ch;
 
   /* trim the output so the input peak lands on the target; readings taken at another level are dropped */
-  if( fabs( err ) > 2 && ! ( err > 0 && s->out_db >= s->c.max_db ) )
+  if( err != 0 && ! ( err > 0 && s->out_shift <= s->c.loudest ) )
     {
-    double step = err > 30 ? 30 : ( err < -30 ? -30 : err );   /* the path is linear: this lands it */
-    s->out_db += step;
-    if( s->out_db > s->c.max_db ) s->out_db = s->c.max_db;
+    s->out_shift -= err;                               /* the path is linear: this lands it */
+    if( s->out_shift < s->c.loudest ) s->out_shift = s->c.loudest;
+    if( s->out_shift > 30 ) s->out_shift = 30;
     s->nread = 0;
     s->r.seconds = s->n;
     return s->c.give_up && s->n >= s->c.give_up ? -1 : 0;
@@ -444,6 +447,6 @@ int asp_sync_in( AspSync *s, const int32_t *in )
   if( s->r.spread > s->c.tol ) return s->c.give_up && s->n >= s->c.give_up ? -1 : 0;   /* unsteady */
   s->r.frames = sorted[s->nread / 2];
   s->r.inverted = inv; s->r.channel = ch;
-  s->r.out_db = s->out_db; s->r.in_peak_db = pk;
+  s->r.out_shift = s->out_shift; s->r.in_peak_shift = pk;
   return 1;
   }

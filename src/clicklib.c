@@ -61,11 +61,11 @@ int asp_click_events( const AspMeter *m, const char *style, int64_t loop, AspCli
   }
 
 /* --- the sounds ---------------------------------------------------------------------------------------- */
-static int32_t *click_synth( double hz, double peak_db, double ms, double tau_ms, int64_t *len )
+static int32_t *click_synth( double hz, int shift, double ms, double tau_ms, int64_t *len )
   {
   int64_t n = (int64_t)( ms / 1000 * RATE );
   int32_t *p = malloc( (size_t)n * 4 );
-  double amp = 2147483647.0 * pow( 10, peak_db / 20 );
+  double amp = ldexp( 2147483647.0, -shift );          /* the peak is shifted down shift bits */
   for( int64_t i = 0; i < n; i++ )
     {
     double t = (double)i / RATE, env = exp( -t / ( tau_ms / 1000 ) ) * ( i < 48 ? i / 48.0 : 1 ) * ( i > n - 96 ? ( n - i ) / 96.0 : 1 );
@@ -77,9 +77,9 @@ static int32_t *click_synth( double hz, double peak_db, double ms, double tau_ms
 
 void asp_click_sounds_default( AspClickSounds *s )
   {
-  s->pcm[0] = click_synth( 1500, -10, 40, 7, &s->len[0] );
-  s->pcm[1] = click_synth( 1000, -16, 40, 7, &s->len[1] );
-  s->pcm[2] = click_synth( 800, -24, 30, 5, &s->len[2] );
+  s->pcm[0] = click_synth( 1500, 2, 40, 7, &s->len[0] );
+  s->pcm[1] = click_synth( 1000, 3, 40, 7, &s->len[1] );
+  s->pcm[2] = click_synth( 800, 4, 30, 5, &s->len[2] );
   }
 
 void asp_click_sounds_free( AspClickSounds *s ) { for( int i = 0; i < 3; i++ ) { free( s->pcm[i] ); s->pcm[i] = NULL; } }
