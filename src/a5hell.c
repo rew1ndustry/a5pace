@@ -239,11 +239,11 @@ static void grid_one( const char *l, void *u )
 static void gain_note( int cmd, int w, int h, char *o, size_t n )
   {
   int idx[256], k; MapSel sel = the_sel(); MapView v = the_view( h ); GainQ q = { 0, 0, 0, 0, 0, 0 }; char g[16], p[16];
-  o[0] = 0; k = map_affected( &map, &sel, &v, loopT, w, mwide, idx, 256 ); if( k < 1 ) return;
+  o[0] = 0; if( ! have_cur ) return; k = map_affected( &map, &sel, &v, loopT, w, mwide, idx, 256 ); if( k < 1 ) return;
   q.iter = map.t[idx[0]].iter; q.off = map.t[idx[0]].off;
   ctlc_cmd( cmd, "GRID", grid_one, &q ); if( ! q.found ) return;
-  snprintf( g, sizeof g, "%+d", q.gsh ); snprintf( p, sizeof p, q.pan > 0 ? "/%d" : q.pan < 0 ? "\\%d" : "centre", q.pan > 0 ? q.pan : -q.pan );
-  snprintf( o, n, "  [take %ld.%ld: gain %s pan %s%s%s]", q.iter, q.off, g, p, q.mixed ? "" : ", automix", k > 1 ? ", first of several" : "" );
+  snprintf( g, sizeof g, "%d", q.gsh ); snprintf( p, sizeof p, q.pan > 0 ? "right %d" : q.pan < 0 ? "left %d" : "center", q.pan > 0 ? q.pan : -q.pan );
+  snprintf( o, n, "gain %s %s%s  ", g, p, k > 1 ? " (first of several)" : "" );
   }
 
 static void draw( int cmd, int live, int amode )
@@ -255,8 +255,9 @@ static void draw( int cmd, int live, int amode )
   corners( 1, w, live, t, "" );
   put( 2, C_TEXT, status, w );
   { MapSel sel = the_sel(); MapView v = the_view( h ); map_draw( &map, &v, 3, w, loopT, mcur, have_cur ? &sel : NULL, mwide ); }   /* rows 3 .. h-3 */
-  put( h - 2, C_TEXT, nev ? events[( nev - 1 ) % EV] : "", w );   /* the last thing that happened, in words */
-  if( nentry ) { char gn[100]; gain_note( cmd, w, h, gn, sizeof gn ); snprintf( t, sizeof t, " > %s%s", entry, gn ); put( h - 2, C_TEXT, t, w ); }       /* a command being typed */
+  { char gn[100]; gain_note( cmd, w, h, gn, sizeof gn );             /* gain and pan of the take under the cursor, then the typing or the last message */
+    if( nentry ) snprintf( t, sizeof t, "%s> %s", gn, entry ); else snprintf( t, sizeof t, "%s%s", gn, nev ? events[( nev - 1 ) % EV] : "" );
+    put( h - 2, C_TEXT, t, w ); }
   meters( h - 1, w );
   corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [?]", "" );
   printf( "%s", term_sgr( C_TEXT ) );
