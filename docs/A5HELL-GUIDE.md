@@ -26,10 +26,10 @@ PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 ...                           <- sta
 - **The map.** Each row is one trip round the loop; the left is the start of the loop, the right its end. `=` is a take that
   is in the loop, `-` a take that is muted or kept out. A take that runs past the end carries on in the next row, from the
   left. Where takes overlap, one in the loop hides one that is not. Blank is nothing.
-- **Pinned rows.** Under the map, after a line saying so, are the highest-numbered iterations above the one being played:
-  what an earlier run recorded, and the generated tracks (clicks, an imported file, numbered from 90001). They are shown, not
-  edited (the cursor stays on the map above). They disappear as the loop catches up with them. A take whose levels were
-  never worked out (`a5peaks DIR` does it) is drawn grey.
+- **Rows below a blank line** are the highest-numbered iterations above the one being played: the generated tracks (clicks, an
+  imported file, numbered from 90001) and takes of older runs. They are part of the map: the cursor reaches them and every key
+  works on them. An iteration with nothing in it (it went by while SAFE) is a blank row. A take whose levels were never worked
+  out (`a5peaks DIR` does it) is drawn grey.
 - **Colour** is how loud: green quiet, yellow about right, red peaking (levels are rms, -24 dB and -6 dB by default).
   Words and numbers are grey. A long loop on a narrow window shares a character between a few moments.
 - **LIVE or SAFE** in the corners. SAFE: nothing is recorded, the loop keeps playing. Next to it, the mode: `loop`, `keep`,
@@ -54,7 +54,10 @@ PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 ...                           <- sta
 | `q` / `Q` | leave a5hell (the space carries on) / stop the space |
 
 ## Mixing on the map
-Move the cursor onto a take. Every take that covers the cursor's cell is **underlined, all along its length**, including
+Move the cursor onto a take. **Left / right** jump to the start of the previous / next take in the row (past the first, onto the
+iteration number at the left: then every take that starts in that iteration is the target). **Up / down** go to the nearest
+row that has a take in it, and the take there nearest to the same column. The cursor is one reversed cell, bold. Keys that are
+typed quickly are all acted on first and the screen is drawn once, so a run of arrows lands where it should. Every take that covers the cursor's cell is **underlined, all along its length**, including
 the part in later rows: those are the takes the next keys will change. With shift+arrows you select a block, and every take
 the block touches is changed.
 

@@ -58,46 +58,99 @@ int map_geom( int T, int w, long hi, int *lw, int *tpc, int *cpc )
   return map_scale( T, w - l - 1, tpc, cpc );
   }
 
-/* does take t touch a cell of the selection? when mark is given, mark all of its cells (rows from top, rows of them) */
-static int covers( const MapTake *t, const MapSel *s, int T, int tpc, long top, int rows, int cells, unsigned char *mark )
+/* rows: nmain iterations from top, then (if there is a pinned set) a blank row and the pinned iterations */
+int map_view_rows( const MapView *v ) { return v->nmain + ( v->npin ? 1 + v->npin : 0 ); }
+static long view_it( const MapView *v, int r )          /* the iteration shown on row r; -1 for none */
+  {
+  if( r < v->nmain ) return v->top + r < 0 ? -1 : v->top + r;
+  if( r == v->nmain ) return -1;
+  return v->pin[r - v->nmain - 1];
+  }
+static int view_row( const MapView *v, long it )
+  {
+  if( it >= v->top && it < v->top + v->nmain ) return (int)( it - v->top );
+  for( int i = 0; i < v->npin; i++ ) if( v->pin[i] == it ) return v->nmain + 1 + i;
+  return -1;
+  }
+int map_iter_ok( const MapView *v, long it )            /* may the cursor be there: the main iterations (also above the top) and the pinned ones */
+  {
+  if( it < 0 ) return 0;
+  if( it < v->top + v->nmain ) return 1;
+  for( int i = 0; i < v->npin; i++ ) if( v->pin[i] == it ) return 1;
+  return 0;
+  }
+
+/* does take t touch the selection? c1 < 0: the whole iterations r1..r2, i.e. every take that starts there. with mark, mark all its cells */
+static int covers( const MapTake *t, const MapSel *s, const MapView *v, int T, int tpc, int cells, unsigned char *mark )
   {
   int hit = 0; long start = t->off * 5;
-  for( int k = 0; k < t->n; k++ )
-    {
-    long a = start + k, it = t->iter + a / T; int c = (int)( ( a % T ) / tpc );
-    if( ! t->pk[k] ) continue;
-    if( it >= s->r1 && it <= s->r2 && c >= s->c1 && c <= s->c2 ) { hit = 1; if( ! mark ) return 1; break; }
-    }
+  if( s->c1 < 0 ) hit = t->iter >= s->r1 && t->iter <= s->r2 && map_iter_ok( v, t->iter );
+  else
+    for( int k = 0; k < t->n && ! hit; k++ )
+      {
+      long a = start + k, it = t->iter + a / T; int c = (int)( ( a % T ) / tpc );
+      if( t->pk[k] && it >= s->r1 && it <= s->r2 && c >= s->c1 && c <= s->c2 && map_iter_ok( v, it ) ) hit = 1;
+      }
   if( hit && mark )
     for( int k = 0; k < t->n; k++ )
       {
-      long a = start + k, row = t->iter + a / T - top;
-      if( ! t->pk[k] || row < 0 ) continue;
-      if( row >= rows ) break;
-      mark[row * cells + ( a % T ) / tpc] = 1;
+      long a = start + k; int row = view_row( v, t->iter + a / T );
+      if( t->pk[k] && row >= 0 ) mark[row * cells + ( a % T ) / tpc] = 1;
       }
   return hit;
   }
 
-int map_affected( const Map *m, const MapSel *sel, int T, int w, long hi, int *idx, int max )
+int map_affected( const Map *m, const MapSel *sel, const MapView *v, int T, int w, long wide, int *idx, int max )
   {
-  int lw, tpc, cpc, n = 0, cells = map_geom( T, w, hi, &lw, &tpc, &cpc );
+  int lw, tpc, cpc, n = 0, cells = map_geom( T, w, wide, &lw, &tpc, &cpc );
   for( int i = 0; i < m->n && n < max; i++ )
-    if( m->t[i].st != 2 && covers( m->t + i, sel, T, tpc, 0, 0, cells, NULL ) ) idx[n++] = i;
+    if( m->t[i].st != 2 && covers( m->t + i, sel, v, T, tpc, cells, NULL ) ) idx[n++] = i;
   return n;
   }
 
-/* the row of iteration it: top.. consecutive, or the position in its[] */
-static long rowof( const long *its, long top, int rows, long it )
+/* the cells where takes begin in iteration it (the first lit cell of each take in that row), sorted, no repeats */
+int map_starts( const Map *m, const MapView *v, int T, int w, long wide, long it, int *out, int max )
   {
-  if( ! its ) return it - top;
-  for( int r = 0; r < rows; r++ ) if( its[r] == it ) return r;
-  return -1;
+  int lw, tpc, cpc, n = 0; (void)v; map_geom( T, w, wide, &lw, &tpc, &cpc );
+  for( int i = 0; i < m->n; i++ )
+    {
+    const MapTake *t = m->t + i; long start = t->off * 5;
+    if( t->st == 2 ) continue;
+    for( int k = 0; k < t->n; k++ )
+      {
+      long a = start + k;
+      if( ! t->pk[k] || t->iter + a / T != it ) continue;
+      int c = (int)( ( a % T ) / tpc ), j = 0;
+      while( j < n && out[j] < c ) j++;
+      if( j < n && out[j] == c ) break;
+      if( n < max ) { memmove( out + j + 1, out + j, (size_t)( n - j ) * sizeof *out ); out[j] = c; n++; }
+      break;
+      }
+    }
+  return n;
   }
 
-void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel, const long *its, long wide )
+/* the nearest iteration above (dir > 0) or below that has a take lit in it and may be visited; it itself if none */
+long map_step( const Map *m, const MapView *v, int T, long it, int dir )
   {
-  int tpc, cpc, cells, lw, i;
+  long best = it;
+  for( int i = 0; i < m->n; i++ )
+    {
+    const MapTake *t = m->t + i; long start = t->off * 5;
+    if( t->st == 2 ) continue;
+    for( int k = 0; k < t->n; k++ )
+      {
+      long x = t->iter + ( start + k ) / T;
+      if( ! t->pk[k] || ! map_iter_ok( v, x ) ) continue;
+      if( dir > 0 ? ( x > it && ( best == it || x < best ) ) : ( x < it && ( best == it || x > best ) ) ) best = x;
+      }
+    }
+  return best;
+  }
+
+void map_draw( const Map *m, const MapView *v, int r0, int w, int T, long cur, const MapSel *sel, long wide )
+  {
+  int tpc, cpc, cells, lw, i, rows = map_view_rows( v );
   cells = map_geom( T, w, wide, &lw, &tpc, &cpc );
   if( cells < 1 || rows < 1 ) return;
   unsigned char *live = calloc( (size_t)rows * cells, 1 ), *mute = calloc( (size_t)rows * cells, 1 ), *mark = calloc( (size_t)rows * cells, 1 );
@@ -107,22 +160,21 @@ void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur,
     const MapTake *t = m->t + i; long start = t->off * 5;           /* 5 ticks a second */
     for( int k = 0; k < t->n; k++ )
       {
-      unsigned char b = t->pk[k]; long a = start + k, row = rowof( its, top, rows, t->iter + a / T );
-      if( ! b ) continue;
-      if( row < 0 ) continue;
-      if( row >= rows ) { if( its ) continue; break; }               /* later ticks are later rows */
+      unsigned char b = t->pk[k]; long a = start + k; int row = view_row( v, t->iter + a / T );
+      if( ! b || row < 0 ) continue;
       unsigned char *p = ( t->st ? live : mute ) + row * cells + ( a % T ) / tpc;
       if( b > *p ) *p = b;
       }
-    if( sel && t->st != 2 ) covers( t, sel, T, tpc, top, rows, cells, mark );
+    if( sel && t->st != 2 ) covers( t, sel, v, T, tpc, cells, mark );
     }
   for( int r = 0; r < rows; r++ )
     {
-    long it = its ? its[r] : top + r; char line[64]; int cur_role = -1, cur_fx = -1;
+    long it = view_it( v, r ); char line[64]; int cur_role = -1, cur_fx = -1;
+    int whole = sel && it >= 0 && it >= sel->r1 && it <= sel->r2 && sel->c1 < 0;
     printf( "\033[%d;1H", r0 + r );
-    if( it >= 0 ) snprintf( line, sizeof line, "%*ld ", lw, it ); else snprintf( line, sizeof line, "%*s ", lw, "" );
-    printf( "%s%s%s", term_sgr( C_TEXT ), it == cur ? "\033[1m" : "", line );
-    for( int c = 0; c < cells; c++ )
+    if( it >= 0 ) snprintf( line, sizeof line, "%*ld", lw, it ); else snprintf( line, sizeof line, "%*s", lw, "" );
+    printf( "%s%s%s%s%s ", term_sgr( C_TEXT ), it == cur ? "\033[1m" : "", whole ? ( sel->cur_cell < 0 && it == sel->cur_it ? "\033[1;7m" : "\033[7m" ) : "", line, term_sgr( C_TEXT ) );
+    for( int c = 0; c < cells && it >= 0; c++ )
       {
       unsigned char l = live[r * cells + c], mu = mute[r * cells + c];
       int role = l ? role_of( l ) : mu ? role_of( mu ) : C_TEXT; char ch = l ? '=' : mu ? '-' : ' ';

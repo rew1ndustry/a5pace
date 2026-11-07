@@ -75,17 +75,24 @@ static void corners( int r, int w, int live, const char *left, const char *right
 static const char *mode_word( int m ) { return m == 2 ? "hold" : m == 3 ? "ping-pong" : m == 1 ? "keep" : "loop"; }
 
 /* the map: the iterations shown end at mbottom (the current one while following); MAP is asked for them and some before, because
-   a take that began earlier runs into these rows. refreshed about once a second, and at once when the view or the takes change */
+   a take that began earlier runs into these rows, and then for the pinned set (MAP HIGH): the highest iterations above the current
+   one (the generated 90000 series, takes of older runs), shown under the map after a blank row. everything on screen can be edited.
+   refreshed about once a second, and at once when the view or the takes change */
 static Map map; static long mbottom, mcur; static int mfollow = 1, loopT = 380, mdirty = 1; static long mtop_seen = -2, mbot_seen = -2; static double mlast;
-#define MAP_BACK 60
+static long pin_its[64]; static int npin; static long mwide;
+#define MAP_BACK 200
 static double ms_now( void ) { struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t ); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
-/* the pinned set: iterations above the current one that have takes (what an earlier run recorded, the generated 90000 series), the
-   highest few, under the map. they are shown, not edited. npin: how many rows; mwide: the largest iteration on screen (label width) */
-static Map pin; static long pin_its[64]; static int npin; static long mwide;
 static int total_rows( int h ) { int r = h - 5; return r < 1 ? 1 : r; }
 static int pin_max( int h ) { int t = total_rows( h ), k = t >= 6 ? t / 3 : 0; return k > 40 ? 40 : k; }
 static int mrows( int h ) { int t = total_rows( h ), k = npin < pin_max( h ) ? npin : pin_max( h ); return k ? t - k - 1 : t; }
+static MapView the_view( int h )
+  {
+  MapView v; int rows = mrows( h ), k = total_rows( h ) - rows - 1;
+  v.nmain = rows; v.top = mbottom - rows + 1;
+  v.npin = k > 0 ? k : 0; v.pin = pin_its + ( npin > v.npin ? npin - v.npin : 0 );
+  return v;
+  }
 
 static void map_update( int cmd, int h )
   {
@@ -99,17 +106,17 @@ static void map_update( int cmd, int h )
   char c[80]; long from = top - MAP_BACK; if( from < 0 ) from = 0;
   snprintf( c, sizeof c, "MAP %ld %ld", from, mbottom );
   map_clear( &map ); ctlc_cmd( cmd, c, map_line, &map );
-  map_clear( &pin ); npin = 0;
+  int first_pin = map.n; npin = 0;
   if( pin_max( h ) )
     {
-    snprintf( c, sizeof c, "MAP HIGH %d %ld", pin_max( h ), mcur ); ctlc_cmd( cmd, c, map_line, &pin );
-    for( int i = 0; i < pin.n && npin < 64; i++ ) if( ! npin || pin_its[npin-1] != pin.t[i].iter ) pin_its[npin++] = pin.t[i].iter;
+    snprintf( c, sizeof c, "MAP HIGH %d %ld", pin_max( h ), mcur ); ctlc_cmd( cmd, c, map_line, &map );
+    for( int i = first_pin; i < map.n && npin < 64; i++ ) if( ! npin || pin_its[npin-1] != map.t[i].iter ) pin_its[npin++] = map.t[i].iter;
     }
   mwide = mbottom; if( npin && pin_its[npin-1] > mwide ) mwide = pin_its[npin-1];
   mtop_seen = top; mbot_seen = mbottom; mdirty = 0; mlast = ms_now();
   }
 
-/* the cursor: a place on the map (an iteration and a cell); the anchor is where a selection began. entry is a command being typed */
+/* the cursor: an iteration and a cell (-1 is the label: the whole iteration); the anchor is where a selection began. entry is a command being typed */
 static long cur_it, anc_it; static int cur_cell, anc_cell, have_cur; static char entry[64]; static int nentry;
 static int geom_cells( int w, int *tpc ) { int lw, cpc; return map_geom( loopT, w, mwide, &lw, tpc, &cpc ); }
 static MapSel the_sel( void )
@@ -120,32 +127,46 @@ static MapSel the_sel( void )
   s.cur_it = cur_it; s.cur_cell = cur_cell;
   return s;
   }
-/* the cursor starts on the newest take (the last in MAP's order is not always the newest: take the highest iteration, then offset) */
+/* the cursor starts on the newest take: the highest iteration, then offset */
 static void cursor_start( int w )
   {
   int best = -1, tpc;
   for( int i = 0; i < map.n; i++ )
-    if( map.t[i].st != 2 && ( best < 0 || map.t[i].iter > map.t[best].iter || ( map.t[i].iter == map.t[best].iter && map.t[i].off > map.t[best].off ) ) ) best = i;
+    if( map.t[i].st != 2 && map.t[i].iter < 90000 && ( best < 0 || map.t[i].iter > map.t[best].iter || ( map.t[i].iter == map.t[best].iter && map.t[i].off > map.t[best].off ) ) ) best = i;
   geom_cells( w, &tpc );
-  cur_it = mbottom; cur_cell = 0;
+  cur_it = mbottom; cur_cell = -1;
   if( best >= 0 )
     for( int k = 0; k < map.t[best].n; k++ )
       if( map.t[best].pk[k] ) { long a = map.t[best].off * 5 + k; cur_it = map.t[best].iter + a / loopT; cur_cell = (int)( ( a % loopT ) / tpc ); break; }
   anc_it = cur_it; anc_cell = cur_cell; have_cur = 1;
   }
-static void map_scroll( int key, int h );
+/* left / right: the start of the previous / next take in this row (past the first, the label: the whole iteration). up / down: the
+   nearest row with a take in it, and the take there nearest to this column. only the state changes here; the screen is drawn once, after all the keys */
 static void cursor_move( int key, int shift, int w, int h )
   {
-  int tpc, cells = geom_cells( w, &tpc ), rows = mrows( h );
-  if( key == K_UP && cur_it > 0 ) cur_it--;
-  else if( key == K_DOWN && cur_it < mcur ) cur_it++;
-  else if( key == K_LEFT && cur_cell > 0 ) cur_cell--;
-  else if( key == K_RIGHT && cur_cell < cells - 1 ) cur_cell++;
-  if( cur_cell >= cells ) cur_cell = cells - 1;
+  MapView v = the_view( h ); int st[256], n, rows = mrows( h ) < 1 ? 1 : mrows( h );
+  if( key == K_LEFT || key == K_RIGHT )
+    {
+    n = map_starts( &map, &v, loopT, w, mwide, cur_it, st, 256 );
+    if( key == K_LEFT && cur_cell >= 0 ) { int to = -1; for( int i = 0; i < n; i++ ) if( st[i] < cur_cell ) to = st[i]; cur_cell = to; }
+    if( key == K_RIGHT ) for( int i = 0; i < n; i++ ) if( st[i] > cur_cell ) { cur_cell = st[i]; break; }
+    }
+  else if( key == K_UP || key == K_DOWN )
+    {
+    long it = map_step( &map, &v, loopT, cur_it, key == K_DOWN ? 1 : -1 );
+    if( it != cur_it )
+      {
+      cur_it = it;
+      if( cur_cell >= 0 )
+        {
+        n = map_starts( &map, &v, loopT, w, mwide, it, st, 256 );
+        if( n ) { int best = st[0]; for( int i = 0; i < n; i++ ) if( abs( st[i] - cur_cell ) < abs( best - cur_cell ) ) best = st[i]; cur_cell = best; }
+        }
+      }
+    }
   if( ! shift ) { anc_it = cur_it; anc_cell = cur_cell; }
-  if( rows < 1 ) rows = 1;
-  if( cur_it < mbottom - rows + 1 ) { mfollow = 0; mbottom = cur_it + rows - 1; if( mbottom > mcur ) mbottom = mcur; }
-  if( cur_it > mbottom ) mbottom = cur_it;
+  if( cur_it < v.top ) { mfollow = 0; mbottom = cur_it + rows - 1; if( mbottom > mcur ) mbottom = mcur; }   /* scroll up to it */
+  else if( cur_it >= v.top + v.nmain && cur_it <= mcur ) mbottom = cur_it;                              /* (below the main rows, not pinned) */
   if( mbottom >= mcur ) { mbottom = mcur; mfollow = 1; }
   mdirty = 1;
   }
@@ -153,13 +174,13 @@ static void cursor_move( int key, int shift, int w, int h )
 /* a typed command (a5mix_parse's language) on what the cursor or selection touches; or on the iteration it names */
 static char mix_reply[220];
 static void say( const char *l, void *u ) { (void)u; snprintf( mix_reply, sizeof mix_reply, "%s", l ); }
-static void mix_run( int cmd, const MixCmd *c, int w )
+static void mix_run( int cmd, const MixCmd *c, int w, int h )
   {
   char b[200]; int n = 0;
   if( c->has_iter ) { a5mix_line( b, sizeof b, c->iter, c->has_take ? c->take : -1, c ); mix_reply[0] = 0; ctlc_cmd( cmd, b, say, NULL ); n = mix_reply[0] ? 1 : 0; }
   else
     {
-    int idx[256], k; MapSel sel = the_sel(); k = map_affected( &map, &sel, loopT, w, mwide, idx, 256 );
+    int idx[256], k; MapSel sel = the_sel(); MapView v = the_view( h ); k = map_affected( &map, &sel, &v, loopT, w, mwide, idx, 256 );
     for( int i = 0; i < k; i++ ) { a5mix_line( b, sizeof b, map.t[idx[i]].iter, map.t[idx[i]].off, c ); ctlc_cmd( cmd, b, say, NULL ); n++; }
     if( ! k ) { snprintf( events[nev++ % EV], 220, "nothing there to mix: move the cursor onto a take" ); return; }
     }
@@ -209,20 +230,13 @@ static void meters( int r, int w )
 
 static void draw( int live, int amode )
   {
-  int w, h, rows; char t[300];
+  int w, h; char t[300];
   term_size( &w, &h );
   if( term_resized() ) { term_cls(); mdirty = 1; }
   snprintf( t, sizeof t, "%s    %s%s", mode_word( amode ), space[0] ? space : "?", mfollow ? "" : "    (scrolled: End follows)" );
   corners( 1, w, live, t, "" );
   put( 2, C_TEXT, status, w );
-  rows = mrows( h );                                            /* rows 3 .. h-3: the map, the current iteration at the bottom of it */
-  { MapSel sel = the_sel(); map_draw( &map, mbottom - rows + 1, rows, 3, w, loopT, mcur, have_cur ? &sel : NULL, NULL, mwide ); }
-  if( total_rows( h ) > rows )                                  /* the pinned set under it */
-    {
-    int k = total_rows( h ) - rows - 1;
-    put( 3 + rows, C_TEXT, "\033[2m  pinned: higher iterations (not the ones being recorded)", w );
-    map_draw( &pin, 0, k, 4 + rows, w, loopT, -1, NULL, pin_its + ( npin > k ? npin - k : 0 ), mwide );
-    }
+  { MapSel sel = the_sel(); MapView v = the_view( h ); map_draw( &map, &v, 3, w, loopT, mcur, have_cur ? &sel : NULL, mwide ); }   /* rows 3 .. h-3 */
   put( h - 2, C_TEXT, nev ? events[( nev - 1 ) % EV] : "", w );   /* the last thing that happened, in words */
   if( nentry ) { snprintf( t, sizeof t, " > %s", entry ); put( h - 2, C_TEXT, t, w ); }       /* a command being typed */
   meters( h - 1, w );
@@ -244,7 +258,7 @@ static void help( void )
 " x       export: a all, m mix, l loop     T  takes as text\n"
 " PgUp PgDn Home End  scroll (End follows)      q  leave    Q  stop aspace\n"
 "\n"
-" the map: arrows move the cursor, shift+arrows select, esc clears.\n"
+" the map: left/right jump take to take (past the first: the whole iteration),\n up/down to the nearest take in the next row. shift+arrows select, esc clears.\n"
 " the takes under it are underlined (all along, later rows too); keys:\n"
 "   m p   mute / play, from the next start     M P   the same at once\n"
 "   .     switch, next start                   !     switch at once\n"
@@ -327,7 +341,8 @@ int main( int argc, char **argv )
     if( p[0].revents & POLLIN )
       {
       int k, sh;
-      if( ( k = term_key( &sh ) ) == K_NONE ) continue;
+      while( ( k = term_key( &sh ) ) != K_NONE )          /* every key waiting is acted on now, the screen is drawn once after the last */
+        {
       char c[100] = "";
       { /* the map: arrows move the cursor (shift selects), digits + - / \\ start a command, . ! m p M P end it (alone, they act on what is under the cursor) */
         int ww, hh; term_size( &ww, &hh );
@@ -339,7 +354,7 @@ int main( int argc, char **argv )
           MixCmd mc; int r;
           entry[nentry++] = (char)k; entry[nentry] = 0;
           r = a5mix_parse( entry, &mc );
-          if( r == MP_DONE ) mix_run( cmd, &mc, ww );
+          if( r == MP_DONE ) mix_run( cmd, &mc, ww, hh );
           else if( r == MP_BAD ) snprintf( events[nev++ % EV], 220, "not understood: %s", entry );
           if( r != MP_WAIT ) { nentry = 0; entry[0] = 0; mdirty = 1; }
           continue;
@@ -459,6 +474,7 @@ int main( int argc, char **argv )
         }
       mdirty = 1;
       if( c[0] ) ctlc_cmd( cmd, c, quiet, NULL );
+        }
       }
     }
   return 0;

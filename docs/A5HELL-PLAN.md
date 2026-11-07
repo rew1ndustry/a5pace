@@ -187,6 +187,13 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   safe stayed safe, `--live` overrode. The shell's pinned rows now matter only for the 90000 series and sessions made before this.
   The shell takes `--safe` as well and passes it on. No automated test for either yet.
 
+## Cursor rework (after step 6, user request)
+- left/right = start of previous/next take in the row, past the first the label (cell -1, every take starting in that iteration);
+  up/down = nearest row with a lit tick, take start nearest the column; all pending keys are read and applied, then one redraw;
+  the pinned rows lost their caption and are ordinary rows (`MapView` in a5map.h: nmain rows, a blank row, pinned iterations).
+  Tested on a copy of the real session in `screen`: left+p whole iteration, up/right moves, twelve downs reached 90002.
+- 111..115 blank: nothing recorded in them (the space was safe while they went by); the count still advances. Up/down skip them.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.
