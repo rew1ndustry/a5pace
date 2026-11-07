@@ -363,7 +363,7 @@ static void handle( void *u, int cl, const char *line )
       "HISTORY [n]                          the moments the loop changed, newest first",
       "REVERT seq | REVERT TAKE iter off    go back to a log point / to just after a take (needs SAFE)",
       "TAKES                                every take and its state",
-      "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (bit shift, + quieter) and pan (bit shift, + right), absolute; mute takes it out of the loop",
+      "MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]   a take's gain (bit shift, + louder) and pan (bit shift, + right), absolute; mute takes it out of the loop",
       "UNDO TAKE|ITER [NOW] | RESTORE seq [NOW] | LASTMIX [NOW]   undo the last take / iteration; the mix at a history point; toggle the latest take",
       "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
@@ -398,7 +398,7 @@ static void handle( void *u, int cl, const char *line )
     q = asp_core_revert( r->core, q );
     if( q < 0 ) ctl_err( c, cl, "REVERT needs SAFE first" ); else { ctl_say( c, cl, "%lld", (long long)q ); ctl_ok( c, cl ); }
     }
-  else if( ! strcmp( w[0], "MIX" ) && n > 3 )          /* MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]: gain and pan in bit shifts (+N right-shifts N bits; pan + is right), both absolute */
+  else if( ! strcmp( w[0], "MIX" ) && n > 3 )          /* MIX iter off|* [gN] [pN] [MUTE|PLAY|TOGGLE] [NOW]: gain and pan in bit shifts (+N left-shifts N bits, louder; pan + is right), both absolute */
     {
     AspMixCmd m; memset( &m, 0, sizeof m );
     for( int i = 3; i < n; i++ )

@@ -264,7 +264,7 @@ static void help( void )
 "   .     switch, next start                   !     switch at once\n"
 "   [ITER[.TAKE]] [+N|-N] [/N|\\N] then . ! m p M P\n"
 "   e.g.  -2/20.   +3M   \\90!   123.15m   123..\n"
-"   gain (+ right-shift bits, - left) and pan (/ right, \\ left, in bits) are absolute; alone, a sign keeps\n"
+"   gain (+ louder, - quieter, in bits) and pan (/ right, \\ left, in bits) are absolute; alone, a sign keeps\n"
 "   the value. a take with its own gain or pan is left to you by the automix.\n"
 "   keep mode: p puts a take in the loop.\n"
 "\n"

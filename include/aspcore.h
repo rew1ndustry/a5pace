@@ -77,7 +77,7 @@ int      asp_core_wipe( AspCore *c, int all );
 void     asp_core_automix( AspCore *c, int mode, int n, int each );
 void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lowcut < 0 keeps it; strict < 0 keeps it */
 /* the mix of takes, by hand. iter and off pick a take; off < 0 is every take that starts in that iteration.
-   gain (a bit shift, + quieter) and pan (a bit shift, + right) are absolute: set again, they replace, never add. a value not given
+   gain (a bit shift, + louder) and pan (a bit shift, + right) are absolute: set again, they replace, never add. a value not given
    is left as the take has it. act mutes (out of the loop, whatever its mix), plays (back in at its mix) or toggles.
    now: do it at once; otherwise a take is changed behind the head, and the change is heard from its next start.
    returns how many takes matched. a take given a gain or pan is not touched by the automix again. */

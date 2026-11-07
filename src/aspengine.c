@@ -103,23 +103,23 @@ int asp_place_eq( AspPlace a, AspPlace b )
   return a.l == b.l && a.r == b.r && a.flip == b.flip;
   }
 
-/* a mixed placement is two shifts: gsh is the gain (+N: every sample right-shifted N bits, -N: left-shifted, saturating
-   in the tank), pan N steps: +N right (the left side shifted N bits more), -N left. no multiplies, no dB. a stereo take's
+/* a mixed placement is two shifts: gsh is the gain in bits (+N: every sample left-shifted N bits, louder, saturating
+   in the tank; -N: right-shifted N bits, quieter), pan N steps: +N right (the left side shifted N bits more), -N left. no multiplies, no dB. a stereo take's
    pan is kept but does nothing yet. */
 static int clampsh( int v ) { return v < ASP_LEV_MIN ? ASP_LEV_MIN : v > ASP_LEV_MAX ? ASP_LEV_MAX : v; }
 
 void asp_place_shifts( AspPlace p, int mono, int *sl, int *sr )
   {
   int pan = mono ? p.pan : 0;
-  *sl = clampsh( p.gsh + ( pan > 0 ? pan : 0 ) );
-  *sr = clampsh( p.gsh + ( pan < 0 ? -pan : 0 ) );
+  *sl = clampsh( -p.gsh + ( pan > 0 ? pan : 0 ) );            /* the tank's levels are right shifts: louder is negative */
+  *sr = clampsh( -p.gsh + ( pan < 0 ? -pan : 0 ) );
   }
 
 void asp_place_to_mix( AspPlace p, int mono, int *gsh, int *pan )
   {
   if( p.mixed ) { *gsh = p.gsh; *pan = p.pan; return; }
   int l = p.l == ASP_LEV_OFF ? ASP_LEV_MAX : p.l, r = p.r == ASP_LEV_OFF ? ASP_LEV_MAX : p.r;
-  *gsh = l < r ? l : r; *pan = mono ? l - r : 0;          /* the louder side is the gain, the other is the pan */
+  *gsh = -( l < r ? l : r ); *pan = mono ? l - r : 0;          /* the louder side is the gain, the other is the pan */
   }
 
 static inline void contrib( const int32_t *p, int ch, int src, AspPlace pl, int sign, int64_t *m )

@@ -68,7 +68,7 @@ start and stop either while running; both are off unless asked for. On a board w
 Set from the control port with `AUTOMIX LOOP | KEEP | OVERLAP n | SWAP [EACH]`, from `a5hell` with `a` (a short list, then
 the one question that mode asks), or from a profile (`automix loop`, `automix keep`, `automix overlap 4`, `automix swap each`).
 Fading is not a mode yet. A take's gain and pan are, for now, one constant setting across the whole take
-(`lev`: a right shift per output channel, or off; a mixed take is a gain shift and a pan shift, `MIX iter off [gN] [pN]`: +N right-shifts every sample N bits, -N left-shifts; pan +N shifts the left side N more, -N the right. No dB and no multiplies anywhere in gain; only envelopes will do real gain maths); fades will be envelopes on a take (a perceived
+(`lev`: a right shift per output channel, or off; a mixed take is a gain shift and a pan shift, `MIX iter off [gN] [pN]`: +N left-shifts every sample N bits (louder, saturating), -N right-shifts (quieter); pan +N shifts the left side N more, -N the right. No dB and no multiplies anywhere in gain; only envelopes will do real gain maths); fades will be envelopes on a take (a perceived
 linear drop over the whole take) once envelopes are mapped out.
 A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
 (a fifth of a second of work a tick), started when the playhead is not in the take and will not reach it before
