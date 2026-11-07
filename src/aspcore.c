@@ -62,6 +62,7 @@ struct AspCore
   int      t_fix, t_in;             /* its input: the one channel it is recorded from (mono from the start), or -1; and the input setting then */
   char     profile[64], settings[1100];
   int      started;
+  double   m_in[2], m_out[2];       /* the meters: rms of the last tick in dB */
   int      out_shift;               /* how far the last output tick was brought down to fit */
   int      mix_now;                 /* the change being made is to be heard at once, not at the take's next start */
 
@@ -817,10 +818,18 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   c->have_prev = 1;
   }
 
+static double rms_db( const int32_t *p, int ch )
+  {
+  double s = 0;
+  for( int i = 0; i < ASP_TICK; i++ ) { double v = p[2*i+ch]; s += v * v; }
+  return s > 0 ? 10 * log10( s / ASP_TICK / 4.611686018427388e18 ) : -200;
+  }
+
 int asp_core_tick( AspCore *c, const int32_t *in, int32_t *out )
   {
   if( c->phase == 0 ) sync_tick( c, in, out );
   else play_tick( c, in, out );
+  for( int ch = 0; ch < 2; ch++ ) { c->m_in[ch] = rms_db( in, ch ); c->m_out[ch] = rms_db( out, ch ); }
   c->tick++;
   return 0;
   }
@@ -872,6 +881,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   for( int i = 0; i < c->nlt; i++ ) in += c->lt[i].in;
   st->phase = c->phase; st->tick = c->tick; st->origin = c->origin; st->latency = c->latency; st->hush = c->hush;
   st->iter = c->iter; st->live = c->live; st->take_open = c->enc != NULL;
+  for( int ch = 0; ch < 2; ch++ ) { st->in_db[ch] = c->m_in[ch]; st->out_db[ch] = c->m_out[ch]; }
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
   st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;

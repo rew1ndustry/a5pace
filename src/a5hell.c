@@ -164,6 +164,34 @@ static void map_scroll( int key, int h )
   mdirty = 1;
   }
 
+/* the meters: rms of the last tick of what comes in and goes out, -60 .. 0 dB, with a mark where the level peaked a moment ago */
+static double mlev[4] = { -200, -200, -200, -200 }, mhold[4] = { -200, -200, -200, -200 };
+static void meter_line( const char *l, void *u ) { (void)u; sscanf( l, "%lf %lf %lf %lf", mlev, mlev + 1, mlev + 2, mlev + 3 ); }
+static void meter_update( int cmd )
+  {
+  ctlc_cmd( cmd, "METER", meter_line, NULL );
+  for( int i = 0; i < 4; i++ ) { mhold[i] -= 3; if( mlev[i] > mhold[i] ) mhold[i] = mlev[i]; }
+  }
+static void meter_bar( int bw, double lev, double hold )
+  {
+  const TermCfg *tc = term_cfg(); int hp = (int)( ( hold + 60 ) / 60 * bw + 0.5 );
+  for( int i = 0; i < bw; i++ )
+    {
+    double db = -60 + 60.0 * ( i + 1 ) / bw;
+    int role = db < tc->green_below_db ? C_LOW : db > tc->red_above_db ? C_HIGH : C_MID, on = lev >= db - 60.0 / bw / 2;
+    printf( "%s%c", term_sgr( on || i == hp - 1 ? role : C_TEXT ), on ? '#' : i == hp - 1 ? '|' : '.' );
+    }
+  }
+static void meters( int r, int w )
+  {
+  int bw = ( w - 24 ) / 4; if( bw > 30 ) bw = 30; if( bw < 3 ) bw = 3;
+  printf( "\033[%d;1H%s input  L ", r, term_sgr( C_TEXT ) ); meter_bar( bw, mlev[0], mhold[0] );
+  printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[1], mhold[1] );
+  printf( "%s    output  L ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[2], mhold[2] );
+  printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[3], mhold[3] );
+  printf( "%s\033[K", term_sgr( C_TEXT ) );
+  }
+
 static void draw( int live, int amode )
   {
   int w, h, rows; char t[300];
@@ -174,9 +202,9 @@ static void draw( int live, int amode )
   put( 2, C_TEXT, status, w );
   rows = h - 5; if( rows < 1 ) rows = 1;                       /* rows 3 .. h-3: the map, the latest iteration at the bottom */
   { MapSel sel = the_sel(); map_draw( &map, mbottom - rows + 1, rows, 3, w, loopT, mcur, have_cur ? &sel : NULL ); }
-  for( int i = 2; i > 0; i-- )                                  /* the last two things that happened, in words */
-    put( h - i, C_TEXT, nev >= i ? events[( nev - i ) % EV] : "", w );
-  if( nentry ) { snprintf( t, sizeof t, " > %s", entry ); put( h - 1, C_TEXT, t, w ); }       /* a command being typed */
+  put( h - 2, C_TEXT, nev ? events[( nev - 1 ) % EV] : "", w );   /* the last thing that happened, in words */
+  if( nentry ) { snprintf( t, sizeof t, " > %s", entry ); put( h - 2, C_TEXT, t, w ); }       /* a command being typed */
+  meters( h - 1, w );
   corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [?]", "" );
   printf( "%s", term_sgr( C_TEXT ) );
   fflush( stdout );
@@ -274,7 +302,7 @@ int main( int argc, char **argv )
     live = strstr( status, "SAFE" ) == NULL;
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
-    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); if( ! have_cur ) cursor_start( ww ); }
+    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); meter_update( cmd ); if( ! have_cur ) cursor_start( ww ); }
     draw( live, amode );
     struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
     if( poll( p, 3, 250 ) <= 0 ) continue;

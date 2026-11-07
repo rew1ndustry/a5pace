@@ -81,7 +81,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 2. DONE 2026-11-06 (notes below): Core peaks + `MAP` + backfill; check against decoded audio on a test take.
 3. DONE 2026-11-06 (notes below): Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
 4. DONE 2026-11-06 (notes below): Cursor, selection, editing keys wired to the mixer language; remove `t`.
-5. Meters.
+5. DONE 2026-11-06 (notes below): Meters.
 6. Docs: `SHELL.md` and the help screen, the user guide, a README line.
 Test with the simulated card (`-S`, `--fast`, `SIM BURST`) for a clean session, run in a pty (tmux `capture-pane`) at 80x24
 and larger, then on the copy of transylvanianLullaby.
@@ -161,6 +161,12 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
 - Tested on `scratch/tl` (simulated space) in `screen`: arrow then `p` changed 2 takes to in (checked with `MAP`), `3.17M` one
   take at once, shift+arrows then `m` five takes, underline and cursor escapes present in the raw output. Not tried: pan/gain
   results beyond the parser tests (`MIX` itself was not changed).
+
+## Step 5 notes
+- Core measures the rms of each tick in and out (`asp_core_tick`), `AspCoreStatus.in_db/out_db`, control `METER`. Shell: row h-1
+  has `input L R   output L R`, bars of -60..0 dB coloured with the cfg thresholds, and a `|` peak mark that falls 3 dB a
+  refresh. Row h-2 is now the single last-event line (the typed command replaces it). Meters move at the shell's 250 ms
+  polling, a tick is 200 ms, so a short burst can be missed on screen. Tested with `SIM BURST` on `scratch/tl`.
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.

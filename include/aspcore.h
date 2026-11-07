@@ -45,6 +45,7 @@ typedef struct
   uint64_t iter;
   int      live, take_open;
   int64_t  take_iter, take_off, take_frames;
+  double   in_db[2], out_db[2];     /* rms of the last tick, left and right, dB against full scale (-200 for silence): what came in, what went out */
   double   sync_level_db;
   int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
