@@ -80,7 +80,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 1. DONE 2026-11-06 (notes below): `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
 2. DONE 2026-11-06 (notes below): Core peaks + `MAP` + backfill; check against decoded audio on a test take.
 3. DONE 2026-11-06 (notes below): Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
-4. Cursor, selection, editing keys wired to the mixer language; remove `t`.
+4. DONE 2026-11-06 (notes below): Cursor, selection, editing keys wired to the mixer language; remove `t`.
 5. Meters.
 6. Docs: `SHELL.md` and the help screen, the user guide, a README line.
 Test with the simulated card (`-S`, `--fast`, `SIM BURST`) for a clean session, run in a pty (tmux `capture-pane`) at 80x24
@@ -149,6 +149,18 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   (green, yellow, red), live burst appears as `=` in the current row while REC. Not tried: terminals above 380 columns
   (several characters per tick), a real card.
 - The `t` screen still exists (step 4 retires it) and still draws its own way.
+
+## Step 4 notes
+- Cursor on the map: arrows move, shift+arrows select a rectangle, ESC clears it and any half-typed command. Every take
+  touching a selected cell (not the one being recorded) is underlined over all its cells, wrapped rows included
+  (`map_affected`, `map_draw` in `a5map.c`); cursor reversed bold, selection reversed. The cursor starts on the newest take.
+- Keys: digits and `+ - / \` start a command, `. ! m p M P` end it, and alone act on the affected takes; `a5mix_line`
+  builds the `MIX` line. Typed text shows on the bottom line (`> ...`). `t` is gone; keep mode's `m`/`M` LASTMIX key is gone
+  (the `LASTMIX` control command stays): `p` / `P` put the cursor's take into the loop. `GRID` control command removed, and the
+  screen half of `a5mixer.c` with it.
+- Tested on `scratch/tl` (simulated space) in `screen`: arrow then `p` changed 2 takes to in (checked with `MAP`), `3.17M` one
+  take at once, shift+arrows then `m` five takes, underline and cursor escapes present in the raw output. Not tried: pan/gain
+  results beyond the parser tests (`MIX` itself was not changed).
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.

@@ -43,15 +43,51 @@ static int role_of( int b )                                        /* the colour
   return db < c->green_below_db ? C_LOW : db > c->red_above_db ? C_HIGH : C_MID;
   }
 
-void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur )
+int map_geom( int T, int w, long hi, int *lw, int *tpc, int *cpc )
   {
-  int tpc, cpc, cells, lw = 4, i;
+  int l = 4;
+  for( long v = hi; v >= 1000; v /= 10 ) l++;
+  *lw = l;
+  return map_scale( T, w - l - 1, tpc, cpc );
+  }
+
+/* does take t touch a cell of the selection? when mark is given, mark all of its cells (rows from top, rows of them) */
+static int covers( const MapTake *t, const MapSel *s, int T, int tpc, long top, int rows, int cells, unsigned char *mark )
+  {
+  int hit = 0; long start = t->off * 5;
+  for( int k = 0; k < t->n; k++ )
+    {
+    long a = start + k, it = t->iter + a / T; int c = (int)( ( a % T ) / tpc );
+    if( ! t->pk[k] ) continue;
+    if( it >= s->r1 && it <= s->r2 && c >= s->c1 && c <= s->c2 ) { hit = 1; if( ! mark ) return 1; break; }
+    }
+  if( hit && mark )
+    for( int k = 0; k < t->n; k++ )
+      {
+      long a = start + k, row = t->iter + a / T - top;
+      if( ! t->pk[k] || row < 0 ) continue;
+      if( row >= rows ) break;
+      mark[row * cells + ( a % T ) / tpc] = 1;
+      }
+  return hit;
+  }
+
+int map_affected( const Map *m, const MapSel *sel, int T, int w, long hi, int *idx, int max )
+  {
+  int lw, tpc, cpc, n = 0, cells = map_geom( T, w, hi, &lw, &tpc, &cpc );
+  for( int i = 0; i < m->n && n < max; i++ )
+    if( m->t[i].st != 2 && covers( m->t + i, sel, T, tpc, 0, 0, cells, NULL ) ) idx[n++] = i;
+  return n;
+  }
+
+void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel )
+  {
+  int tpc, cpc, cells, lw, i;
   long hi = top + rows - 1;
-  for( long v = hi; v >= 1000; v /= 10 ) lw++;
-  cells = map_scale( T, w - lw - 1, &tpc, &cpc );
+  cells = map_geom( T, w, hi, &lw, &tpc, &cpc );
   if( cells < 1 || rows < 1 ) return;
-  unsigned char *live = calloc( (size_t)rows * cells, 1 ), *mute = calloc( (size_t)rows * cells, 1 );
-  if( ! live || ! mute ) { free( live ); free( mute ); return; }
+  unsigned char *live = calloc( (size_t)rows * cells, 1 ), *mute = calloc( (size_t)rows * cells, 1 ), *mark = calloc( (size_t)rows * cells, 1 );
+  if( ! live || ! mute || ! mark ) { free( live ); free( mute ); free( mark ); return; }
   for( i = 0; i < m->n; i++ )
     {
     const MapTake *t = m->t + i; long start = t->off * 5;           /* 5 ticks a second */
@@ -64,10 +100,11 @@ void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur 
       unsigned char *p = ( t->st ? live : mute ) + row * cells + ( a % T ) / tpc;
       if( b > *p ) *p = b;
       }
+    if( sel && t->st != 2 ) covers( t, sel, T, tpc, top, rows, cells, mark );
     }
   for( int r = 0; r < rows; r++ )
     {
-    long it = top + r; char line[64]; int cur_role = -1;
+    long it = top + r; char line[64]; int cur_role = -1, cur_fx = -1;
     printf( "\033[%d;1H", r0 + r );
     if( it >= 0 ) snprintf( line, sizeof line, "%*ld ", lw, it ); else snprintf( line, sizeof line, "%*s ", lw, "" );
     printf( "%s%s%s", term_sgr( C_TEXT ), it == cur ? "\033[1m" : "", line );
@@ -75,10 +112,21 @@ void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur 
       {
       unsigned char l = live[r * cells + c], mu = mute[r * cells + c];
       int role = l ? role_of( l ) : mu ? role_of( mu ) : C_TEXT; char ch = l ? '=' : mu ? '-' : ' ';
-      if( role != cur_role ) { fputs( term_sgr( role ), stdout ); cur_role = role; }
+      int fx = 0;                                                    /* 1 underlined, 2 selected, 3 the cursor */
+      if( sel )
+        {
+        if( mark[r * cells + c] ) fx = 1;
+        if( it >= sel->r1 && it <= sel->r2 && c >= sel->c1 && c <= sel->c2 ) fx = 2;
+        if( it == sel->cur_it && c == sel->cur_cell ) fx = 3;
+        }
+      if( role != cur_role || fx != cur_fx )
+        {
+        fputs( term_sgr( role ), stdout ); cur_role = role; cur_fx = fx;
+        if( fx == 1 ) fputs( "\033[4m", stdout ); else if( fx == 2 ) fputs( "\033[7m", stdout ); else if( fx == 3 ) fputs( "\033[1;7m", stdout );
+        }
       for( int k = 0; k < cpc; k++ ) putchar( ch );
       }
     printf( "%s\033[K", term_sgr( C_TEXT ) );
     }
-  free( live ); free( mute );
+  free( live ); free( mute ); free( mark );
   }

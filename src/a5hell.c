@@ -2,7 +2,7 @@
    the corners, what has just happened in words, a few keys; press ? for all of them. if the space is not running it is
    started first (a5start; --no-start to not), safe and in keep mode unless --live / --loop.
      l  LIVE   s  SAFE   h  history: go back to a place     w  wipe the loop     a  mode: al ak a0 a1-9 ap
-     u  undo the last take   U  the last iteration   x  export (a5export)   t  mixing
+     u  undo the last take   U  the last iteration   x  export (a5export)   arrows  the cursor on the map
      r  sync again   g  gate menu (l learn, + -)   f  profile   ?  help   q  leave   Q  stop aspace
    the shell has no safe/live state of its own: it shows aspace's, and l / s ask aspace to change it.
    nothing here is needed to run aspace: it is only a window on the control port. */
@@ -17,6 +17,7 @@
 #include <signal.h>
 #include "ctlclient.h"
 #include "a5mixer.h"
+#include <ctype.h>
 #include "a5term.h"
 #include "a5map.h"
 #include <time.h>
@@ -93,6 +94,63 @@ static void map_update( int cmd, int h )
   mtop_seen = top; mbot_seen = mbottom; mdirty = 0; mlast = ms_now();
   }
 
+/* the cursor: a place on the map (an iteration and a cell); the anchor is where a selection began. entry is a command being typed */
+static long cur_it, anc_it; static int cur_cell, anc_cell, have_cur; static char entry[64]; static int nentry;
+static int geom_cells( int w, int *tpc ) { int lw, cpc; return map_geom( loopT, w, mbottom, &lw, tpc, &cpc ); }
+static MapSel the_sel( void )
+  {
+  MapSel s;
+  s.r1 = cur_it < anc_it ? cur_it : anc_it; s.r2 = cur_it < anc_it ? anc_it : cur_it;
+  s.c1 = cur_cell < anc_cell ? cur_cell : anc_cell; s.c2 = cur_cell < anc_cell ? anc_cell : cur_cell;
+  s.cur_it = cur_it; s.cur_cell = cur_cell;
+  return s;
+  }
+/* the cursor starts on the newest take (the last in MAP's order is not always the newest: take the highest iteration, then offset) */
+static void cursor_start( int w )
+  {
+  int best = -1, tpc;
+  for( int i = 0; i < map.n; i++ )
+    if( map.t[i].st != 2 && ( best < 0 || map.t[i].iter > map.t[best].iter || ( map.t[i].iter == map.t[best].iter && map.t[i].off > map.t[best].off ) ) ) best = i;
+  geom_cells( w, &tpc );
+  cur_it = mbottom; cur_cell = 0;
+  if( best >= 0 )
+    for( int k = 0; k < map.t[best].n; k++ )
+      if( map.t[best].pk[k] ) { long a = map.t[best].off * 5 + k; cur_it = map.t[best].iter + a / loopT; cur_cell = (int)( ( a % loopT ) / tpc ); break; }
+  anc_it = cur_it; anc_cell = cur_cell; have_cur = 1;
+  }
+static void map_scroll( int key, int h );
+static void cursor_move( int key, int shift, int w, int h )
+  {
+  int tpc, cells = geom_cells( w, &tpc ), rows = h - 5;
+  if( key == K_UP && cur_it > 0 ) cur_it--;
+  else if( key == K_DOWN && cur_it < mcur ) cur_it++;
+  else if( key == K_LEFT && cur_cell > 0 ) cur_cell--;
+  else if( key == K_RIGHT && cur_cell < cells - 1 ) cur_cell++;
+  if( cur_cell >= cells ) cur_cell = cells - 1;
+  if( ! shift ) { anc_it = cur_it; anc_cell = cur_cell; }
+  if( rows < 1 ) rows = 1;
+  if( cur_it < mbottom - rows + 1 ) { mfollow = 0; mbottom = cur_it + rows - 1; if( mbottom > mcur ) mbottom = mcur; }
+  if( cur_it > mbottom ) mbottom = cur_it;
+  if( mbottom >= mcur ) { mbottom = mcur; mfollow = 1; }
+  mdirty = 1;
+  }
+
+/* a typed command (a5mix_parse's language) on what the cursor or selection touches; or on the iteration it names */
+static char mix_reply[220];
+static void say( const char *l, void *u ) { (void)u; snprintf( mix_reply, sizeof mix_reply, "%s", l ); }
+static void mix_run( int cmd, const MixCmd *c, int w )
+  {
+  char b[200]; int n = 0;
+  if( c->has_iter ) { a5mix_line( b, sizeof b, c->iter, c->has_take ? c->take : -1, c ); mix_reply[0] = 0; ctlc_cmd( cmd, b, say, NULL ); n = mix_reply[0] ? 1 : 0; }
+  else
+    {
+    int idx[256], k; MapSel sel = the_sel(); k = map_affected( &map, &sel, loopT, w, mbottom, idx, 256 );
+    for( int i = 0; i < k; i++ ) { a5mix_line( b, sizeof b, map.t[idx[i]].iter, map.t[idx[i]].off, c ); ctlc_cmd( cmd, b, say, NULL ); n++; }
+    if( ! k ) { snprintf( events[nev++ % EV], 220, "nothing there to mix: move the cursor onto a take" ); return; }
+    }
+  snprintf( events[nev++ % EV], 220, "mix: %d take(s) %s", n, c->now ? "changed at once" : "queued for their next start" );
+  }
+
 static void map_scroll( int key, int h )
   {
   int rows = h - 5; if( rows < 1 ) rows = 1;
@@ -115,10 +173,11 @@ static void draw( int live, int amode )
   corners( 1, w, live, t, "" );
   put( 2, C_TEXT, status, w );
   rows = h - 5; if( rows < 1 ) rows = 1;                       /* rows 3 .. h-3: the map, the latest iteration at the bottom */
-  map_draw( &map, mbottom - rows + 1, rows, 3, w, loopT, mcur );
+  { MapSel sel = the_sel(); map_draw( &map, mbottom - rows + 1, rows, 3, w, loopT, mcur, have_cur ? &sel : NULL ); }
   for( int i = 2; i > 0; i-- )                                  /* the last two things that happened, in words */
     put( h - i, C_TEXT, nev >= i ? events[( nev - i ) % EV] : "", w );
-  corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [t]mix [?]", "" );
+  if( nentry ) { snprintf( t, sizeof t, " > %s", entry ); put( h - 1, C_TEXT, t, w ); }       /* a command being typed */
+  corners( h, w, live, "[l]ive [s]afe [g]ate [a]mode [h]istory [u]ndo [x]port [?]", "" );
   printf( "%s", term_sgr( C_TEXT ) );
   fflush( stdout );
   }
@@ -145,14 +204,14 @@ static void help( void )
 "                          .  puts the loop back as it was then, from each take's next start,  !  at once\n"
 "   t       mixing         iterations x takes: mute, play, gain and pan (below)\n"
 "   T       takes          every take and its state, as text\n\n"
-" mixing (t; ESC to leave)\n"
-"   arrows move, shift+arrows select; the left column is a whole iteration\n"
+" editing the map (the arrows move a cursor over it; shift+arrows select; ESC ends a selection)\n"
+"   every take under the cursor, or touched by the selection, is underlined and is the one the keys act on\n"
+"   m p  mute / play   M P  the same at once   .  toggle (queued)   !  toggle at once      alone, or after:\n"
 "   [ITER[.TAKE]] [+N|-N] [/N|\\N] then  .  queue   !  now   m p  mute / play   M P  now\n"
-"   123.15-2/20.   take 123.15, gain -2 dB, pan 20%% right, from its next start\n"
-"   123.15\\90!    pan 90%% left, at once       123m  mute all of iteration 123\n"
-"   123..          toggle every take of 123      m  p  .  on what is selected\n"
+"   +3.   gain +3 dB   -2/20.   gain -2, pan 20%% right    \\90!   pan 90%% left, at once\n"
+"   123.15-2/20.   take 123.15 (an iteration and second) without the cursor     123m  mute all of iteration 123\n"
 "   gain and pan are absolute; a sign or slash with no number keeps the current value.\n"
-"   a take given a gain or pan is left alone by the automix. A shows muted iterations.\n\n"
+"   a take given a gain or pan is left alone by the automix. in keep mode p puts the take in the loop.\n\n"
 " mode (one at a time; a, then one key)\n"
 "   al        loop         every take goes into the loop (the usual)\n"
 "   ak        keep         takes are recorded and kept, but not put into the loop\n"
@@ -215,7 +274,7 @@ int main( int argc, char **argv )
     live = strstr( status, "SAFE" ) == NULL;
     { const char *a = strstr( status, "automix " );                 /* follow what aspace says, not what this shell last sent */
       if( a ) { a += 8; if( ! strncmp( a, "overlap ", 8 ) ) { amode = 2; amount = atoi( a + 8 ); } else if( ! strncmp( a, "swap", 4 ) ) { amode = 3; each = strncmp( a + 4, " each", 5 ) == 0; } else if( ! strncmp( a, "keep", 4 ) ) amode = 1; else amode = 0; } }
-    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); }
+    { int ww, hh; term_size( &ww, &hh ); map_update( cmd, hh ); if( ! have_cur ) cursor_start( ww ); }
     draw( live, amode );
     struct pollfd p[3] = { { 0, POLLIN, 0 }, { ev, POLLIN, 0 }, { xfd, POLLIN, 0 } };
     if( poll( p, 3, 250 ) <= 0 ) continue;
@@ -237,6 +296,22 @@ int main( int argc, char **argv )
       int k, sh;
       if( ( k = term_key( &sh ) ) == K_NONE ) continue;
       char c[100] = "";
+      { /* the map: arrows move the cursor (shift selects), digits + - / \\ start a command, . ! m p M P end it (alone, they act on what is under the cursor) */
+        int ww, hh; term_size( &ww, &hh );
+        if( k == K_UP || k == K_DOWN || k == K_LEFT || k == K_RIGHT ) { cursor_move( k, sh, ww, hh ); continue; }
+        if( k == K_ESC ) { nentry = 0; entry[0] = 0; anc_it = cur_it; anc_cell = cur_cell; mdirty = 1; continue; }
+        if( k == K_BS && nentry ) { entry[--nentry] = 0; continue; }
+        if( k < 256 && ( isdigit( k ) || strchr( "+-/\\", k ) || strchr( ".!mMpP", k ) ) && nentry < (int)sizeof entry - 2 )
+          {
+          MixCmd mc; int r;
+          entry[nentry++] = (char)k; entry[nentry] = 0;
+          r = a5mix_parse( entry, &mc );
+          if( r == MP_DONE ) mix_run( cmd, &mc, ww );
+          else if( r == MP_BAD ) snprintf( events[nev++ % EV], 220, "not understood: %s", entry );
+          if( r != MP_WAIT ) { nentry = 0; entry[0] = 0; mdirty = 1; }
+          continue;
+          }
+      }
       switch( k )
         {
         case K_PGUP: case K_PGDN: case K_HOME: case K_END: { int ww, hh; term_size( &ww, &hh ); map_scroll( k, hh ); break; }
@@ -264,15 +339,10 @@ int main( int argc, char **argv )
           else if( d >= '1' && d <= '9' ) snprintf( c, sizeof c, "AUTOMIX OVERLAP %d", d - '0' );
           break;
           }
-        case 't': a5mixer( cmd, ev, space ); break;
         case 'T': term_cls(); ctlc_cmd( cmd, "TAKES", show, NULL ); printf( "\n(any key)" ); fflush( stdout ); { char d; while( read( 0, &d, 1 ) != 1 ) usleep( 50000 ); } break;
         case 'u': case 'U':
-          if( amode == 1 ) { snprintf( events[nev++ % EV], 220, "keep mode: undo has no effect (m / M mix or mute the most recent take)" ); break; }
+          if( amode == 1 ) { snprintf( events[nev++ % EV], 220, "keep mode: undo has no effect (p / m put a take in or out of the loop)" ); break; }
           snprintf( c, sizeof c, "UNDO %s", k == 'u' ? "TAKE" : "ITER" );
-          break;
-        case 'm': case 'M':                                           /* keep mode: mix or mute the most recent take, queued / now */
-          if( amode != 1 ) break;
-          strcpy( c, k == 'm' ? "LASTMIX" : "LASTMIX NOW" );
           break;
         case 'x':
           {
