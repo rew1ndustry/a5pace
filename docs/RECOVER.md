@@ -53,3 +53,5 @@ with the counts, and exits 0 when nothing was lost, 1 otherwise. Nothing of your
 The keeper has two test-only pauses, `ASP_KEEPER_PAUSE_BEFORE_MS` and `ASP_KEEPER_PAUSE_AFTER_MS` (environment), which hold a take before it is placed or
 after it is placed and safe but not yet reported. `tests/test_recover.sh` uses them, with the stepped simulated card, to kill a run at each of
 the three moments that matter and check that `a5recover` brings the take back.
+
+Takes put back by a5recover have no levels yet (the map in a5hell shows them without colour): run `a5peaks DIR` afterwards.

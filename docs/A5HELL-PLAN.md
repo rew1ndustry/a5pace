@@ -1,4 +1,4 @@
-# a5hell upgrade: plan (nothing built yet)
+# a5hell upgrade: plan (all six steps built on branch a5hell2; see the step notes; docs are SHELL.md and A5HELL-GUIDE.md)
 
 Status: agreed in conversation 2026-11-06. Not yet read: `src/a5mixer.c`, `src/gate.c`, `tools/a5start`, the take-close
 code in `aspcore.c`. Step 0 reads them and may change the details below, never the intent.
@@ -82,7 +82,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 3. DONE 2026-11-06 (notes below): Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
 4. DONE 2026-11-06 (notes below): Cursor, selection, editing keys wired to the mixer language; remove `t`.
 5. DONE 2026-11-06 (notes below): Meters.
-6. Docs: `SHELL.md` and the help screen, the user guide, a README line.
+6. DONE 2026-11-06: Docs: `SHELL.md` and the help screen, the user guide, a README line.
 Test with the simulated card (`-S`, `--fast`, `SIM BURST`) for a clean session, run in a pty (tmux `capture-pane`) at 80x24
 and larger, then on the copy of transylvanianLullaby.
 
@@ -167,6 +167,11 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   has `input L R   output L R`, bars of -60..0 dB coloured with the cfg thresholds, and a `|` peak mark that falls 3 dB a
   refresh. Row h-2 is now the single last-event line (the typed command replaces it). Meters move at the shell's 250 ms
   polling, a tick is 200 ms, so a short burst can be missed on screen. Tested with `SIM BURST` on `scratch/tl`.
+
+## Step 6 notes
+- `docs/A5HELL-GUIDE.md` (new, for people), `docs/SHELL.md` (shell section rewritten, `a5start` options), README parts list,
+  `p` -> `f` in CALIBRATION and PROFILES, a5peaks in RECOVER; the help screen is 19 lines, 70 columns, checked at 80x24.
+- Not done: Windows port of a5term; 256-colour ramp; `a5recover` making peaks itself; a unit test for `asp_pk_add`.
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
