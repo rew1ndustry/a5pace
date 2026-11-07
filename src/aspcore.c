@@ -171,7 +171,7 @@ void asp_core_defaults( AspCoreCfg *c )
   {
   memset( c, 0, sizeof *c );
   asp_sync_defaults( &c->sync );
-  c->live = 1; c->feed = 1; c->mono_detect = 1; c->mono_lev = 1;
+  c->live = 1; c->feed = 1; c->mono_detect = 1; c->mono_lev = 0;
   }
 
 AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *err, int errn )

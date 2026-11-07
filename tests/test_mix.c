@@ -82,7 +82,7 @@ int main( void )
   CHECK( asp_take_get( r.s, s.id[0], &k0 ) == 0 && asp_take_get( r.s, s.id[1], &k1 ) == 0 );
   /* a mono take is stored with both channels as heard; mono is what the state says */
   CHECK( k0.channels == 2 && k1.channels == 2 );
-  CHECK( s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 && s.st[1].mono && s.st[1].l == 1 );
+  CHECK( s.st[0].mono && s.st[0].l == 0 && s.st[0].r == 0 && s.st[1].mono && s.st[1].l == 0 );
   CHECK( strstr( "x", "x" ) );
   AspCoreStatus st; asp_core_status( r.c, &st );
   CHECK( st.jobs == 0 );
@@ -143,7 +143,7 @@ int main( void )
     while( nextb < 35 ) { int fr = 0; for( int k = 0; k < 16; k++ ) if( ! r.sim.b[k].on ) fr++; if( ! fr ) break; sim_burst( &r.sim, b0 + (int64_t)nextb * 28800, 1, 0.1 ); nextb++; nb++; }
     }
   States s; states( &r, &s ); AspTake tk; AspCoreStatus st; asp_core_status( r.c, &st );
-  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 2 && s.st[0].mono && s.st[0].l == 1 && s.st[0].r == 1 );
+  CHECK( s.n == 1 && asp_take_get( r.s, s.id[0], &tk ) == 0 && tk.channels == 2 && s.st[0].mono && s.st[0].l == 0 && s.st[0].r == 0 );
   CHECK( count_type( r.dir, "new" ) == 1 );                           /* the left-only noise opened nothing */
   CHECK( st.jobs == 0 );                                              /* nothing left to convert */
   }

@@ -107,7 +107,7 @@ intensity instead of bright, grey dimmed. The terminal handling is all in `src/a
 The gate says which channels rang during a take. If one channel never did (or the two are identical) the take is
 stored as one channel and placed in the middle (a level shift of 1 on both outputs); with SWAP
 it goes hard left / right instead. While it is being recorded it is heard as stereo, and is replaced by the mono
-placement when it ends. `mono_detect` and `mono_lev` are in the core's config.
+placement when it ends. `mono_detect` and `mono_lev` (default 0: a mono take goes in at no shift) are in the core's config.
 
 ## What was not carried over from aspace.sh
 It stays untouched in `~/bin`; asp5 takes the ideas, not the code. Left behind on purpose:
