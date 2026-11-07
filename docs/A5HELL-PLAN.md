@@ -173,6 +173,13 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   `p` -> `f` in CALIBRATION and PROFILES, a5peaks in RECOVER; the help screen is 19 lines, 70 columns, checked at 80x24.
 - Not done: Windows port of a5term; 256-colour ramp; `a5recover` making peaks itself; a unit test for `asp_pk_add`.
 
+## Pinned set (added after step 6, user request)
+- A restarted space counts iterations from 1 again, so older takes (up to 110, and 90001+) were off the bottom of the map; takes
+  without levels (not yet through `a5peaks`) were not drawn at all. Now: `MAP HIGH n above` (core `asp_core_map_high`) gives the
+  takes of the n highest iterations above the current one; the shell pins up to a third of the map rows under a separator line;
+  a take with no levels is drawn at a grey level 1 over its whole length. Pinned rows are display only. Checked on a copy of the
+  original session with no peaks (`scratch/tl2`). The real session was not touched: `a5peaks` on it is the user's call.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
 - (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.

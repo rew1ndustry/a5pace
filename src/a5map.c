@@ -20,7 +20,13 @@ void map_line( const char *line, void *u )
     t->iter = iter; t->off = off; t->frames = frames; t->st = ! strcmp( st, "open" ) ? 2 : ! strcmp( st, "in" );
     }
   const char *h = line + used; int k = 0;
-  if( *h == '-' ) return;
+  if( *h == '-' )                                                   /* no levels kept for this take: it is where it is, at an unknown level */
+    {
+    int n = (int)( ( frames + 9599 ) / 9600 ); if( n < 1 || n > 100000 ) return;
+    unsigned char *p = realloc( t->pk, (size_t)n ); if( ! p ) return;
+    memset( p, 1, (size_t)n ); t->pk = p; t->cap = t->n = n;
+    return;
+    }
   while( hexv( h[2*k] ) >= 0 && hexv( h[2*k+1] ) >= 0 ) k++;
   if( tick0 + k > t->cap )
     { int c = tick0 + k + 64; unsigned char *p = realloc( t->pk, (size_t)c ); if( ! p ) return; memset( p + t->cap, 0, (size_t)( c - t->cap ) ); t->pk = p; t->cap = c; }
@@ -40,6 +46,7 @@ int map_scale( int T, int w, int *tpc, int *cpc )
 static int role_of( int b )                                        /* the colour of a level byte */
   {
   const TermCfg *c = term_cfg(); double db = ( b - 1 ) / 2.0 - 120;
+  if( b <= 1 ) return C_TEXT;                                       /* unknown or silent: grey */
   return db < c->green_below_db ? C_LOW : db > c->red_above_db ? C_HIGH : C_MID;
   }
 
@@ -80,11 +87,18 @@ int map_affected( const Map *m, const MapSel *sel, int T, int w, long hi, int *i
   return n;
   }
 
-void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel )
+/* the row of iteration it: top.. consecutive, or the position in its[] */
+static long rowof( const long *its, long top, int rows, long it )
+  {
+  if( ! its ) return it - top;
+  for( int r = 0; r < rows; r++ ) if( its[r] == it ) return r;
+  return -1;
+  }
+
+void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel, const long *its, long wide )
   {
   int tpc, cpc, cells, lw, i;
-  long hi = top + rows - 1;
-  cells = map_geom( T, w, hi, &lw, &tpc, &cpc );
+  cells = map_geom( T, w, wide, &lw, &tpc, &cpc );
   if( cells < 1 || rows < 1 ) return;
   unsigned char *live = calloc( (size_t)rows * cells, 1 ), *mute = calloc( (size_t)rows * cells, 1 ), *mark = calloc( (size_t)rows * cells, 1 );
   if( ! live || ! mute || ! mark ) { free( live ); free( mute ); free( mark ); return; }
@@ -93,10 +107,10 @@ void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur,
     const MapTake *t = m->t + i; long start = t->off * 5;           /* 5 ticks a second */
     for( int k = 0; k < t->n; k++ )
       {
-      unsigned char b = t->pk[k]; long a = start + k, row = t->iter + a / T - top;
+      unsigned char b = t->pk[k]; long a = start + k, row = rowof( its, top, rows, t->iter + a / T );
       if( ! b ) continue;
       if( row < 0 ) continue;
-      if( row >= rows ) break;                                       /* later ticks are later rows */
+      if( row >= rows ) { if( its ) continue; break; }               /* later ticks are later rows */
       unsigned char *p = ( t->st ? live : mute ) + row * cells + ( a % T ) / tpc;
       if( b > *p ) *p = b;
       }
@@ -104,7 +118,7 @@ void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur,
     }
   for( int r = 0; r < rows; r++ )
     {
-    long it = top + r; char line[64]; int cur_role = -1, cur_fx = -1;
+    long it = its ? its[r] : top + r; char line[64]; int cur_role = -1, cur_fx = -1;
     printf( "\033[%d;1H", r0 + r );
     if( it >= 0 ) snprintf( line, sizeof line, "%*ld ", lw, it ); else snprintf( line, sizeof line, "%*s ", lw, "" );
     printf( "%s%s%s", term_sgr( C_TEXT ), it == cur ? "\033[1m" : "", line );

@@ -16,5 +16,7 @@ int  map_geom( int T, int w, long hi, int *lw, int *tpc, int *cpc );
 /* the takes (indexes into m->t) that touch the cells of sel; the take being recorded is left out, it cannot be mixed yet */
 int  map_affected( const Map *m, const MapSel *sel, int T, int w, long hi, int *idx, int max );
 /* draw rows iterations top .. top+rows-1 from screen row r0, w columns wide. cur is the current iteration (its label is bold). sel (may be NULL): the cursor is reversed, the selection too, and every cell of every affected take underlined */
-void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel );
+/* its: NULL for the consecutive iterations top .. top+rows-1, else the iteration of each row (a pinned set). wide: the largest
+   iteration to be shown anywhere, so every block has the same label width and cells */
+void map_draw( const Map *m, long top, int rows, int r0, int w, int T, long cur, const MapSel *sel, const long *its, long wide );
 #endif

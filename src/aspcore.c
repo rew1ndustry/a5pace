@@ -562,6 +562,21 @@ int asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, void 
   return k;
   }
 
+static int cmp_desc( const void *a, const void *b ) { int64_t x = *(const int64_t *)a, y = *(const int64_t *)b; return x < y ? 1 : x > y ? -1 : 0; }
+int asp_core_map_high( const AspCore *c, int64_t above, int n, AspMapCb cb, void *u )
+  {
+  int64_t *its = malloc( ( c->nlt + 1 ) * sizeof *its ); int m = 0, k = 0;
+  if( ! its ) return 0;
+  for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter > above ) its[m++] = c->lt[i].iter;
+  qsort( its, m, sizeof *its, cmp_desc );
+  int d = 0;
+  for( int i = 0; i < m; i++ ) if( ! i || its[i] != its[i-1] ) its[d++] = its[i];      /* distinct, highest first */
+  if( d > n ) d = n;
+  for( int i = d - 1; i >= 0; i-- ) k += asp_core_map( c, its[i], its[i], cb, u );
+  free( its );
+  return k;
+  }
+
 void asp_core_automix( AspCore *c, int mode, int n, int each )
   {
   c->cfg.automix.mode = mode; c->cfg.automix.n = n; c->cfg.automix.each = each;

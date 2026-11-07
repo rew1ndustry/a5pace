@@ -368,7 +368,7 @@ static void handle( void *u, int cl, const char *line )
       "IMPORT file l r IN|KEEP   a track for a5import (a take file under tmp/)",
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
-      "MAP [from [to]]                      iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
+      "MAP HIGH n above | MAP [from [to]]   iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
       "METER                                in_l in_r out_l out_r: rms of the last tick, dB",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
@@ -448,7 +448,8 @@ static void handle( void *u, int cl, const char *line )
   else if( ! strcmp( w[0], "GRID" ) )                  /* one row a take: iter off id in mixed gain pan pending mono len */
     { asp_core_takes( r->core, grid_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "MAP" ) )                   /* MAP [from [to]]: the levels of the takes starting in those iterations, a byte a 0.2 s tick (asppeaks.h) */
-    { asp_core_map( r->core, n > 1 ? atoll( w[1] ) : 0, n > 2 ? atoll( w[2] ) : INT64_MAX, map_cb, r ); ctl_ok( c, cl ); }
+    { if( n > 3 && ! strcasecmp( w[1], "HIGH" ) ) asp_core_map_high( r->core, atoll( w[3] ), atoi( w[2] ), map_cb, r );
+      else asp_core_map( r->core, n > 1 ? atoll( w[1] ) : 0, n > 2 ? atoll( w[2] ) : INT64_MAX, map_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "TAKES" ) ) { asp_fold( r->store, -1, fold_cb, r ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "REVERT" ) && n > 1 )
     {

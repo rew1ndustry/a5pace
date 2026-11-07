@@ -26,6 +26,10 @@ PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 ...                           <- sta
 - **The map.** Each row is one trip round the loop; the left is the start of the loop, the right its end. `=` is a take that
   is in the loop, `-` a take that is muted or kept out. A take that runs past the end carries on in the next row, from the
   left. Where takes overlap, one in the loop hides one that is not. Blank is nothing.
+- **Pinned rows.** Under the map, after a line saying so, are the highest-numbered iterations above the one being played:
+  what an earlier run recorded, and the generated tracks (clicks, an imported file, numbered from 90001). They are shown, not
+  edited (the cursor stays on the map above). They disappear as the loop catches up with them. A take whose levels were
+  never worked out (`a5peaks DIR` does it) is drawn grey.
 - **Colour** is how loud: green quiet, yellow about right, red peaking (levels are rms, -24 dB and -6 dB by default).
   Words and numbers are grey. A long loop on a narrow window shares a character between a few moments.
 - **LIVE or SAFE** in the corners. SAFE: nothing is recorded, the loop keeps playing. Next to it, the mode: `loop`, `keep`,
