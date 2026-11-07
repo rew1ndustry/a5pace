@@ -156,7 +156,7 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
   (`map_affected`, `map_draw` in `a5map.c`); cursor reversed bold, selection reversed. The cursor starts on the newest take.
 - Keys: digits and `+ - / \` start a command, `. ! m p M P` end it, and alone act on the affected takes; `a5mix_line`
   builds the `MIX` line. Typed text shows on the bottom line (`> ...`). `t` is gone; keep mode's `m`/`M` LASTMIX key is gone
-  (the `LASTMIX` control command stays): `p` / `P` put the cursor's take into the loop. `GRID` control command removed, and the
+  (the `LASTMIX` control command stays): `p` / `P` put the cursor's take into the loop. The `GRID` control command stays (the click and import tests use it); the
   screen half of `a5mixer.c` with it.
 - Tested on `scratch/tl` (simulated space) in `screen`: arrow then `p` changed 2 takes to in (checked with `MAP`), `3.17M` one
   take at once, shift+arrows then `m` five takes, underline and cursor escapes present in the raw output. Not tried: pan/gain
