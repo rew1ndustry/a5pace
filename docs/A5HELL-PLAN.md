@@ -76,7 +76,7 @@ decoding including arrows and shift+arrows; the only file using termios/ioctl, s
 Bounded copies only; no on-disk struct change in the shell. Redraw by overwriting lines with `ESC[K`, not full clears.
 
 ## Order of work (each step commits on branch `a5hell2`, tested before the next)
-0. Read `a5mixer.c`, `gate.c`, `tools/a5start`, `aspcore.c` take close; settle the key clashes; update this file.
+0. DONE 2026-11-06: read `a5mixer.c`, `gate.c`, `tools/a5start`, `aspcore.c` take close; key clashes settled; findings below.
 1. `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
 2. Core peaks + `MAP` + backfill; check against decoded audio on a test take.
 3. Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
@@ -91,16 +91,37 @@ macOS: fine (ANSI, POSIX). Linux: fine. Windows: the drawing is ANSI (Windows 10
 processing); the shell also uses `poll`, sockets and `fork` for export, so native Windows needs a port of a5term and the
 export call; WSL works as is. Plan: do the split now, port later if wanted.
 
+## Step 0 findings (read 2026-11-06)
+- **Keys settled**: profile `p` moves to `f`. Bare `m M p P . !` (and `+N -N /N \N` starts) act on the take(s) under the
+  cursor or selection; `m`/`M` LASTMIX stays as the keep-mode shortcut and is just the same thing with the cursor on the
+  newest take. `l` = LIVE, `s` = SAFE, `g` = gate menu (`l` learn, `+`, `-`: 3 dB, replacing today's `l`, `g`, `G`). Free
+  keys used: `f`. A command starts at a digit, `+ - / \`; the parser needs no change.
+- **Terminal**: `a5mixer.c` already has a usable `getkey` (arrows, shift via `;2`, 40 ms ESC timeout) and size via TIOCGWINSZ;
+  both move into `a5term.c`. Its `K_NONE` on PgUp/PgDn/Home/End: those finals (`~` after digits, `H`, `F`) must be added.
+  The mixing screen (rows/cells/`GRID`) is retired once `MAP` exists; the `GRID` control command can then go too.
+- **Gate/overlaps**: the gate does not end takes. A take ends in `aspcore.c` after `HANG` = 10 ticks (2 s) with no gate hit
+  (`play_tick`, `++c->shh < HANG`); the gate's own hang is only 0.25 s and a pre-roll of 50 ms. Only one take is open at a
+  time, so overlaps cannot happen by time in the current code. The 23 overlapping pairs come from `off` being whole
+  seconds (`take_new`: frame 0 is the start of its second, zero-padded), so neighbouring takes can overlap by under 1 s, and
+  from older takes recorded by earlier code. Quick end is `HANG`, not the gate; if the user finds takes cut too soon,
+  raise `HANG` (core) rather than touch `gate.c`. Not changed.
+- **Where peaks go (step 2)**: `take_put` is the one place every frame of a take passes (plus the zero lead-in); per-tick
+  level is computed there from `pcm` for `ASP_TICK` frames, `t_frames / ASP_TICK` indexes the array. `take_end_` stores the
+  array with the take (`asp_take_adopt`) and writes it where `lt` is built; discarded takes drop it. Lead-in ticks hold
+  "no level". Mono-fixed takes (`t_fix`): use the chosen channel.
+- **Start**: `a5start DIR` takes args from `DIR/start` (`args ...`) and passes `$args` to `a5pace run` / `a5card`, and takes
+  no extra arguments of its own after `DIR` (its `shift` swallows them). So `a5hell --live` needs `a5start` to accept
+  `a5start DIR [--wait] [--live]` and append the flag to the args, or the shell passes `A5START_ARGS`. Small change, step 1.
+
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.
-- 23 pairs of takes overlap inside one iteration in the test data (old ones, e.g. 1.3 and 1.50). The user's view is that the
-  gate is too quick. Check in `gate.c` at step 0 and note it here; the map will show such overlaps as live over muted.
+- (checked) overlaps: see Step 0 findings. The map shows them as live over muted. Raising `HANG` is the user's call.
 - Whether the space or the shell should hold `--loop`/keep after a restart is not needed: keep is the shell's default at start.
 
 ## Resume notes (everything learnt, so a cleared session can carry on from this file alone)
 Working rules (CLAUDE.md): plan before acting; no repo-wide scans; `grep -I`; talk to the user first; commit on branches;
 installs go to `~/.local/bin` (.sh shells, .py python, else binary), config in `~/.local/etc`; system names prefixed a5.
-The user wants usage kept low and asked for the plan before any code; the go-ahead for step 0 has not been given yet.
+The user wants usage kept low and asked for the plan before any code; step 0 is done; step 1 waits for the user's go.
 
 Facts about the current code (as read 2026-11-06):
 - `src/a5hell.c` (273 lines): poll loop on stdin, the event socket and the export pipe; `LINE` is asked every 250 ms and
