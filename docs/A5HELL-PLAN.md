@@ -77,7 +77,7 @@ Bounded copies only; no on-disk struct change in the shell. Redraw by overwritin
 
 ## Order of work (each step commits on branch `a5hell2`, tested before the next)
 0. DONE 2026-11-06: read `a5mixer.c`, `gate.c`, `tools/a5start`, `aspcore.c` take close; key clashes settled; findings below.
-1. `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
+1. DONE 2026-11-06 (notes below): `a5term`: size, colour, painted background, corners, `--dim`, cfg file; `l`/`s`/`g` menu, `--live`, `--loop`, default keep.
 2. Core peaks + `MAP` + backfill; check against decoded audio on a test take.
 3. Map drawing, cell scale, wrap into later rows, scrolling, latest at the bottom.
 4. Cursor, selection, editing keys wired to the mixer language; remove `t`.
@@ -112,6 +112,16 @@ export call; WSL works as is. Plan: do the split now, port later if wanted.
 - **Start**: `a5start DIR` takes args from `DIR/start` (`args ...`) and passes `$args` to `a5pace run` / `a5card`, and takes
   no extra arguments of its own after `DIR` (its `shift` swallows them). So `a5hell --live` needs `a5start` to accept
   `a5start DIR [--wait] [--live]` and append the flag to the args, or the shell passes `A5START_ARGS`. Small change, step 1.
+
+## Step 1 notes
+- Built: `src/a5term.c/.h` (size, raw, alt screen, painted bg, SGR roles, cfg, keys incl. PgUp/PgDn/Home/End), `share/a5hell.cfg`
+  (installed to `$(PREFIX)/etc` if absent), `a5hell.c` now fills the terminal (corners, status line, log at the bottom
+  of its rows, keys line), `l`/`s`, `g` menu (`l` `+` `-`), `f` profile, `--live` `--loop` `--dim`, needs a tty.
+  `a5start DIR [opts]` passes opts on to the space. Tested on a simulated space in `screen` (80x24): starts live+keep,
+  `s`, `g+` (gate 18 -> 15), `?`, `q`; `--dim` gives normal-intensity colours.
+- Left for later: the `t` screen (a5mixer.c) and the `?` help page are not painted/fitted yet (help is longer than 24 rows;
+  step 6 rewrites it); `SHELL.md` and the user guide still describe the old keys (step 6). `--loop` after the space
+  already runs is ignored by design.
 
 ## Open points
 - (settled) Overlapping takes under the cursor: all are affected and all are highlighted.

@@ -181,9 +181,9 @@ bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
-bin/a5hell: src/a5hell.c src/a5mixer.c src/a5mixer.h src/ctlclient.c
+bin/a5hell: src/a5hell.c src/a5term.c src/a5term.h src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5mixer.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5term.c src/a5mixer.c src/ctlclient.c
 
 bin/test_mixparse: tests/test_mixparse.c src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	$(CC) $(CFLAGS) $(INC) -o $@ tests/test_mixparse.c src/a5mixer.c src/ctlclient.c
@@ -222,6 +222,8 @@ install: bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click
 	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
 	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
+	@mkdir -p $(PREFIX)/etc
+	@[ -f $(PREFIX)/etc/a5hell.cfg ] || install -m 644 share/a5hell.cfg $(PREFIX)/etc/a5hell.cfg
 	bin/a5pace profiles install
 	@echo "installed a5pace a5control a5hell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5import a5recover a5flac in $(PREFIX)/bin"
 clean:

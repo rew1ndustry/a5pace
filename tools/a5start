@@ -1,12 +1,13 @@
 #!/bin/bash
-# a5start DIR [--wait]: make sure the space DIR is running; start it if it is not. a5hell, a5control --start, the gui and
+# a5start DIR [a5pace run options, e.g. --live]: make sure the space DIR is running; start it if it is not. a5hell, a5control --start, the gui and
 # the backend all call this, so how a space is started is decided in one place.
 #
 # how, in order: the file DIR/start (lines "edge card|sim", "args ...", "release 1"), else the line "edge ..." in
 # ~/.config/a5pace/defaults, else the sound card if there is one (a5card), else a simulated card. A5START_EDGE=sim|card
 # overrides all of them. the space runs detached, its words go to DIR/run.log; the card is only taken if it is free.
 set -u
-DIR=${1:?usage: a5start DIR}; shift
+DIR=${1:?usage: a5start DIR [--live ...]}; shift
+EXTRA="$*"                                                           # passed on to the space, after the ones in DIR/start
 CFG=${A5PACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/a5pace}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 if [ -f "$HERE/src/aspace_main.c" ]; then A5PACE="$HERE/bin/a5pace"; A5CONTROL="$HERE/bin/a5control"; A5CARD="$HERE/tools/a5card"
@@ -21,6 +22,7 @@ get() { sed -n "s/^$2[[:space:]=]*//p" "$1" 2>/dev/null | head -1; }
 edge=${A5START_EDGE:-}; args=""; release=""
 [ -z "$edge" ] && edge=$(get "$DIR/start" edge)
 args=$(get "$DIR/start" args); release=$(get "$DIR/start" release)
+args="$args $EXTRA"
 [ -z "$edge" ] && edge=$(get "$CFG/defaults" edge)
 if [ -z "$edge" ]; then
   if [ -x "$A5CARD" ] && grep -qi "UR22C\|USB-Audio" /proc/asound/cards 2>/dev/null; then edge=card; else edge=sim; fi
