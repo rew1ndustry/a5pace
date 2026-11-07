@@ -35,9 +35,9 @@ ready in keep mode).
 ## The sync hunt in detail (`include/sync.h`)
 - One second at a time: `asp_sync_out` gives the second to play, `asp_sync_in` takes the second recorded
   while it played. Tone coding and decoding are asp4's (CPV/MSK), held to it by `tests/sync_diff.sh`.
-- **Level:** starts at -48 dB (re asp4's level) and rises 6 dB for each second not heard, to at most
-  `max_db`. Once heard it measures the input peak and moves the output in one step so the input peak
-  lands on `target_db` (default -12 dBFS), never above `max_db`. If the shell has muted what is heard
+- **Level:** starts 8 bits down from asp4's level (`start_shift`) and comes up one bit for each second not heard, to at most
+  `loudest` (shift 0). Once heard it measures the input peak in bits below full scale and moves the output in one step so the input peak
+  lands on `target_shift` (default 2), never louder than `loudest`. If the shell has muted what is heard
   (`output_muted`), it starts at the top level instead; the shell does the muting around the hunt.
 - **Polarity:** each second tries the louder channel then the other, each both ways up, and reports
   which one read. (asp4 only ever tried one polarity per second, alternating by second.)

@@ -46,7 +46,7 @@ typedef struct
   int      live, take_open;
   int64_t  take_iter, take_off, take_frames;
   double   in_db[2], out_db[2];     /* rms of the last tick, left and right, dB against full scale (-200 for silence): what came in, what went out */
-  double   sync_level_db;
+  int      sync_shift;
   int      loop_takes, jobs;     /* takes in the loop; level moves still being made */
   AspAutomix automix;
   double   gate_db, ring_db, lowcut; int gate_learnt, strict, input;
@@ -83,9 +83,9 @@ void     asp_core_gate_options( AspCore *c, double lowcut, int strict );   /* lo
    now: do it at once; otherwise a take is changed behind the head, and the change is heard from its next start.
    returns how many takes matched. a take given a gain or pan is not touched by the automix again. */
 enum { ASP_MIX_NONE = 0, ASP_MIX_MUTE, ASP_MIX_PLAY, ASP_MIX_TOGGLE };
-typedef struct { int set_gain, gdb, set_pan, pan, act, now; } AspMixCmd;   /* set_*: 1 to the value, 2 keep the take's own value but as an explicit mix */
+typedef struct { int set_gain, gsh, set_pan, pan, act, now; } AspMixCmd;   /* set_*: 1 to the value, 2 keep the take's own value but as an explicit mix */
 int      asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m );
-typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gdb, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
+typedef struct { int64_t id, iter, off, len; int in, mono, mixed, gsh, pan, pending; } AspCoreTake;   /* pending: 1 waits for the take's next start, 2 at once */
 int      asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ), void *u );
 /* the same with the levels of each take, a byte a tick (asppeaks.h), for the takes that start in iterations from..to. the take
    being recorded comes last with open set; its levels grow as it goes */

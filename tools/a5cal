@@ -127,7 +127,7 @@ do_save() {
   [ -e "$out" ] && cp "$out" "$out.old"
   { echo "# $prof: calibrated $(date +%F) from $name; lowest note $(cat "$d/lowest" 2>/dev/null || echo 0) Hz"
     tr ';' '\n' < "$d/proposal" | sed 's/=/ /'
-    echo "sync_max -36"; } > "$out"
+    echo "sync_loudest 6"; } > "$out"
   echo "a5cal: profile $prof written to $out"
   echo "a5cal: choose it in a5hell with p, or: a5pace run --profile $prof DIR"
 }

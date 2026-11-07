@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <math.h>
 #include "aspengine.h"
 #include "flacio.h"
 #include "takefile.h"
@@ -100,35 +99,27 @@ int64_t asp_job_pos0( const AspJob *j ) { return j->pos0; }
 int asp_place_eq( AspPlace a, AspPlace b )
   {
   if( a.mixed != b.mixed ) return 0;
-  if( a.mixed ) return a.gdb == b.gdb && a.pan == b.pan;
+  if( a.mixed ) return a.gsh == b.gsh && a.pan == b.pan;
   return a.l == b.l && a.r == b.r && a.flip == b.flip;
   }
 
-int64_t asp_gain( int64_t x, int64_t m ) { return ( x * m ) >> 24; }
+/* a mixed placement is two shifts: gsh is the gain (+N: every sample right-shifted N bits, -N: left-shifted, saturating
+   in the tank), pan N steps: +N right (the left side shifted N bits more), -N left. no multiplies, no dB. a stereo take's
+   pan is kept but does nothing yet. */
+static int clampsh( int v ) { return v < ASP_LEV_MIN ? ASP_LEV_MIN : v > ASP_LEV_MAX ? ASP_LEV_MAX : v; }
 
-static int64_t gain_q24( int gdb )
+void asp_place_shifts( AspPlace p, int mono, int *sl, int *sr )
   {
-  static int64_t tab[ASP_GDB_MAX - ASP_GDB_MIN + 1]; static int done;
-  if( ! done ) { for( int i = 0; i < ASP_GDB_MAX - ASP_GDB_MIN + 1; i++ ) tab[i] = (int64_t)( pow( 10.0, ( i + ASP_GDB_MIN ) / 20.0 ) * 16777216.0 + 0.5 ); done = 1; }
-  if( gdb < ASP_GDB_MIN ) gdb = ASP_GDB_MIN;
-  if( gdb > ASP_GDB_MAX ) gdb = ASP_GDB_MAX;
-  return tab[gdb - ASP_GDB_MIN];
+  int pan = mono ? p.pan : 0;
+  *sl = clampsh( p.gsh + ( pan > 0 ? pan : 0 ) );
+  *sr = clampsh( p.gsh + ( pan < 0 ? -pan : 0 ) );
   }
 
-void asp_place_mult( AspPlace p, int mono, int64_t *ml, int64_t *mr )
+void asp_place_to_mix( AspPlace p, int mono, int *gsh, int *pan )
   {
-  int64_t g = gain_q24( p.gdb ); int pan = p.pan < -100 ? -100 : p.pan > 100 ? 100 : p.pan;
-  if( mono ) { *ml = g * ( 100 - pan ) / 200; *mr = g * ( 100 + pan ) / 200; }
-  else { *ml = g; *mr = g; }                           /* pan on a stereo take is kept but does nothing yet */
-  }
-
-void asp_place_to_mix( AspPlace p, int mono, int *gdb, int *pan )
-  {
-  if( p.mixed ) { *gdb = p.gdb; *pan = p.pan; return; }
-  double l = p.l == ASP_LEV_OFF ? 0 : ldexp( 1.0, -p.l ), r = p.r == ASP_LEV_OFF ? 0 : ldexp( 1.0, -p.r ), g, pn;
-  if( mono ) { g = l + r; pn = g > 0 ? 100.0 * ( r - l ) / g : 0; }
-  else { g = l > r ? l : r; pn = g <= 0 ? 0 : r < l ? -100.0 * ( 1 - r / l ) : r > l ? 100.0 * ( 1 - l / r ) : 0; }
-  *gdb = g > 0 ? (int)lround( 20.0 * log10( g ) ) : 0; *pan = (int)lround( pn );
+  if( p.mixed ) { *gsh = p.gsh; *pan = p.pan; return; }
+  int l = p.l == ASP_LEV_OFF ? ASP_LEV_MAX : p.l, r = p.r == ASP_LEV_OFF ? ASP_LEV_MAX : p.r;
+  *gsh = l < r ? l : r; *pan = mono ? l - r : 0;          /* the louder side is the gain, the other is the pan */
   }
 
 static inline void contrib( const int32_t *p, int ch, int src, AspPlace pl, int sign, int64_t *m )
@@ -137,9 +128,9 @@ static inline void contrib( const int32_t *p, int ch, int src, AspPlace pl, int 
   int64_t a = p[src >= 0 ? src : 0], b = one ? a : p[1];
   if( pl.mixed )
     {
-    int64_t ml, mr;
-    asp_place_mult( pl, one, &ml, &mr );
-    m[0] += sign * asp_gain( a, ml ); m[1] += sign * asp_gain( b, mr );
+    int sl, sr;
+    asp_place_shifts( pl, one, &sl, &sr );
+    m[0] += sign * asp_level( a, sl ); m[1] += sign * asp_level( b, sr );
     return;
     }
   int64_t s0 = pl.flip ? b : a, s1 = pl.flip ? a : b;
@@ -235,7 +226,7 @@ static int64_t num_after( const char *j, const char *key, int64_t dflt )
 void asp_parse_state( const char *j, AspTakeState *st )
   {
   const char *p;
-  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = st->src = 0; st->gone = 0; st->peak = -1; st->len = -1; st->gdb = st->pan = st->mixed = 0;
+  strcpy( st->status, "legacy" ); st->l = st->r = 0; st->flip = st->mono = st->src = 0; st->gone = 0; st->peak = -1; st->len = -1; st->gsh = st->pan = st->mixed = 0;
   if( ( p = strstr( j, "\"status\":\"" ) ) )
     {
     int n = 0; p += 10;
@@ -252,7 +243,7 @@ void asp_parse_state( const char *j, AspTakeState *st )
   st->mono = (int)num_after( j, "\"mono\":", 0 ); st->src = (int)num_after( j, "\"src\":", 0 );
   st->peak = num_after( j, "\"peak\":", -1 );
   st->len = num_after( j, "\"len\":", -1 );
-  st->mixed = (int)num_after( j, "\"mixed\":", 0 ); st->gdb = (int)num_after( j, "\"gdb\":", 0 ); st->pan = (int)num_after( j, "\"pan\":", 0 );
+  st->mixed = (int)num_after( j, "\"mixed\":", 0 ); st->gsh = (int)num_after( j, "\"gsh\":", 0 ); st->pan = (int)num_after( j, "\"pan\":", 0 );
   }
 
 typedef struct { int64_t id; AspTakeState st; } Ent;
@@ -277,7 +268,7 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
     AspTakeState *st = &l.e[i].st;
     if( l.e[i].id == 0 || ! strcmp( st->status, "off" ) ) continue;   /* take 0 holds settings, not a take; or not in the loop */
     { AspTake k; if( asp_take_get( s, l.e[i].id, &k ) ) continue; }     /* a state with no take: one a dead run never got to store (see a5recover) */
-    rc = asp_move_take( t, s, l.e[i].id, st->mono ? st->src : -1, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gdb, st->pan, st->mixed } );
+    rc = asp_move_take( t, s, l.e[i].id, st->mono ? st->src : -1, st->gone, -1, ASP_PLACE_OFF, (AspPlace){ st->l, st->r, st->flip, st->gsh, st->pan, st->mixed } );
     }
   free( l.e );
   return rc;

@@ -7,19 +7,19 @@
 
 /* where a take sits in the loop: an output level per channel (a right shift, or ASP_LEV_OFF) and
    whether the source channels are swapped. a mono take feeds both outputs. */
-typedef struct { int l, r, flip, gdb, pan, mixed; } AspPlace;
+typedef struct { int l, r, flip, gsh, pan, mixed; } AspPlace;
 #define ASP_PLACE_OFF  ((AspPlace){ ASP_LEV_OFF, ASP_LEV_OFF, 0, 0, 0, 0 })
 
-/* an explicit mix (mixed != 0) replaces l, r and flip: gain gdb whole dB (absolute), pan -100 (left) .. 100 (right).
-   a mono take is panned across both outputs with the centre at half each (the same as level shift 1); a stereo take
-   keeps both channels: its pan is stored but has no effect yet. integer arithmetic, so a take taken out
-   subtracts exactly what was added. */
-#define ASP_GDB_MIN (-60)
-#define ASP_GDB_MAX 24
+/* an explicit mix (mixed != 0) replaces l, r and flip: gain gsh is a bit shift (absolute: +N right-shifts every sample N
+   bits, -N left-shifts), pan is a bit shift too (+N right: the left side shifted N bits more; -N left). a stereo take
+   keeps both channels: its pan is stored but has no effect yet. shifts only, so a take taken out subtracts exactly
+   what was added. */
+#define ASP_GSH_MIN ASP_LEV_MIN
+#define ASP_GSH_MAX ASP_LEV_MAX
+#define ASP_PAN_MAX ASP_LEV_MAX
 int     asp_place_eq( AspPlace a, AspPlace b );
-void    asp_place_mult( AspPlace p, int mono, int64_t *ml, int64_t *mr );    /* Q24 gains for the two outputs */
-int64_t asp_gain( int64_t x, int64_t m );
-void    asp_place_to_mix( AspPlace p, int mono, int *gdb, int *pan );        /* what an unmixed placement amounts to */
+void    asp_place_shifts( AspPlace p, int mono, int *sl, int *sr );          /* the bit shifts for the two outputs */
+void    asp_place_to_mix( AspPlace p, int mono, int *gsh, int *pan );        /* what an unmixed placement amounts to */
 
 /* a move: take the old placement of a take out of the loop and put the new one in, as one exact add-the-difference. the
    two placements may hear the take differently (a stereo feed replaced by its left channel as mono). a job reads the take
@@ -55,6 +55,6 @@ int asp_tank_clear( AspTank *t );
 int asp_rebuild( AspTank *t, AspStore *s, int64_t upto );
 
 /* the take-state fields the engine reads from the json state */
-typedef struct { char status[8]; int l, r, flip, mono, src; int64_t gone, peak, len; int gdb, pan, mixed; } AspTakeState;
+typedef struct { char status[8]; int l, r, flip, mono, src; int64_t gone, peak, len; int gsh, pan, mixed; } AspTakeState;
 void asp_parse_state( const char *json, AspTakeState *st );
 #endif

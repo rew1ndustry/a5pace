@@ -106,7 +106,7 @@ static void state_json( const LoopTake *t, const char *status, char *buf, size_t
   char l[8], r[8];
   lev_str( t->now.l, l ); lev_str( t->now.r, r );
   char mx[60] = "";
-  if( t->now.mixed ) snprintf( mx, sizeof mx, ",\"mixed\":1,\"gdb\":%d,\"pan\":%d", t->now.gdb, t->now.pan );
+  if( t->now.mixed ) snprintf( mx, sizeof mx, ",\"mixed\":1,\"gsh\":%d,\"pan\":%d", t->now.gsh, t->now.pan );
   snprintf( buf, n, "{\"status\":\"%s\",\"lev\":[\"%s\",\"%s\"],\"flip\":%d,\"mono\":%d,\"src\":%d,\"len\":%lld,\"gone\":0,\"peak\":%lld%s%s}",
             status, l, r, t->now.flip, t->mono, t->src, (long long)t->len, (long long)t->peak, mx, t->gtail );
   }
@@ -155,7 +155,7 @@ static void load_cb( int64_t id, const char *json, void *u )
   if( asp_take_get( c->store, id, &k ) ) return;
   LoopTake *t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
-  t->now = t->base = (AspPlace){ st.l, st.r, st.flip, st.gdb, st.pan, st.mixed };
+  t->now = t->base = (AspPlace){ st.l, st.r, st.flip, st.gsh, st.pan, st.mixed };
   t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->src = st.src; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
   if( t->gen )                                             /* the marker has to survive the state being rewritten */
     {
@@ -213,7 +213,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     c->latency = cfg->declared_latency; c->origin = 0; c->hush = c->latency / ASP_TICK + 5; c->phase = 1;
     logf_( c, "sync_declared", "{\"frames\":%lld}", (long long)c->latency );
     }
-  else logf_( c, "sync_start", "{\"level_db\":%.1f}", asp_sync_level( c->sync ) );
+  else logf_( c, "sync_start", "{\"level_shift\":%d}", asp_sync_level( c->sync ) );
   c->started = 1;
   logf_( c, "core_open", "{\"loop\":%lld,\"iter\":%llu,\"live\":%d,\"takes\":%d}", (long long)c->size, (unsigned long long)c->iter, c->live, c->nlt );
   return c;
@@ -306,8 +306,8 @@ static void change( AspCore *c, LoopTake *t, AspPlace to, int in, const char *wh
   t->now = to; t->in = in;
   state_json( t, in ? "mix" : "off", st, sizeof st );
   asp_take_set_state( c->store, t->id, st, "aspace", c->tick );
-  logf_( c, "relevel", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d,\"mixed\":%d,\"gdb\":%d,\"pan\":%d}", (long long)t->id, (long long)t->iter, (long long)t->off, why,
-         to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in, to.mixed, to.gdb, to.pan );
+  logf_( c, "relevel", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d,\"mixed\":%d,\"gsh\":%d,\"pan\":%d}", (long long)t->id, (long long)t->iter, (long long)t->off, why,
+         to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in, to.mixed, to.gsh, to.pan );
   if( c->cfg.feed ) queue_move( c, t, from, to, was, in );
   }
 
@@ -420,9 +420,9 @@ int asp_core_mix( AspCore *c, int64_t iter, int64_t off, const AspMixCmd *m )
       {
       int g, p;
       asp_place_to_mix( t->now, t->mono, &g, &p );
-      if( m->set_gain == 1 ) g = m->gdb;                    /* 2: keep what it has, now as a mix of its own */
+      if( m->set_gain == 1 ) g = m->gsh;                    /* 2: keep what it has, now as a mix of its own */
       if( m->set_pan == 1 ) p = m->pan;
-      g = g < ASP_GDB_MIN ? ASP_GDB_MIN : g > ASP_GDB_MAX ? ASP_GDB_MAX : g; p = p < -100 ? -100 : p > 100 ? 100 : p;
+      g = g < ASP_GSH_MIN ? ASP_GSH_MIN : g > ASP_GSH_MAX ? ASP_GSH_MAX : g; p = p < -ASP_PAN_MAX ? -ASP_PAN_MAX : p > ASP_PAN_MAX ? ASP_PAN_MAX : p;
       to = (AspPlace){ 0, 0, 0, g, p, 1 };
       }
     if( m->act == ASP_MIX_MUTE ) in = 0; else if( m->act == ASP_MIX_PLAY ) in = 1; else if( m->act == ASP_MIX_TOGGLE ) in = ! t->in;
@@ -516,7 +516,7 @@ static void rst_cb( int64_t id, const char *json, void *u )
     LoopTake *t = r->c->lt + i;
     if( t->id != id ) continue;
     asp_parse_state( json, &st );
-    AspPlace to = { st.l, st.r, st.flip, st.gdb, st.pan, st.mixed }; int in = strcmp( st.status, "off" ) != 0;
+    AspPlace to = { st.l, st.r, st.flip, st.gsh, st.pan, st.mixed }; int in = strcmp( st.status, "off" ) != 0;
     t->mark = 1;
     if( ! ( asp_place_eq( to, t->now ) && in == t->in ) ) { change( r->c, t, to, in, "undo" ); r->changed++; }
     return;
@@ -540,7 +540,7 @@ int asp_core_takes( const AspCore *c, void (*cb)( void *, const AspCoreTake * ),
     {
     const LoopTake *t = c->lt + i; AspCoreTake o;
     o.id = t->id; o.iter = t->iter; o.off = t->off; o.len = t->len; o.in = t->in; o.mono = t->mono; o.mixed = t->now.mixed;
-    asp_place_to_mix( t->now, t->mono, &o.gdb, &o.pan );
+    asp_place_to_mix( t->now, t->mono, &o.gsh, &o.pan );
     o.pending = asp_core_pending( c, t->id );
     cb( u, &o );
     }
@@ -556,7 +556,7 @@ int asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, void 
     const LoopTake *t = c->lt + i; AspCoreTake o;
     if( t->iter < from || t->iter > to ) continue;
     o.id = t->id; o.iter = t->iter; o.off = t->off; o.len = t->len; o.in = t->in; o.mono = t->mono; o.mixed = t->now.mixed;
-    asp_place_to_mix( t->now, t->mono, &o.gdb, &o.pan );
+    asp_place_to_mix( t->now, t->mono, &o.gsh, &o.pan );
     o.pending = asp_core_pending( c, t->id );
     cb( u, &o, 0, buf, asp_peaks_get( c->store, t->id, buf, sizeof buf ) );
     k++;
@@ -744,7 +744,7 @@ static void sync_begin( AspCore *c )
   c->sync = asp_sync_new( &c->cfg.sync );
   c->sync_k = 0;
   c->phase = 0;
-  logf_( c, "sync_start", "{\"level_db\":%.1f}", asp_sync_level( c->sync ) );
+  logf_( c, "sync_start", "{\"level_shift\":%d}", asp_sync_level( c->sync ) );
   }
 
 static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
@@ -763,8 +763,8 @@ static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
       c->origin = c->tick + 1;                           /* the loop starts at its top on the next tick */
       c->hush = c->origin + c->latency / ASP_TICK + 5;   /* the sync still in flight comes back first */
       c->phase = 1; c->gate_ready = 0; c->have_prev = 0;     /* (newt stays: the iteration moves on only if a take is in it) */
-      logf_( c, "sync_found", "{\"frames\":%lld,\"inverted\":%d,\"channel\":%d,\"out_db\":%.1f,\"in_peak_db\":%.1f,\"seconds\":%d,\"spread\":%d}",
-             (long long)res->frames, res->inverted, res->channel, res->out_db, res->in_peak_db, res->seconds, res->spread );
+      logf_( c, "sync_found", "{\"frames\":%lld,\"inverted\":%d,\"channel\":%d,\"out_shift\":%d,\"in_peak_shift\":%d,\"seconds\":%d,\"spread\":%d}",
+             (long long)res->frames, res->inverted, res->channel, res->out_shift, res->in_peak_shift, res->seconds, res->spread );
       return;
       }
     if( r < 0 )
@@ -907,7 +907,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->iter = c->iter; st->live = c->live; st->take_open = c->enc != NULL;
   for( int ch = 0; ch < 2; ch++ ) { st->in_db[ch] = c->m_in[ch]; st->out_db[ch] = c->m_out[ch]; }
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
-  st->sync_level_db = c->sync ? asp_sync_level( c->sync ) : 0;
+  st->sync_shift = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
   st->input = c->cfg.input; st->lowcut = asp_gate_lowcut( c->gate ); st->strict = asp_gate_strict( c->gate ); st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );
   st->log_seq = asp_log_last( c->store ); st->loop_frames = c->size; st->peak = (int64_t)c->peak;

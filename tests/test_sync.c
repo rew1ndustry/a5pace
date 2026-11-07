@@ -38,7 +38,7 @@ static int run( const Chan *c, AspSyncCfg *cfg, AspSyncResult *res, int verbose 
         in[2*i+ch] = (int32_t)v;
         }
     rc = asp_sync_in( s, in );
-    if( verbose ) printf( "  second %d level %.0f dB -> %d\n", n, asp_sync_level( s ), rc );
+    if( verbose ) printf( "  second %d shift %d -> %d\n", n, asp_sync_level( s ), rc );
     }
   if( rc == 1 ) *res = *asp_sync_result( s );
   else { *res = *asp_sync_result( s ); }
@@ -75,17 +75,17 @@ int main( void )
     Chan c = { 12345, gdb, 0, -300, 0, 0 };
     int rc = run( &c, &cfg, &r, 0 );
     CHECK( rc == 1 && r.frames == 12345 );
-    if( rc == 1 && gdb > -48 ) CHECK( fabs( r.in_peak_db - cfg.target_db ) < 3.5 || r.out_db >= cfg.max_db );
+    if( rc == 1 && gdb > -48 ) CHECK( r.in_peak_shift == cfg.target_shift || r.out_shift <= cfg.loudest );
     if( rc != 1 ) printf( "gain %.0f dB: rc %d\n", gdb, rc );
     }
 
   /* a hot return that clips: the level comes down, not up */
   { Chan c = { 4000, 6, 0, -300, 0, -0.5 }; int rc = run( &c, &cfg, &r, 0 );
-    CHECK( rc == 1 && abs( (int)r.frames - 4000 ) <= 1 && r.in_peak_db < -6 ); }
+    CHECK( rc == 1 && abs( (int)r.frames - 4000 ) <= 1 && r.in_peak_shift >= 1 ); }
 
   /* noisy path */
   { Chan c = { 9000, -30, 0, -60, 0, 0 }; int rc = run( &c, &cfg, &r, 0 );
-    if( rc != 1 || abs( (int)r.frames - 9000 ) > 1 ) printf( "noisy: rc %d frames %lld spread %d level %.1f peak %.1f\n", rc, (long long)r.frames, r.spread, r.out_db, r.in_peak_db );
+    if( rc != 1 || abs( (int)r.frames - 9000 ) > 1 ) printf( "noisy: rc %d frames %lld spread %d shift %d peak %d\n", rc, (long long)r.frames, r.spread, r.out_shift, r.in_peak_shift );
     CHECK( rc == 1 && abs( (int)r.frames - 9000 ) <= 1 ); }      /* noise moves a crossing by a sample at most */
 
   /* jitter of one sample is steady enough (tol 2), five is not */
@@ -97,13 +97,13 @@ int main( void )
 
   /* output muted by the shell: starts at the top level, no ramp */
   { AspSyncCfg m = cfg; m.output_muted = 1; AspSync *s = asp_sync_new( &m );
-    CHECK( asp_sync_level( s ) == m.max_db ); asp_sync_free( s );
-    AspSync *q = asp_sync_new( &cfg ); CHECK( asp_sync_level( q ) == cfg.start_db ); asp_sync_free( q ); }
+    CHECK( asp_sync_level( s ) == m.loudest ); asp_sync_free( s );
+    AspSync *q = asp_sync_new( &cfg ); CHECK( asp_sync_level( q ) == cfg.start_shift ); asp_sync_free( q ); }
 
-  /* it never exceeds max_db, whatever the path */
-  { AspSyncCfg lo = cfg; lo.max_db = -24; Chan c = { 500, -40, 0, -100, 0, 0 };
+  /* it is never shifted less than loudest, whatever the path */
+  { AspSyncCfg lo = cfg; lo.loudest = 4; Chan c = { 500, -40, 0, -100, 0, 0 };
     AspSync *s = asp_sync_new( &lo ); int32_t *o = outs;
-    for( int n = 0; n < 20; n++ ) { asp_sync_out( s, o ); static int32_t z[2 * ASP_SYNC_FRAMES]; asp_sync_in( s, z ); CHECK( asp_sync_level( s ) <= -24 ); }
+    for( int n = 0; n < 20; n++ ) { asp_sync_out( s, o ); static int32_t z[2 * ASP_SYNC_FRAMES]; asp_sync_in( s, z ); CHECK( asp_sync_level( s ) >= 4 ); }
     asp_sync_free( s ); (void)c; }
 
   free( outs );

@@ -271,13 +271,13 @@ int main( void )
   AspMixCmd m = { 1, 7, 1, -30, 0, 0 };
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
   CHECK( asp_core_pending( r.c, s.id[0] ) == 1 );                  /* waiting for the head, not done in this call */
-  m.gdb = 5;                                                        /* a second value replaces, never adds */
+  m.gsh = 5;                                                        /* a second value replaces, never adds */
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
   CHECK( asp_core_mix( r.c, 9999, -1, &m ) == 0 );
   sim_until( &r.sim, base + LOOP * 4 + 48000 * 4 );
   states( &r, &s );
-  printf( "by hand: %s(%d dB, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gdb, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
-  CHECK( s.n == 5 && ! strcmp( s.st[0].status, "mix" ) && s.st[0].mixed && s.st[0].gdb == 5 && s.st[0].pan == -30 );
+  printf( "by hand: %s(shift %d, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gsh, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
+  CHECK( s.n == 5 && ! strcmp( s.st[0].status, "mix" ) && s.st[0].mixed && s.st[0].gsh == 5 && s.st[0].pan == -30 );
   CHECK( ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "off" ) );     /* the hold went on for the rest */
   CHECK( asp_core_pending( r.c, s.id[0] ) == 0 );
   CHECK( matches( &r ) );
@@ -288,13 +288,13 @@ int main( void )
   sim_until( &r.sim, base + LOOP * 6 );
   states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "off" ) && ! s.st[4].mixed );
   CHECK( matches( &r ) );
-  AspMixCmd g = { 1, -9, 0, 0, 0, 0 };
+  AspMixCmd g = { 1, -5, 0, 0, 0, 0 };
   CHECK( asp_core_mix( r.c, k4.iter, k4.off, &g ) == 1 );          /* muted, so only stored */
   sim_until( &r.sim, base + LOOP * 7 );
   mu.act = ASP_MIX_PLAY; mu.now = 1;
   CHECK( asp_core_mix( r.c, k4.iter, k4.off, &mu ) == 1 );
   sim_until( &r.sim, base + LOOP * 9 );
-  states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "mix" ) && s.st[4].mixed && s.st[4].gdb == -9 );
+  states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "mix" ) && s.st[4].mixed && s.st[4].gsh == -5 );
   CHECK( matches( &r ) );
   }
   rig_close( &r );
