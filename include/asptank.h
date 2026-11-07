@@ -50,5 +50,5 @@ int     asp_tank_level( AspTank *t, int64_t pos, const int32_t *pcm, int64_t n, 
 /* one tick of the loop to output pcm; returns the new peak (peak to peak) */
 /* shift: how far the last tick was brought down to fit (kept between calls). when it changes, this tick fades from
    the old scale to the new one, so the change is never a step. */
-uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int64_t gain, int *shift );
+uint64_t asp_mix_out( uint64_t peak, int32_t *pcm, int64_t n, const int64_t *mix, int *shift );
 #endif

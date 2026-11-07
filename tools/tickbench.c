@@ -48,7 +48,7 @@ int main( int argc, char **argv )
     {
     double a = now_ms(); asp_tank_get( tk, (int64_t)t * ASP_TICK, ASP_TICK, mix ); double b = now_ms();
     asp_tank_put( tk, (int64_t)t * ASP_TICK, ASP_TICK, mix ); double c = now_ms();
-    int sh = 0; asp_mix_out( 1 << 20, out, ASP_TICK, mix, 0, &sh ); double d = now_ms();
+    int sh = 0; asp_mix_out( 1 << 20, out, ASP_TICK, mix, &sh ); double d = now_ms();
     add( &tg, b - a ); add( &tp, c - b ); add( &mo, d - c );
     }
   show( "tank get (one tick)", &tg );

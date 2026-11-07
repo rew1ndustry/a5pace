@@ -835,7 +835,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   mv_run( c );
   lap( c, "moves", &t0 );
   if( asp_tank_get( c->tank, outpos, ASP_TICK, mix ) ) memset( out, 0, sizeof( int32_t ) * 2 * ASP_TICK );
-  else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, c->cfg.gain, &c->out_shift );
+  else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, &c->out_shift );
   lap( c, "tank", &t0 );
   }
   memcpy( c->prev, c->cur, sizeof c->prev );
