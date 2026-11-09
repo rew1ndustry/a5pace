@@ -225,6 +225,7 @@ test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/tes
 	tests/test_import.sh
 	tests/test_start.sh
 	tests/test_recover.sh
+	tests/test_rebuild.sh
 	bin/test_store
 	bin/test_tank
 	bin/test_sync
