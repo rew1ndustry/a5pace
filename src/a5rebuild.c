@@ -93,12 +93,23 @@ static int running( const char *dir )
   return ok && kill( pid, 0 ) == 0;
   }
 
+static const char *HELP =
+"usage: a5rebuild DIR [--sql] [--tank [FILE]]\n"
+"the last resort when a space's files are damaged. the space must not be running.\n"
+"  --sql          check session.db: integrity, then every table against the schema. the derived tables (peaks, moves,\n"
+"                 peers) that are missing or the wrong shape are made again, and takes with no levels get them from their\n"
+"                 files. the history (session, takes, log, mixes, notes) is never written: if it is damaged, restore a copy.\n"
+"  --tank [FILE]  make the loop file new from the store (default DIR/cache/loop.d64): lost, wrong size, old format, corrupt.\n"
+"  neither        both. DIR comes first. exit 0 when done, 1 when something could not be mended, 2 for a bad call.\n"
+"see docs/REBUILD.md\n";
+
 int main( int argc, char **argv )
   {
   const char *dir = NULL, *tank = NULL; char tp[1200], err[300] = ""; int do_sql = 0, do_tank = 0;
-  const char *use = "usage: a5rebuild DIR [--sql] [--tank [FILE]]\n";
+  const char *use = "usage: a5rebuild DIR [--sql] [--tank [FILE]]   (a5rebuild --help)\n";
   for( int i = 1; i < argc; i++ )
     {
+    if( ! strcmp( argv[i], "--help" ) || ! strcmp( argv[i], "-h" ) ) { fputs( HELP, stdout ); return 0; }
     if( ! strcmp( argv[i], "--sql" ) ) do_sql = 1;
     else if( ! strcmp( argv[i], "--tank" ) ) { do_tank = 1; if( i + 1 < argc && argv[i+1][0] != '-' && dir ) tank = argv[++i]; }
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
