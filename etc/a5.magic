@@ -1,0 +1,6 @@
+# a5pace chip (one tick of the loop). for file(1): file -m etc/a5.magic FILE
+0	string	a5chip\245	a5pace loop chip
+>7	byte&0x0f	x	\b, structure version %d
+>8	leqld	x	\b, iteration %lld
+>48	lelong	x	\b, chip %d
+>52	lelong	x	\b of %d

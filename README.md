@@ -16,6 +16,7 @@ plain C99 plus one servant thread, meant to build on Linux, macOS, Windows and A
 - `a5control` one command to a running aspace (also how a program, or Claude, drives a session without a sound card)
 - `a5create` makes a space (seconds, bars, or an audio file); `a5click` makes metronome tracks and `a5import` brings in an audio file as a track, for a space that is closed or running (docs/CREATE.md)
 - `a5recover` after a run that died: finds the takes it left behind and puts them back (docs/RECOVER.md)
+- `a5rebuild` the last resort: checks `session.db` and makes its derived tables and the loop file again from the store (docs/REBUILD.md)
 - `a5export` takes the audio out as flac: every take, the takes in the loop, or the loop itself (docs/EXPORT.md)
 - `tickbench` (in `tools/`, `make bin/tickbench`) times the parts of a tick on this machine
 - `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
@@ -41,7 +42,7 @@ bin/a5hell /tmp/demo                    # the map, meters and keys: docs/A5HELL-
 ```
 ## Read next
 `docs/SHELL.md` (running it), `docs/A5HELL-GUIDE.md` (the shell, for people), `docs/EDGE.md` (the audio edge and the sync), `docs/DATA.md` and `docs/STORE-DESIGN.md` (the store: how a take is kept, the
-codec seam, the keeper thread, measurements), `docs/RECOVER.md` (when a run dies, `a5recover`), `docs/CUBIE.md` (running on a cubieboard),
+codec seam, the keeper thread, measurements), `docs/RECOVER.md` (when a run dies, `a5recover`), `docs/REBUILD.md` (`a5rebuild`), `docs/CUBIE.md` (running on a cubieboard),
 `docs/CREATE.md`, `docs/EXPORT.md`, `docs/CALIBRATION.md`, `docs/PROFILES.md`, `docs/PORTABILITY.md`, `docs/NAMING.md` (why the tools are called what they are),
 `docs/LESSONS.md`, `docs/TODO.md`.
 

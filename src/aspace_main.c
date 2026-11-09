@@ -7,13 +7,27 @@
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --live / --safe  record / do not (default: as it was last time, safe at the first)
             --sync-loudest N --sync-start N --sync-target N --sync-muted  the sync tone: ceiling, first level, wanted input peak
-            --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
+            --tank PATH  keep the loop file there (a cache, e.g. /dev/shm; aspace never rebuilds it: if it is missing, the wrong size or an old format, run a5rebuild)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
+            --budget PCT  percent of a tick (default 80) after which no level move that has not begun is started; a begun one always finishes
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             --tape  keep the input as it came (flac, in DIR/tape/); --tape-loop also the loop as it went out (heavy)
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
-   the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
+   the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode.
+
+   the model (aspcore.c has the detail):
+   - the loop file is chips of one tick (ASP_TICK frames), each with its own header; no file header. the core keeps a window of chips
+     in memory and each tick reads one chip at the front and writes one at the back, on separate forward-only handles.
+   - a gain/pan change (or a take going in or out) is a move: it is added to the chips the output is about to play (heard within
+     a tick; the live feed adds at the record head), and a move that has begun is on the SQL list (moves) until its last chip is
+     written. NOW (!) begins at the chip being played at once; a normal move waits for the output to reach its take's first chip
+     (the next pass), and is heard at once from there. a move that has begun is never cut short; --budget only holds back moves not yet begun.
+   - quit = drain: the first SIGINT/SIGTERM or QUIT makes every move run as NOW and the core keeps ticking until none is left, then
+     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode stdin and stdout become /dev/null at once (the card sees the end of its input and stops quietly, no under- or overrun message), and it stops reading stdin and writing stdout
+     at once and ticks on silence as fast as it can; if the edge closes first, the same happens.
+   - the tank is never marked dirty and never rebuilt by the core; a5rebuild is the last resort, outside it.
+   - the log's top event carries the worst tick load of the pass (percent of a tick), METER the load of the last tick. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +36,7 @@
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include "aspcore.h"
 #include "aspengine.h"
@@ -32,7 +47,17 @@
 #include "simedge.h"
 
 static volatile sig_atomic_t quit;
-static void onsig( int s ) { (void)s; quit = 1; }
+/* quit = drain: the audio is disconnected for good. stdin and stdout become /dev/null: the card's playback sees the end of its input and stops,
+   the capture side dies of its broken pipe, and neither complains of an under- or overrun while the moves finish as fast as the core goes */
+static void disconnect_audio( void )
+  {
+  int nul = open( "/dev/null", O_RDWR );
+  if( nul < 0 ) return;
+  dup2( nul, STDIN_FILENO ); dup2( nul, STDOUT_FILENO );
+  if( nul > STDERR_FILENO ) close( nul );
+  }
+
+static void onsig( int s ) { (void)s; if( quit < 2 ) quit++; }   /* the second one gives up the drain */
 
 typedef struct
   {
@@ -306,8 +331,10 @@ static void handle( void *u, int cl, const char *line )
       mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.input == 1 ? "left" : st.input == 2 ? "right" : st.input == 3 ? "stereo" : "auto", st.gate_learnt, st.sync_shift, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
-  else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence) */
-    { ctl_say( c, cl, "%.1f %.1f %.1f %.1f", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1] ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence), then the tick load in percent and the output gain in bits down */
+    { ctl_say( c, cl, "%.1f %.1f %.1f %.1f %.0f %d", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1], st.load, st.gain_shift ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "GAINRESET" ) )             /* GAINRESET: the output gain forgets past clips */
+    { asp_core_gainreset( r->core ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0; char atx[40];
@@ -369,6 +396,7 @@ static void handle( void *u, int cl, const char *line )
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "MAP HIGH n above | MAP [from [to]]   iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
+      "GAINRESET                            the output gain forgets past clips and comes back up",
       "METER                                in_l in_r out_l out_r: rms of the last tick, dB",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",
@@ -464,7 +492,7 @@ static void handle( void *u, int cl, const char *line )
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "WATCH" ) ) { ctl_watch( c, cl, 1 ); ctl_ok( c, cl ); }
-  else if( ! strcmp( w[0], "QUIT" ) ) { ctl_ok( c, cl ); quit = 1; }
+  else if( ! strcmp( w[0], "QUIT" ) ) { ctl_ok( c, cl ); if( ! quit ) quit = 1; }
   else if( ! strcmp( w[0], "SIM" ) && r->simmode && n > 3 && ! strcasecmp( w[1], "BURST" ) )
     {
     /* SIM BURST ch amp [ticks_from_now]: ch 0 left 1 right 2 both; amp as a fraction of full scale */
@@ -544,6 +572,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (a5pace profiles) */
     else if( ! strcmp( argv[i], "--sync-loudest" ) && i + 1 < argc ) addflag( flagtext, "sync_loudest", argv[++i] );   /* never shifted less than N bits down from asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) addflag( flagtext, "sync_start", argv[++i] );
+    else if( ! strcmp( argv[i], "--budget" ) && i + 1 < argc ) cfg.budget = atof( argv[++i] ) / 100;   /* percent of a tick after which no new level move begins (default 80) */
     else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */
     else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */
     else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) addflag( flagtext, "sync_target", argv[++i] );
@@ -584,21 +613,17 @@ static int cmd_run( int argc, char **argv )
   int64_t frames = json_num( asp_descriptor( r.store ), "loop", 0 );
   if( tankpath ) snprintf( tp, sizeof tp, "%s", tankpath ); else snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
   r.tank = frames ? asp_tank_open( tp, err, sizeof err ) : NULL;
-  int rebuild = 0;
-  if( r.tank && ( asp_tank_dirty( r.tank ) || asp_tank_frames( r.tank ) != frames || asp_tank_legacy( r.tank ) ) ) { rebuild = 1; asp_tank_close( r.tank ); r.tank = NULL; }
+  /* the core never rebuilds: a loop file that is missing, the wrong size or an old format is for a5rebuild */
+  if( r.tank && ( asp_tank_frames( r.tank ) != frames ) ) { fprintf( stderr, "aspace: the loop file is the wrong size: run a5rebuild %s\n", dir ); return 1; }
   if( ! r.tank )
     {
     if( ! frames ) { fprintf( stderr, "%s: no loop length in the session\n", dir ); return 1; }
-    r.tank = asp_tank_create( tp, frames, 48000, err, sizeof err );
-    if( ! r.tank ) { fprintf( stderr, "%s\n", err ); return 1; }
-    asp_tank_bind( r.tank, asp_session_id( r.store ) );
-    if( ! quiet ) fprintf( stderr, "aspace: %s, rebuilding the loop from the store\n", rebuild ? "the loop was not closed cleanly" : "no loop file" );
-    if( asp_rebuild( r.tank, r.store, -1 ) ) { fprintf( stderr, "aspace: rebuild failed\n" ); return 1; }
+    fprintf( stderr, "aspace: no usable loop file (%s): run a5rebuild %s\n", err, dir );
+    return 1;
     }
   r.core = asp_core_open( r.store, r.tank, &cfg, err, sizeof err );
   if( ! r.core ) { fprintf( stderr, "%s\n", err ); return 1; }
-  if( profile || flagtext[0] || ! stored[0] ) asp_core_settings( r.core, pname, settings );   /* what is in force is in the log
-  */
+  if( profile || flagtext[0] || ! stored[0] ) asp_core_settings( r.core, pname, settings );   /* what is in force is in the log */
   int chosen = 0;
   r.ctl = ctl_open( port, &chosen );
   if( ! r.ctl ) { fprintf( stderr, "aspace: no control port\n" ); return 1; }
@@ -615,12 +640,15 @@ static int cmd_run( int argc, char **argv )
   int64_t last = asp_log_last( r.store );
   struct timespec t0; clock_gettime( CLOCK_MONOTONIC, &t0 );
   int64_t started = 0;
-  while( ! quit )
+  int draining = 0;                                       /* quit = drain: tick on until no move is queued (a second signal gives up) */
+  while( quit < 2 && ( ! quit || asp_core_moves( r.core ) > 0 ) )
     {
+    if( quit && ! draining ) { draining = 1; asp_core_drain( r.core ); if( ! r.simmode ) disconnect_audio(); if( ! quiet ) fprintf( stderr, "aspace: draining %d moves\n", asp_core_moves( r.core ) ); }
     ctl_poll( r.ctl, handle, &r );
     if( r.simmode )
       {
-      if( r.step ) { if( r.steps <= 0 ) { nap( 5 ); continue; } r.steps--; }
+      if( draining ) ;                                    /* no waiting for the clock or for steps */
+      else if( r.step ) { if( r.steps <= 0 ) { nap( 5 ); continue; } r.steps--; }
       else if( ! fast )                                   /* real time */
         {
         struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t );
@@ -633,10 +661,14 @@ static int cmd_run( int argc, char **argv )
       }
     else
       {
-      if( read_tick( in ) ) break;                        /* the edge closed */
+      if( ! draining && read_tick( in ) ) { if( ! quit ) quit = 1; continue; }   /* the edge closed: drain what is queued, then close */
+      if( draining ) memset( in, 0, sizeof in );          /* draining: no waiting for the edge; silence in, nothing out, as fast as the core goes */
       { struct timespec a, b; clock_gettime( CLOCK_MONOTONIC, &a ); asp_core_tick( r.core, in, out ); clock_gettime( CLOCK_MONOTONIC, &b ); timed( &r, ( b.tv_sec - a.tv_sec ) * 1e3 + ( b.tv_nsec - a.tv_nsec ) / 1e6 ); }
-      tape_tap( &r, in, out );
-      if( write_tick( out ) ) break;
+      if( ! draining )
+        {
+        tape_tap( &r, in, out );
+        if( write_tick( out ) && ! quit ) quit = 1;       /* the edge closed: drain */
+        }
       }
     asp_store_poll( r.store );
     if( ctl_watchers( r.ctl ) || ( r.sim.tickn % 25 ) == 0 )

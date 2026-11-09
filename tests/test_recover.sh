@@ -56,9 +56,9 @@ for scene in recording handed_on_unplaced handed_on_placed; do
     chk "$scene: put back as it was" "grep -q 'put back' $t/rec.out"
   fi
   chk "$scene: a second recover has nothing to do" "$B/a5recover $d | grep -q '0 put back, 0 saved'"
-  # and it starts: the loop is rebuilt from the store with the take in it
+  # and it starts: a5recover made the loop new from the store with the take in it
   $B/a5pace run --live -S 7001 --fast $d 2> $t/err4 & pid=$!; wait_ctl $d; sleep 1
-  chk "$scene: starts, rebuilding" "grep -q 'rebuilding' $t/err4 && ! grep -q 'did not close' $t/err4"
+  chk "$scene: starts on the rebuilt loop" "! grep -q 'run a5rebuild' $t/err4 && ! grep -q 'did not close' $t/err4"
   $B/a5control $d QUIT > /dev/null; wait $pid
 done
 

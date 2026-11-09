@@ -4,14 +4,24 @@
 #include "asptank.h"
 #include "plat.h"
 
-#define HEAD 128
-#define OLDHEAD 16
-#define BLK  ASP_TICK
+#include "aspchip.h"
 
+#define HEAD   ASP_CHIP_HEAD
+#define BLK    ASP_TICK
+#define STRIDE ( HEAD + BLK * 16 )
+
+/* The file is chips back to back (aspchip.h): each is a header then ASP_TICK frames, the last one fewer.
+   Three handles on it, all unbuffered, so that none ever sees another's stale read-ahead and the stream never seeks:
+   f for random access (get/put, restamp), rf the stream's reader, wf the stream's writer. The one seek in a lap is
+   the wrap from the last chip back to the first. */
 struct AspTank
   {
-  FILE *f; int64_t frames; int hdr; int rate;
-  uint64_t iter, peak, seq; uint32_t flags; unsigned char session[32];
+  FILE *f, *rf, *wf; char path[1024];
+  int64_t frames; uint32_t chips; int rate;
+  uint64_t iter, peak, seq; unsigned char session[32];
+  int64_t rnext, wnext;                    /* the chip each stream handle is at, -1 if not known */
+  unsigned char *cb;                       /* one chip, for the stream */
+  unsigned char *stale;                    /* per chip: frames changed by put since the last stream write */
   };
 
 static void say( char *err, int n, const char *m, const char *path )
@@ -19,36 +29,93 @@ static void say( char *err, int n, const char *m, const char *path )
 
 static int hexval( int c ) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
 
-static int head_write( AspTank *t )
+static int64_t cframes( const AspTank *t, uint32_t k ) { return k + 1 == t->chips ? t->frames - (int64_t)k * BLK : BLK; }
+static int64_t coff( uint32_t k ) { return (int64_t)k * STRIDE; }
+
+static void head_fill( const AspTank *t, AspChipHead *h, uint32_t k )
   {
-  unsigned char h[HEAD];
-  memset( h, 0, sizeof h );
-  if( t->hdr == OLDHEAD ) { asp_st64( h, t->iter ); asp_st64( h + 8, t->peak ); }
-  else
-    {
-    memcpy( h, "ASP5TANK", 8 );
-    asp_st32( h + 8, 1 ); asp_st32( h + 12, HEAD );
-    asp_st64( h + 16, (uint64_t)t->frames ); asp_st32( h + 24, (uint32_t)t->rate ); asp_st32( h + 28, 2 );
-    asp_st64( h + 32, t->iter ); asp_st64( h + 40, t->peak ); asp_st64( h + 48, t->seq );
-    asp_st32( h + 56, t->flags );
-    memcpy( h + 64, t->session, 32 );
-    }
-  if( ASP_FSEEK( t->f, 0, SEEK_SET ) || fwrite( h, 1, (size_t)t->hdr, t->f ) != (size_t)t->hdr ) return -1;
+  h->f.index = k; h->f.chips = t->chips; h->f.frames = (uint32_t)cframes( t, k ); h->f.rate = (uint32_t)t->rate;
+  memcpy( h->f.session, t->session, 32 );
+  }
+
+/* a chip's header out of the file by the random handle */
+static int head_get( AspTank *t, uint32_t k, AspChipHead *h )
+  {
+  unsigned char b[HEAD];
+  if( ASP_FSEEK( t->f, coff( k ), SEEK_SET ) || fread( b, 1, HEAD, t->f ) != HEAD ) return -1;
+  return asp_chip_unpack( b, h, NULL ) ? -1 : 0;
+  }
+static int head_put( AspTank *t, uint32_t k, const AspChipHead *h )
+  {
+  unsigned char b[HEAD];
+  asp_chip_pack( h, b );
+  if( ASP_FSEEK( t->f, coff( k ), SEEK_SET ) || fwrite( b, 1, HEAD, t->f ) != HEAD ) return -1;
   return fflush( t->f ) ? -1 : 0;
+  }
+
+/* give every chip the tank's current iteration, peak, seq and session (their frames and crc stay) */
+static int restamp( AspTank *t )
+  {
+  for( uint32_t k = 0; k < t->chips; k++ )
+    {
+    AspChipHead h;
+    if( head_get( t, k, &h ) ) return -1;
+    h.f.iter = t->iter; h.f.peak = t->peak; h.f.seq = t->seq;
+    memcpy( h.f.session, t->session, 32 );
+    if( head_put( t, k, &h ) ) return -1;
+    }
+  return 0;
+  }
+
+static int mark_stale( AspTank *t, uint32_t k )
+  {
+  AspChipHead h;
+  if( t->stale[k] ) return 0;
+  if( head_get( t, k, &h ) ) return -1;
+  h.f.flags |= ASP_CHIP_FSTALE;
+  if( head_put( t, k, &h ) ) return -1;
+  t->stale[k] = 1;
+  return 0;
+  }
+
+static AspTank *tank_new( const char *path, FILE *f )
+  {
+  AspTank *t = calloc( 1, sizeof *t );
+  t->f = f; t->rnext = t->wnext = -1;
+  snprintf( t->path, sizeof t->path, "%s", path );
+  setvbuf( f, NULL, _IONBF, 0 );
+  return t;
+  }
+
+static void tank_free( AspTank *t )
+  {
+  if( ! t ) return;
+  if( t->f ) fclose( t->f );
+  if( t->rf ) fclose( t->rf );
+  if( t->wf ) fclose( t->wf );
+  free( t->cb ); free( t->stale ); free( t );
   }
 
 AspTank *asp_tank_create( const char *path, int64_t frames, int rate, char *err, int errn )
   {
   FILE *f = fopen( path, "w+b" );
   if( ! f ) { say( err, errn, "cannot create", path ); return NULL; }
-  AspTank *t = calloc( 1, sizeof *t );
-  t->f = f; t->frames = frames; t->hdr = HEAD; t->rate = rate;
-  unsigned char z[BLK * 16];
-  memset( z, 0, sizeof z );
-  if( head_write( t ) ) { fclose( f ); free( t ); say( err, errn, "write failed", path ); return NULL; }
-  for( int64_t n = frames; n > 0; n -= BLK )
-    if( fwrite( z, 16, n < BLK ? (size_t)n : BLK, f ) != ( n < BLK ? (size_t)n : BLK ) )
-      { fclose( f ); free( t ); say( err, errn, "write failed", path ); return NULL; }
+  AspTank *t = tank_new( path, f );
+  t->frames = frames; t->rate = rate; t->chips = (uint32_t)( ( frames + BLK - 1 ) / BLK );
+  t->stale = calloc( t->chips, 1 );
+  unsigned char *z = calloc( 1, STRIDE );
+  uint32_t full = asp_crc32( 0, z, (size_t)BLK * 16 );
+  for( uint32_t k = 0; k < t->chips; k++ )
+    {
+    AspChipHead h; size_t n = (size_t)cframes( t, k ) * 16;
+    memset( &h, 0, sizeof h );
+    head_fill( t, &h, k );
+    h.f.dcrc = n == (size_t)BLK * 16 ? full : asp_crc32( 0, z, n );
+    asp_chip_pack( &h, z );
+    if( fwrite( z, 1, HEAD + n, f ) != HEAD + n ) { free( z ); tank_free( t ); say( err, errn, "write failed", path ); return NULL; }
+    memset( z, 0, STRIDE );
+    }
+  free( z );
   fflush( f );
   return t;
   }
@@ -56,71 +123,117 @@ AspTank *asp_tank_create( const char *path, int64_t frames, int rate, char *err,
 AspTank *asp_tank_open( const char *path, char *err, int errn )
   {
   FILE *f = fopen( path, "r+b" );
-  unsigned char h[HEAD];
+  unsigned char b[HEAD];
+  AspChipHead h;
   if( ! f ) { say( err, errn, "cannot open", path ); return NULL; }
-  size_t got = fread( h, 1, HEAD, f );
-  if( got < OLDHEAD || ASP_FSEEK( f, 0, SEEK_END ) ) { fclose( f ); say( err, errn, "short file", path ); return NULL; }
-  int64_t size = ASP_FTELL( f );
-  AspTank *t = calloc( 1, sizeof *t );
-  t->f = f;
-  if( got == HEAD && ! memcmp( h, "ASP5TANK", 8 ) )
+  if( fread( b, 1, HEAD, f ) != HEAD || asp_chip_unpack( b, &h, NULL ) || ASP_FSEEK( f, 0, SEEK_END ) )
+    { fclose( f ); say( err, errn, "not a tank (no chip header)", path ); return NULL; }
+  int64_t size = ASP_FTELL( f ), full = size / STRIDE, rem = size % STRIDE;
+  AspTank *t = tank_new( path, f );
+  if( rem && ( rem <= HEAD || ( rem - HEAD ) % 16 ) ) { tank_free( t ); say( err, errn, "size is not whole chips", path ); return NULL; }
+  t->frames = full * BLK + ( rem ? ( rem - HEAD ) / 16 : 0 );
+  t->chips = (uint32_t)( full + ( rem ? 1 : 0 ) );
+  if( h.f.chips != t->chips || h.f.index != 0 ) { tank_free( t ); say( err, errn, "size does not match the chip headers", path ); return NULL; }
+  t->rate = (int)h.f.rate; t->iter = h.f.iter; t->peak = h.f.peak; t->seq = h.f.seq;
+  memcpy( t->session, h.f.session, 32 );
+  t->stale = calloc( t->chips, 1 );
+  for( uint32_t k = 0; k < t->chips; k++ )
     {
-    if( asp_ld32( h + 8 ) != 1 || asp_ld32( h + 12 ) != HEAD ) { fclose( f ); free( t ); say( err, errn, "unknown tank version", path ); return NULL; }
-    t->hdr = HEAD; t->frames = (int64_t)asp_ld64( h + 16 ); t->rate = (int)asp_ld32( h + 24 );
-    t->iter = asp_ld64( h + 32 ); t->peak = asp_ld64( h + 40 ); t->seq = asp_ld64( h + 48 );
-    t->flags = asp_ld32( h + 56 ); memcpy( t->session, h + 64, 32 );
-    if( size != HEAD + t->frames * 16 ) { fclose( f ); free( t ); say( err, errn, "size does not match header", path ); return NULL; }
-    }
-  else
-    {
-    if( ( size - OLDHEAD ) % 16 ) { fclose( f ); free( t ); say( err, errn, "not a tank", path ); return NULL; }
-    t->hdr = OLDHEAD; t->frames = ( size - OLDHEAD ) / 16; t->rate = 48000;
-    t->iter = asp_ld64( h ); t->peak = asp_ld64( h + 8 );
+    if( head_get( t, k, &h ) || h.f.index != k || h.f.chips != t->chips ) { tank_free( t ); say( err, errn, "bad chip header", path ); return NULL; }
+    t->stale[k] = ( h.f.flags & ASP_CHIP_FSTALE ) != 0;
     }
   return t;
   }
 
-void asp_tank_close( AspTank *t )
-  { if( t ) { fclose( t->f ); free( t ); } }
+void asp_tank_close( AspTank *t ) { tank_free( t ); }
 int64_t  asp_tank_frames( AspTank *t ) { return t->frames; }
 uint64_t asp_tank_iter( AspTank *t ) { return t->iter; }
 uint64_t asp_tank_peak( AspTank *t ) { return t->peak; }
-int      asp_tank_legacy( AspTank *t ) { return t->hdr == OLDHEAD; }
 int      asp_tank_rate( AspTank *t ) { return t->rate; }
 uint64_t asp_tank_seq( AspTank *t ) { return t->seq; }
-int      asp_tank_dirty( AspTank *t ) { return ( t->flags & 1 ) != 0; }
+uint32_t asp_tank_chips( AspTank *t ) { return t->chips; }
+int      asp_tank_chip_frames( AspTank *t, uint32_t k ) { return k < t->chips ? (int)cframes( t, k ) : 0; }
 
 int asp_tank_set_head( AspTank *t, uint64_t iter, uint64_t peak )
-  { t->iter = iter; t->peak = peak; return head_write( t ); }
+  { t->iter = iter; t->peak = peak; return restamp( t ); }
 int asp_tank_set_seq( AspTank *t, uint64_t seq )
-  { if( t->hdr == OLDHEAD ) return -1; t->seq = seq; return head_write( t ); }
-int asp_tank_set_dirty( AspTank *t, int dirty )
-  { if( t->hdr == OLDHEAD ) return -1; t->flags = dirty ? t->flags | 1 : t->flags & ~1u; return head_write( t ); }
+  { t->seq = seq; return restamp( t ); }
 int asp_tank_bind( AspTank *t, const char *hex )
   {
-  if( t->hdr == OLDHEAD || strlen( hex ) != 64 ) return -1;
+  if( strlen( hex ) != 64 ) return -1;
   for( int i = 0; i < 32; i++ )
     { int a = hexval( hex[2*i] ), b = hexval( hex[2*i+1] ); if( a < 0 || b < 0 ) return -1; t->session[i] = (unsigned char)( a << 4 | b ); }
-  return head_write( t );
+  return restamp( t );
   }
 int asp_tank_bound( AspTank *t, const char *hex )
   {
   unsigned char z[32] = { 0 }, want[32];
-  if( t->hdr == OLDHEAD || ! memcmp( t->session, z, 32 ) ) return 1;
+  if( ! memcmp( t->session, z, 32 ) ) return 1;
   if( strlen( hex ) != 64 ) return 0;
   for( int i = 0; i < 32; i++ ) want[i] = (unsigned char)( hexval( hex[2*i] ) << 4 | hexval( hex[2*i+1] ) );
   return ! memcmp( t->session, want, 32 );
   }
 
-/* [pos, pos+n) split at the end of the loop */
+/* the stream: chip k out of the file, header checked, and the frames as mix (2 * frames int64).
+   0 good; -1 io or k out of range; -2 bad header; -3 frames do not match their crc */
+int asp_tank_chip_read( AspTank *t, uint32_t k, AspChipHead *h, int64_t *mix )
+  {
+  if( k >= t->chips ) return -1;
+  if( ! t->rf )
+    {
+    t->rf = fopen( t->path, "rb" );
+    if( ! t->rf ) return -1;
+    setvbuf( t->rf, NULL, _IONBF, 0 );
+    }
+  if( ! t->cb ) t->cb = malloc( STRIDE );
+  size_t n = (size_t)cframes( t, k ) * 16;
+  if( t->rnext != (int64_t)k && ASP_FSEEK( t->rf, coff( k ), SEEK_SET ) ) { t->rnext = -1; return -1; }
+  if( fread( t->cb, 1, HEAD + n, t->rf ) != HEAD + n ) { t->rnext = -1; return -1; }
+  t->rnext = k + 1 < t->chips ? (int64_t)k + 1 : -1;      /* after the last chip the next read is the wrap seek */
+  if( asp_chip_unpack( t->cb, h, NULL ) || h->f.index != k || h->f.chips != t->chips ) return -2;
+  if( ! ( h->f.flags & ASP_CHIP_FSTALE ) && asp_crc32( 0, t->cb + HEAD, n ) != h->f.dcrc ) return -3;
+  for( size_t i = 0; i < n / 8; i++ ) mix[i] = (int64_t)asp_ld64( t->cb + HEAD + 8 * i );
+  return 0;
+  }
+
+/* chip k into the file in one write. the caller gives iter, pass, seq, peak, out_shift and flags in h;
+   index, chips, frames, rate, session and the crcs are set here, and the stale mark is cleared */
+int asp_tank_chip_write( AspTank *t, uint32_t k, const AspChipHead *in, const int64_t *mix )
+  {
+  AspChipHead h = *in;
+  if( k >= t->chips ) return -1;
+  if( ! t->wf )
+    {
+    t->wf = fopen( t->path, "r+b" );
+    if( ! t->wf ) return -1;
+    setvbuf( t->wf, NULL, _IONBF, 0 );
+    }
+  if( ! t->cb ) t->cb = malloc( STRIDE );
+  size_t n = (size_t)cframes( t, k ) * 16;
+  for( size_t i = 0; i < n / 8; i++ ) asp_st64( t->cb + HEAD + 8 * i, (uint64_t)mix[i] );
+  head_fill( t, &h, k );
+  h.f.flags &= ~ASP_CHIP_FSTALE;
+  h.f.dcrc = asp_crc32( 0, t->cb + HEAD, n );
+  asp_chip_pack( &h, t->cb );
+  if( t->wnext != (int64_t)k && ASP_FSEEK( t->wf, coff( k ), SEEK_SET ) ) { t->wnext = -1; return -1; }
+  if( fwrite( t->cb, 1, HEAD + n, t->wf ) != HEAD + n || fflush( t->wf ) ) { t->wnext = -1; return -1; }
+  t->wnext = k + 1 < t->chips ? (int64_t)k + 1 : -1;
+  t->stale[k] = 0;
+  return 0;
+  }
+
+/* [pos, pos+n) split at the end of the loop and at every chip */
 static int span( AspTank *t, int64_t pos, int64_t n, int put, unsigned char *buf, int64_t *mix )
   {
   pos %= t->frames; if( pos < 0 ) pos += t->frames;
   while( n > 0 )
     {
-    int64_t k = n < t->frames - pos ? n : t->frames - pos, i;
-    if( k > BLK ) k = BLK;
-    if( ASP_FSEEK( t->f, t->hdr + pos * 16, SEEK_SET ) ) return -1;
+    int64_t k = n, i, inchip = BLK - pos % BLK;
+    uint32_t ck = (uint32_t)( pos / BLK );
+    if( k > inchip ) k = inchip;
+    if( k > t->frames - pos ) k = t->frames - pos;
+    if( put && mark_stale( t, ck ) ) return -1;
+    if( ASP_FSEEK( t->f, coff( ck ) + HEAD + ( pos % BLK ) * 16, SEEK_SET ) ) return -1;
     if( put )
       {
       for( i = 0; i < 2 * k; i++ ) asp_st64( buf + 8 * i, (uint64_t)mix[i] );

@@ -38,8 +38,8 @@ CODEC_DEP    =
 CODEC_LIBS   = -lm
 endif
 
-LIBOBJ = build/codec_$(CODEC).o build/takefile.o build/keeper.o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o build/asppeaks.o
-all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5peaks bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5hell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec bin/test_takefile bin/test_keeper
+LIBOBJ = build/codec_$(CODEC).o build/takefile.o build/keeper.o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspchip.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o build/asppeaks.o
+all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5hell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec bin/test_takefile bin/test_keeper
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -105,6 +105,9 @@ build/aspcore.o: src/aspcore.c include/settings.h include/aspcore.h include/asps
 build/sync.o: src/sync.c include/sync.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -Wno-misleading-indentation -Wno-sign-compare $(INC) -c -o $@ $<
+build/aspchip.o: src/aspchip.c include/aspchip.h include/plat.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/asptank.o: src/asptank.c include/asptank.h include/plat.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
@@ -128,6 +131,9 @@ bin/test_store: tests/test_store.c $(LIBOBJ) $(SQL_OBJ)
 bin/asptank: src/asptank_cli.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/test_chip: tests/test_chip.c build/aspchip.o include/aspchip.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ tests/test_chip.c build/aspchip.o
 bin/test_tank: tests/test_tank.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
@@ -178,6 +184,9 @@ bin/a5peaks: src/a5peaks.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5recover: src/a5recover.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5recover.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/a5rebuild: src/a5rebuild.c $(LIBOBJ) $(SQL_OBJ)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5rebuild.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
 bin/a5export: src/a5export.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) $(SQL_CFLAGS) -o $@ src/a5export.c $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
@@ -200,7 +209,8 @@ bin/test_gate: tests/test_gate.c build/gate.o
 
 # the tests make their own artist, not yours
 test: export XDG_CONFIG_HOME = $(CURDIR)/build/testcfg
-test: all bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+	bin/test_chip
 	bin/test_codec
 	bin/test_takefile
 	bin/test_keeper
@@ -215,6 +225,7 @@ test: all bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/te
 	tests/test_import.sh
 	tests/test_start.sh
 	tests/test_recover.sh
+	tests/test_rebuild.sh
 	bin/test_store
 	bin/test_tank
 	bin/test_sync
@@ -222,16 +233,16 @@ test: all bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/te
 gate-diff:
 	tests/gate_diff.sh $(FILES)
 PREFIX ?= $(HOME)
-install: bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5peaks bin/aspflac
+install: bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/aspflac
 	@mkdir -p $(PREFIX)/bin
 	install -m 755 bin/a5pace bin/a5control bin/a5hell $(PREFIX)/bin/
 	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
-	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5peaks $(PREFIX)/bin/
+	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
 	@mkdir -p $(PREFIX)/etc
 	@[ -f $(PREFIX)/etc/a5hell.cfg ] || install -m 644 share/a5hell.cfg $(PREFIX)/etc/a5hell.cfg
 	bin/a5pace profiles install
-	@echo "installed a5pace a5control a5hell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5import a5recover a5peaks a5flac in $(PREFIX)/bin"
+	@echo "installed a5pace a5control a5hell a5card a5doctor a5play a5cal a5start a5tune a5create a5click a5export a5import a5recover a5rebuild a5peaks a5flac in $(PREFIX)/bin"
 clean:
 	rm -rf bin build/*.o src/schema_sql.h
 .PHONY: all test clean gate-diff install

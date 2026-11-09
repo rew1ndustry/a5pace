@@ -201,8 +201,9 @@ static void map_scroll( int key, int h )
   }
 
 /* the meters: rms of the last tick of what comes in and goes out, -60 .. 0 dB, with a mark where the level peaked a moment ago */
+static double mload = 0; static int mgain = 0;
 static double mlev[4] = { -200, -200, -200, -200 }, mhold[4] = { -200, -200, -200, -200 };
-static void meter_line( const char *l, void *u ) { (void)u; sscanf( l, "%lf %lf %lf %lf", mlev, mlev + 1, mlev + 2, mlev + 3 ); }
+static void meter_line( const char *l, void *u ) { (void)u; sscanf( l, "%lf %lf %lf %lf %lf %d", mlev, mlev + 1, mlev + 2, mlev + 3, &mload, &mgain ); }
 static void meter_update( int cmd )
   {
   ctlc_cmd( cmd, "METER", meter_line, NULL );
@@ -225,6 +226,7 @@ static void meters( int r, int w )
   printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[1], mhold[1] );
   printf( "%s    output  L ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[2], mhold[2] );
   printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[3], mhold[3] );
+  printf( "%s   load %.0f%%  gain %s%d", term_sgr( mload > 100 ? C_HIGH : mload > 80 ? C_MID : C_TEXT ), mload, mgain ? "-" : "", mgain );
   printf( "%s\033[K", term_sgr( C_TEXT ) );
   }
 
@@ -275,6 +277,7 @@ static void help( void )
 " u / U   undo last take / iteration       f  gate profile   w  wipe loop\n"
 " h       history: up/down, . next start, ! now, esc\n"
 " x       export: a all, m mix, l loop     T  takes as text\n"
+" z       reset the output gain (it forgets past clips and comes back up)\n"
 " PgUp PgDn Home End  scroll (End follows)      q  leave    Q  stop aspace\n"
 "\n"
 " the map: left/right jump take to take (past the first: the whole iteration),\n up/down to the nearest take in the next row. shift+arrows select, esc clears.\n"
@@ -387,6 +390,7 @@ int main( int argc, char **argv )
         case 'l': strcpy( c, "LIVE" ); break;
         case 's': strcpy( c, "SAFE" ); break;
         case 'r': strcpy( c, "SYNC" ); break;
+        case 'z': strcpy( c, "GAINRESET" ); break;                 /* the output gain forgets past clips and comes back up */
         case 'g':
           {
           int d = ask( " gate:  l learn the floor again (when nothing is playing)   + more sensitive   - less sensitive (3 dB)" );

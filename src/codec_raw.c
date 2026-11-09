@@ -8,7 +8,7 @@
 #define CHUNK 4096
 
 struct AspEnc { int ch, failed; unsigned block, held; uint32_t frame; AspSink sink; void *user; unsigned char *buf; };
-struct AspDec { int ch; AspSource source; void *user; unsigned char *buf; size_t have, pos; };
+struct AspDec { int ch; AspSource source; void *user; unsigned char *buf; size_t have, pos; int64_t delivered; };
 
 const char *asp_codec_name( void ) { return "raw"; }
 int asp_codec_detects( void ) { return 0; }
@@ -73,6 +73,7 @@ int asp_dec_get( AspDec *d, int32_t *pcm, unsigned max )
       {
       size_t k = (size_t)CHUNK * fb - got;
       if( d->source( d->buf + got, &k, d->user ) ) return -1;
+      d->delivered += (int64_t)k;
       if( ! k ) return got ? -1 : 0;                   /* the end; bytes before it that make no frame are damage */
       got += k;
       }
@@ -81,6 +82,7 @@ int asp_dec_get( AspDec *d, int32_t *pcm, unsigned max )
       {
       size_t k = fb - got % fb;
       if( d->source( d->buf + got, &k, d->user ) || ! k ) return -1;
+      d->delivered += (int64_t)k;
       got += k;
       }
     d->have = got;
@@ -92,5 +94,7 @@ int asp_dec_get( AspDec *d, int32_t *pcm, unsigned max )
   return (int)k;
   }
 
+int64_t asp_dec_tell( AspDec *d ) { return d->delivered - (int64_t)( d->have - d->pos ); }
+int asp_dec_moved( AspDec *d, int64_t pos ) { if( pos < 0 ) return -1; d->delivered = pos; d->have = d->pos = 0; return 0; }
 int asp_dec_errors( const AspDec *d ) { (void)d; return 0; }
 void asp_dec_free( AspDec *d ) { if( d ) { free( d->buf ); free( d ); } }

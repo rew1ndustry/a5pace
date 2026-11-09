@@ -28,6 +28,8 @@ if [ -z "$edge" ]; then
   if [ -x "$A5CARD" ] && grep -qi "UR22C\|USB-Audio" /proc/asound/cards 2>/dev/null; then edge=card; else edge=sim; fi
 fi
 LOG=$DIR/run.log
+# keep the last run: run.log.1 is what the run before this one said (a run that died leaves its reason there)
+[ -s "$LOG" ] && mv -f "$LOG" "$LOG.1"
 case $edge in
   card) [ -x "$A5CARD" ] || { echo "a5start: no a5card to run on the sound card" >&2; exit 1; }
         [ -n "$release" ] && export A5CARD_RELEASE=$release

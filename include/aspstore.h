@@ -59,7 +59,7 @@ int  asp_store_crashed( AspStore *s, int64_t *pid );
 int  asp_take_restore( AspStore *s, int64_t id, int64_t iter, int64_t off, const char *file, const char *status );
 int  asp_store_poll( AspStore *s );
 /* a finished take already written at part (see asp_tmp_path, asp_tw_open): rename it to its place, row and events in one
-   transaction. state_json NULL gives {"status":status}. on failure the part file is left alone. */
+   transaction. state_json NULL gives {"status":status}; "" stores no state (a move in progress will, when done). on failure the part file is left alone. */
 int  asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, const char *status,
                      const char *state_json, int64_t tick, AspTake *out );
 int  asp_tmp_path( AspStore *s, char *buf, size_t n );              /* a fresh name for a take in progress */
@@ -77,6 +77,17 @@ int  asp_last_live( AspStore *s );          /* 1 if the space was recording when
 int  asp_peaks_set( AspStore *s, int64_t id, const uint8_t *v, int n );
 int  asp_peaks_get( AspStore *s, int64_t id, uint8_t *buf, int cap );
 int  asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max );
+
+/* moves in progress: an additive job on a looping tape (tank += to - from; to off = take out, from off = put in). One row from the
+   moment it is accepted until it is drained, so the table is empty after a clean close and after a kill is what to resume. A placement
+   is six ints in the order of AspPlace: l, r, flip, gsh, pan, mixed; osrc/nsrc: which channel of a take stored with more each side hears, or -1 for all. pos = the first chip the move visited (-1 = none yet), pass = how many chips from there are written to the tank.
+   add returns the id, or -1. */
+typedef struct { int64_t id, take, pos, pass; int immediate, osrc, nsrc; int from[6], to[6]; char state[300]; } AspMove;
+/* state: the take's state json after the move; the core stores it when the move is done, and a resumed move brings it back */
+int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int osrc, int nsrc, int immediate, const char *state );
+int  asp_move_progress( AspStore *s, int64_t id, int64_t pos, int64_t pass );
+int  asp_move_done( AspStore *s, int64_t id );
+int  asp_moves_list( AspStore *s, AspMove *out, int max );          /* oldest first; returns how many */
 
 /* named mixes label a log point */
 int  asp_mix_name( AspStore *s, const char *name, int64_t seq );

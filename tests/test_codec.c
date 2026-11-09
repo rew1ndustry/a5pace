@@ -34,6 +34,13 @@ static int source( unsigned char *b, size_t *n, void *u )
   }
 static int fail_source( unsigned char *b, size_t *n, void *u ) { (void)b; (void)n; (void)u; return -1; }
 
+static int getn( AspDec *d, int32_t *p, int n )          /* n frames, however the codec hands them out */
+  {
+  int got = 0;
+  while( got < n ) { int k = asp_dec_get( d, p + (size_t)got * 2, (unsigned)( n - got ) ); if( k <= 0 ) return got ? got : k; got += k; }
+  return got;
+  }
+
 static int32_t *make( int ch, long frames )
   {
   int32_t *p = malloc( (size_t)frames * ch * 4 );
@@ -123,6 +130,39 @@ int main( void )
     CHECK( got > 0 && got <= BLOCK * 6 );
     free( pcm ); free( out ); free( s.b );
     }
+
+  {                                                    /* tell and moved: stack the offsets while streaming, then come back to any of them */
+  for( int step = 0; step < 2; step++ )
+    {
+    int32_t *pcm = make( 2, BLOCK * 6 ), *blk = malloc( (size_t)BLOCK * 8 );
+    Sink sk = { 0 };
+    CHECK( encode( &sk, 2, pcm, BLOCK * 6, BLOCK, 0 ) == 0 );
+    Src src = { sk.b, sk.n, 0, step ? 7 : 0 };
+    AspDec *d = asp_dec_new( 2, source, &src );
+    int64_t off[6];
+    for( int k = 0; k < 6; k++ )
+      {
+      off[k] = asp_dec_tell( d );
+      CHECK( off[k] >= 0 && ( k == 0 || off[k] > off[k - 1] ) );
+      CHECK( getn( d, blk, BLOCK ) == BLOCK );
+      CHECK( memcmp( blk, pcm + (size_t)k * BLOCK * 2, (size_t)BLOCK * 8 ) == 0 );
+      }
+    CHECK( asp_dec_get( d, blk, 1 ) == 0 );
+    static const int order[] = { 3, 1, 5, 0, 4, 2, 2 };
+    for( int i = 0; i < 7; i++ )                        /* backward, forward, the top, and the same one twice */
+      {
+      int k = order[i];
+      src.pos = (size_t)off[k];
+      CHECK( asp_dec_moved( d, off[k] ) == 0 );
+      CHECK( asp_dec_tell( d ) == off[k] );
+      CHECK( getn( d, blk, BLOCK ) == BLOCK );
+      CHECK( memcmp( blk, pcm + (size_t)k * BLOCK * 2, (size_t)BLOCK * 8 ) == 0 );
+      if( k < 5 ) CHECK( asp_dec_tell( d ) == off[k + 1] );
+      }
+    CHECK( asp_dec_errors( d ) == 0 );
+    asp_dec_free( d ); free( pcm ); free( blk ); free( sk.b );
+    }
+  }
 
   {                                                    /* a failing source and a failing sink are errors, not hangs */
   AspDec *d = asp_dec_new( 2, fail_source, NULL );

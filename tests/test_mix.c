@@ -39,10 +39,16 @@ static void rig_open( Rig *r, const AspCoreCfg *cfg, int seconds )
   sim_sync( &r->sim );
   }
 
+/* a move takes a lap to begin (it waits for the head to reach the take) and a chip a tick to run: let them finish, as the quit does */
+static void settle( Rig *r ) { for( int i = 0; i < 400 && asp_core_moves( r->c ); i++ ) sim_until( &r->sim, ( r->sim.tickn + 1 ) * ASP_TICK ); }
+static int holding;                                               /* a test that looks at moves half way */
+
 /* the live loop against one rebuilt from the log */
 static int matches( Rig *r )
   {
   char rp[300], e[ASP_ERR]; snprintf( rp, sizeof rp, "%s/rebuilt.d64", r->dir );
+  if( ! holding ) settle( r );
+  asp_core_flush( r->c );
   AspTank *b = asp_tank_create( rp, LOOP, 48000, e, sizeof e );
   if( asp_rebuild( b, r->s, -1 ) ) return 0;
   static int64_t x[2 * 5000], y[2 * 5000]; int ok = 1;
@@ -57,11 +63,11 @@ static int matches( Rig *r )
   }
 
 static void rig_close( Rig *r )
-  { char cmd[200]; asp_core_close( r->c ); asp_tank_close( r->t ); asp_close( r->s ); free( r->sim.outs ); snprintf( cmd, sizeof cmd, "rm -rf %s", r->dir ); if( system( cmd ) ) {} }
+  { char cmd[200]; asp_core_close( r->c ); asp_tank_close( r->t ); asp_close( r->s ); free( r->sim.outs ); snprintf( cmd, sizeof cmd, "rm -rf %s", r->dir ); if( ! getenv( "KEEP" ) && system( cmd ) ) {} }
 
 typedef struct { int n; AspTakeState st[32]; int64_t id[32]; } States;
 static void grab( int64_t id, const char *j, void *u ) { States *s = u; if( s->n < 32 ) { asp_parse_state( j, &s->st[s->n] ); s->id[s->n++] = id; } }
-static void states( Rig *r, States *s ) { s->n = 0; asp_fold( r->s, -1, grab, s ); }
+static void states( Rig *r, States *s ) { if( ! holding ) settle( r ); s->n = 0; asp_fold( r->s, -1, grab, s ); }
 
 int main( void )
   {
@@ -189,7 +195,7 @@ int main( void )
   }
   rig_close( &r );
 
-  /* --- the output fades when it has to come down further to fit, and is exact when steady --- */
+  /* --- the lookahead sees a loud chip before it is played, so the output is never clipped: down at once, and steady --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 30 );
   {
@@ -197,14 +203,14 @@ int main( void )
   for( int i = 0; i < ASP_TICK; i++ ) { loud[2*i] = loud[2*i+1] = ( i & 1 ) ? -1200000000LL : 1200000000LL; }   /* peak to peak 2.4e9: needs 2 bits down */
   for( int64_t pos = 0; pos < LOOP; pos += ASP_TICK ) asp_tank_put( r.t, pos, LOOP - pos < ASP_TICK ? LOOP - pos : ASP_TICK, loud );
   int32_t in[2 * ASP_TICK] = { 0 }, a[2 * ASP_TICK], b[2 * ASP_TICK], c[2 * ASP_TICK];
-  asp_core_tick( r.c, in, a );                                /* the first: nothing known about the peak yet */
-  asp_core_tick( r.c, in, b );                                /* the shift has to change: this one fades */
+  asp_core_tick( r.c, in, a );                                /* the first: the chips ahead are looked at whole, so it slopes down over this tick, before the loud chip is the one played */
+  asp_core_tick( r.c, in, b );
   asp_core_tick( r.c, in, c );                                /* steady at the new shift */
   double ma = 0, mb0 = 0, mb1 = 0, mc = 0;
   for( int i = 0; i < 100; i++ ) { ma += llabs( a[2*i] ); mb0 += llabs( b[2*i] ); mb1 += llabs( b[2*(ASP_TICK-1-i)] ); mc += llabs( c[2*i] ); }
-  printf( "output shift: first tick %.3g, fading tick %.3g .. %.3g, after %.3g\n", ma / 100, mb0 / 100, mb1 / 100, mc / 100 );
-  CHECK( ma / 100 > 1.1e9 && mb0 / 100 > 1.1e9 * 0.99 && mb1 / 100 < 3.2e8 && mc / 100 > 2.9e8 && mc / 100 < 3.1e8 );
-  int smooth = 1; for( int i = 2; i < ASP_TICK - 2; i++ ) if( llabs( llabs( (int64_t)b[2*i] ) - llabs( (int64_t)b[2*(i-2)] ) ) > 400000 ) smooth = 0;
+  printf( "output shift: first tick %.3g, next tick %.3g .. %.3g, after %.3g\n", ma / 100, mb0 / 100, mb1 / 100, mc / 100 );
+  CHECK( ma / 100 > 1.1e9 && mb0 / 100 > 2.9e8 && mb0 / 100 < 3.1e8 && mb1 / 100 < 3.1e8 && mc / 100 > 2.9e8 && mc / 100 < 3.1e8 );
+  int smooth = 1; for( int i = 2; i < ASP_TICK - 2; i++ ) if( llabs( llabs( (int64_t)a[2*i] ) - llabs( (int64_t)a[2*(i-2)] ) ) > 400000 ) smooth = 0;
   CHECK( smooth );                                            /* no step anywhere inside the fading tick */
   }
   rig_close( &r );
@@ -237,24 +243,28 @@ int main( void )
     sim_step( &r.sim ); asp_core_status( r.c, &st );
     head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;
     } while( ( head - st0 + LOOP ) % LOOP < len / 3 || ( head - st0 + LOOP ) % LOOP > len / 2 );
+  asp_core_flush( r.c );
   CHECK( asp_tank_get( r.t, 0, LOOP, snap ) == 0 );
   AspMixCmd m = { 1, -12, 0, 0, 0, 0 };
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
-  int checked = 0, changed_behind = 0;
-  for( int i = 0; i < 40 && asp_core_pending( r.c, s.id[0] ); i++ )
+  /* a normal move waits for the output to reach its take's first chip (it comes in at the next pass, not mid-song); once it begins it
+     edits the chips the output is about to play, so it is heard at once: the first change is on the take's first chip, found when the
+     output is at the take's start (not a lap later, as when the edits trailed the record head) */
+  int64_t first_at = -1, ho_first = -1; int first_step = -1, changed_behind = 0;
+  for( int i = 0; i < 90 && asp_core_pending( r.c, s.id[0] ); i++ )
     {
     sim_step( &r.sim ); asp_core_status( r.c, &st );
     head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;      /* the first position not yet played */
     int64_t ho = ( head - st0 + LOOP ) % LOOP;
+    asp_core_flush( r.c );
     CHECK( asp_tank_get( r.t, 0, LOOP, now ) == 0 );
-    if( ho < len )
-      {
-      for( int64_t o = ho; o < len; o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] || now[2*at+1] != snap[2*at+1] ) { CHECK( 0 ); break; } }
-      checked++;
-      }
-    for( int64_t o = 0; o < ( ho < len ? ho : len ); o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] ) { changed_behind = 1; break; } }
+    if( first_step < 0 )
+      for( int64_t o = 0; o < len; o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] || now[2*at+1] != snap[2*at+1] ) { first_step = i; first_at = o; ho_first = ho; break; } }
+    for( int64_t o = 0; o < ( ho < len ? ho : 0 ); o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] ) { changed_behind = 1; break; } }
     }
-  CHECK( checked >= 2 && changed_behind && ! asp_core_pending( r.c, s.id[0] ) );
+  CHECK( first_step > 5 );                                                  /* it waited: the head was a third into the take */
+  CHECK( first_at >= 0 && first_at < 2 * ASP_TICK && ( ho_first + 2 * ASP_TICK ) % LOOP < 3 * ASP_TICK );
+  CHECK( changed_behind && ! asp_core_pending( r.c, s.id[0] ) );
   CHECK( matches( &r ) );
   }
   rig_close( &r );
@@ -274,12 +284,16 @@ int main( void )
   m.gsh = 5;                                                        /* a second value replaces, never adds */
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
   CHECK( asp_core_mix( r.c, 9999, -1, &m ) == 0 );
+  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ), mine = 0;      /* a move that has not started is not in the store's list */
+    for( int i = 0; i < n; i++ ) if( mv[i].take == s.id[0] ) mine++;
+    CHECK( mine == 0 ); }
   sim_until( &r.sim, base + LOOP * 4 + 48000 * 4 );
   states( &r, &s );
   printf( "by hand: %s(shift %d, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gsh, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
   CHECK( s.n == 5 && ! strcmp( s.st[0].status, "mix" ) && s.st[0].mixed && s.st[0].gsh == 5 && s.st[0].pan == -30 );
   CHECK( ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "off" ) );     /* the hold went on for the rest */
   CHECK( asp_core_pending( r.c, s.id[0] ) == 0 );
+  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ); for( int i = 0; i < n; i++ ) CHECK( mv[i].take != s.id[0] ); }   /* done: out of the list */
   CHECK( matches( &r ) );
   /* mute takes it out whatever its mix, the mix can still be changed, play brings it back at that mix */
   AspTake k4; CHECK( asp_take_get( r.s, s.id[4], &k4 ) == 0 );
@@ -296,6 +310,30 @@ int main( void )
   sim_until( &r.sim, base + LOOP * 9 );
   states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "mix" ) && s.st[4].mixed && s.st[4].gsh == -5 );
   CHECK( matches( &r ) );
+  /* quit = drain: a change waiting for the head runs at once, none is dropped, the list ends empty and the loop is whole */
+  AspMixCmd dr = { 1, 3, 0, 0, 0, 0 };
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &dr ) == 1 );
+  CHECK( asp_core_pending( r.c, s.id[4] ) == 1 && asp_core_moves( r.c ) >= 1 );
+  asp_core_drain( r.c );
+  { int i; for( i = 0; i < 100 && asp_core_moves( r.c ); i++ ) sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); CHECK( i < 100 ); }
+  { AspMove mv[16]; CHECK( asp_moves_list( r.s, mv, 16 ) == 0 ); }
+  states( &r, &s ); CHECK( s.st[4].gsh == 3 );
+  CHECK( matches( &r ) );
+  /* a kill with a move started: the store's list still holds it, the next open goes on from the last chip written, and the loop is whole */
+  {
+  AspMixCmd kl = { 1, -2, 0, 0, 0, 0 }; kl.now = 1;
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &kl ) == 1 );
+  AspMove mv[16]; int n = 0, i;
+  for( i = 0; i < 20 && ! ( n && mv[0].pos >= 0 ); i++ ) { sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); n = asp_moves_list( r.s, mv, 16 ); }   /* until a chip of it is written */
+  CHECK( n == 1 && mv[0].take == s.id[4] && mv[0].pos >= 0 && asp_core_moves( r.c ) == 1 );       /* started, not finished */
+  asp_core_close( r.c );                                                     /* the kill: no drain */
+  { AspCoreCfg c2 = cfg; c2.declared_latency = LAT; char e[ASP_ERR]; r.c = asp_core_open( r.s, r.t, &c2, e, sizeof e ); r.sim.core = r.c; }
+  CHECK( r.c && asp_core_moves( r.c ) == 1 );                                 /* resumed */
+  for( i = 0; i < 100 && asp_core_moves( r.c ); i++ ) sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK );
+  CHECK( i < 100 && asp_moves_list( r.s, mv, 16 ) == 0 );
+  states( &r, &s ); CHECK( s.st[4].gsh == -2 );
+  CHECK( matches( &r ) );
+  }
   }
   rig_close( &r );
 

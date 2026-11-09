@@ -87,7 +87,7 @@ int main( int argc, char **argv )
     loop = json_num( asp_descriptor( s ), "loop", 0 );
     snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
     t = asp_tank_open( tp, err, sizeof err );
-    if( t && ( asp_tank_dirty( t ) || asp_tank_frames( t ) != loop ) ) { asp_tank_close( t ); t = NULL; }     /* it will be rebuilt at the next start */
+    if( t && ( asp_tank_frames( t ) != loop ) ) { asp_tank_close( t ); t = NULL; }     /* it will be rebuilt at the next start */
     if( clear )
       {
       int n = asp_click_clear( s, t );

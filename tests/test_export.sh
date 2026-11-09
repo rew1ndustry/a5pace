@@ -43,8 +43,13 @@ import subprocess, struct, sys, glob
 t=sys.argv[1]
 raw=subprocess.check_output(['sox',glob.glob(t+'/e1/export/mix_?????.flac')[0],'-t','raw','-e','signed','-b','32','-L','-c','2','-'])
 d=open(t+'/e1/cache/loop.d64','rb').read()
-n=struct.unpack_from('<Q',d,16)[0]
-vals=struct.unpack('<%dq'%(2*n), d[128:128+16*n])
+S=128+9600*16
+assert d[:8]==b'a5chip\xa5\xa1'
+vals=()
+for k in range((len(d)+S-1)//S):
+    c=d[k*S+128:(k+1)*S]
+    vals+=struct.unpack('<%dq'%(len(c)//8), c)
+n=len(vals)//2
 mine=struct.unpack('<%di'%(2*n), raw[:8*n])
 clip=lambda v: max(-2147483647,min(2147483647,v))
 bad=sum(1 for a,b in zip(vals,mine) if clip(a)!=b)

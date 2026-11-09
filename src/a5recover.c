@@ -5,8 +5,7 @@
        decodes whole it is restored under its own id and slot, with the state the log gives it, so the loop gets it back;
      - a take being recorded: its part has no finished header. what decodes of it is written again as a take of its own (marked damaged,
        kept out of the loop: state off) in its slot, and the part is moved to tmp/recovered/.
-   empty spare files are removed. nothing else is deleted; the loop file is dropped (it is a cache) when a take is put back, so the next
-   start rebuilds it. the space must not be running. exit 0 when nothing was lost. */
+   empty spare files are removed. nothing else is deleted; the loop file is made new from the store (as a5rebuild does) when a take is put back. the space must not be running. exit 0 when nothing was lost. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +17,7 @@
 #include "aspstore.h"
 #include "takefile.h"
 #include "asptank.h"
+#include "aspengine.h"
 
 typedef struct { int64_t id, iter, off; char part[200]; int row; } Ev;
 typedef struct { Ev *e; int n, cap; } List;
@@ -169,7 +169,7 @@ int main( int argc, char **argv )
 
   char a[200];
   snprintf( a, sizeof a, "{\"restored\":%d,\"salvaged\":%d,\"lost\":%d,\"spares\":%d}", restored, salvaged, lost, spares );
-  if( ! dry ) { asp_log( s, "a5recover", "recovered", a, -1 ); if( restored || salvaged ) { snprintf( path, sizeof path, "%s/cache/loop.d64", dir ); unlink( path ); } }
+  if( ! dry ) { asp_log( s, "a5recover", "recovered", a, -1 ); if( restored || salvaged ) { snprintf( path, sizeof path, "%s/cache/loop.d64", dir ); if( asp_rebuild_file( s, path, err, sizeof err ) ) fprintf( stderr, "a5recover: the loop file was not rebuilt (%s): run a5rebuild\n", err ); } }
   printf( "%s: %d put back, %d saved from being recorded, %d lost, %d empty spares %s%s\n", dry ? "dry run" : "done", restored, salvaged, lost, spares, dry ? "found" : "removed",
           ( restored || salvaged ) && ! dry ? "; the loop will be rebuilt at the next start" : "" );
   asp_close( s );

@@ -34,6 +34,7 @@ typedef struct
   int    mono_detect;          /* record a take from one channel (or two identical ones) as mono (default 1) */
   int    mono_lev;             /* where a mono take sits: level shift on both channels, 1 = centre (default 1) */
   AspAutomix automix;
+  double budget;               /* fraction of a tick (0 = 0.8) after which no level move that has not begun is started; one that has begun always finishes */
   int64_t declared_latency;    /* frames, > 0: the round trip is declared, not measured; no sync tone, play from the first tick */
   } AspCoreCfg;
 
@@ -50,6 +51,8 @@ typedef struct
   AspAutomix automix;
   double   gate_db, ring_db, lowcut; int gate_learnt, strict, input;
   int64_t  log_seq, loop_frames, peak;
+  double   load;                    /* time the last tick took, in percent of a tick (over 100: the tick overran) */
+  int      gain_shift;              /* how far the last output tick was brought down to fit (bits) */
   } AspCoreStatus;
 
 void     asp_core_defaults( AspCoreCfg *c );
@@ -94,6 +97,14 @@ int      asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, 
    the shell pins them under the map */
 int      asp_core_map_high( const AspCore *c, int64_t above, int n, AspMapCb cb, void *u );
 int      asp_core_pending( const AspCore *c, int64_t id );
+/* closing: every queued move now runs as if it were NOW (it keeps its place in the order, nothing is dropped); keep calling
+   asp_core_tick until asp_core_moves is 0, then close */
+void     asp_core_drain( AspCore *c );
+/* GAINRESET: forget the loop peak, the output gain comes back up to what the chips ahead need (slope over one tick) */
+void     asp_core_gainreset( AspCore *c );
+int      asp_core_moves( const AspCore *c );                       /* moves still queued */
+/* the tank file whole: what the window holds of the loop goes to it (the window is read again on the next tick). for tests and tools that read the tank while the core runs; the core itself never needs it */
+void     asp_core_flush( AspCore *c );
 /* generated tracks for a space that is running (a5click, a5import). part is the file name under tmp/; kind "click" (the
    loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */
 int64_t  asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in );

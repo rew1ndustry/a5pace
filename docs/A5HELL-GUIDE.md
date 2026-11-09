@@ -46,6 +46,7 @@ PLAY 12.4s loop 31.0/76.0s iter 110 takes 7 ...                           <- sta
 | `x` | export: `a` all takes, `m` the mix, `l` the loop (a5export, into DIR/export) |
 | `w` | wipe the loop (it asks; nothing is deleted) |
 | `r` | sync again |
+| `z` | reset the output gain: it forgets past clips and comes back up to what the loop needs now |
 | `f` | choose a gate profile (made with a5cal) |
 | `T` | every take as text |
 | `PgUp` `PgDn` `Home` `End` | scroll the map; `End` follows the latest iteration |

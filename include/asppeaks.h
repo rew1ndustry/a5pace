@@ -14,4 +14,7 @@ void   asp_pk_free( AspPk *p );
 /* pcm: n interleaved stereo int32 frames that start at frame pos of the take. ch: only that channel (0, 1), else the louder */
 void   asp_pk_add( AspPk *p, const int32_t *pcm, int64_t n, int64_t pos, int ch );
 double asp_pk_db( uint8_t b );                          /* the level of a byte in dB; -200 for 0 */
+/* make the levels of every take that has none (reads the take files); *made and *bad count them. 0 when every take has levels */
+struct AspStore;
+int asp_peaks_backfill( struct AspStore *s, int *made, int *bad );
 #endif

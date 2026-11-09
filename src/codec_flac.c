@@ -21,6 +21,7 @@ struct AspDec
   FLAC__StreamDecoder *f;
   AspSource source; void *user;
   int ch, errors, failed;
+  int64_t delivered;                                   /* bytes the source has given, counted from the stream's start (or from where it was moved to) */
   int32_t *buf; size_t cap, have, pos;                 /* the current block, interleaved */
   };
 
@@ -76,6 +77,7 @@ static FLAC__StreamDecoderReadStatus dec_read( const FLAC__StreamDecoder *f, FLA
   AspDec *d = u;
   (void)f;
   if( d->source( b, n, d->user ) ) { d->failed = 1; return FLAC__STREAM_DECODER_READ_STATUS_ABORT; }
+  d->delivered += (int64_t)*n;
   return *n ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
   }
 
@@ -98,6 +100,9 @@ static FLAC__StreamDecoderWriteStatus dec_write( const FLAC__StreamDecoder *f, c
   return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
   }
 
+static FLAC__StreamDecoderTellStatus dec_tell( const FLAC__StreamDecoder *f, FLAC__uint64 *at, void *u )
+  { (void)f; *at = (FLAC__uint64)( (AspDec *)u )->delivered; return FLAC__STREAM_DECODER_TELL_STATUS_OK; }
+
 static void dec_error( const FLAC__StreamDecoder *f, FLAC__StreamDecoderErrorStatus s, void *u )
   {
   AspDec *d = u;
@@ -113,7 +118,7 @@ AspDec *asp_dec_new( int channels, AspSource source, void *user )
   if( ! d ) return NULL;
   d->ch = channels; d->source = source; d->user = user;
   d->f = FLAC__stream_decoder_new();
-  if( ! d->f || FLAC__stream_decoder_init_stream( d->f, dec_read, NULL, NULL, NULL, NULL, dec_write, NULL, dec_error, d )
+  if( ! d->f || FLAC__stream_decoder_init_stream( d->f, dec_read, NULL, dec_tell, NULL, NULL, dec_write, NULL, dec_error, d )
                 != FLAC__STREAM_DECODER_INIT_STATUS_OK )
     {
     if( d->f ) FLAC__stream_decoder_delete( d->f );
@@ -138,6 +143,24 @@ int asp_dec_get( AspDec *d, int32_t *pcm, unsigned max )
   memcpy( pcm, d->buf + d->pos * d->ch, (size_t)k * d->ch * 4 );
   d->pos += k;
   return (int)k;
+  }
+
+int64_t asp_dec_tell( AspDec *d )
+  {
+  FLAC__uint64 at;
+  FLAC__StreamDecoderState st = FLAC__stream_decoder_get_state( d->f );
+  if( d->failed || d->pos != d->have ) return -1;
+  if( ( st == FLAC__STREAM_DECODER_SEARCH_FOR_METADATA || st == FLAC__STREAM_DECODER_READ_METADATA )
+      && ! FLAC__stream_decoder_process_until_end_of_metadata( d->f ) ) return -1;        /* the stream's header first: a frame needs its facts */
+  return FLAC__stream_decoder_get_decode_position( d->f, &at ) ? (int64_t)at : -1;
+  }
+
+int asp_dec_moved( AspDec *d, int64_t pos )
+  {
+  if( pos < 0 || d->failed ) return -1;
+  if( ! FLAC__stream_decoder_flush( d->f ) ) return -1;                                 /* forgets its input and looks for the next frame */
+  d->delivered = pos; d->have = d->pos = 0;
+  return 0;
   }
 
 int asp_dec_errors( const AspDec *d ) { return d->errors; }

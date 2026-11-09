@@ -12,8 +12,9 @@ and says so plainly the next time.
 - A take that has ended is handed to the keeper thread, which puts it in its place, makes it safe on the disk, and only then makes its
   row. A run that dies between the end of a take and its row leaves the take (its file) but no row; the log has a `take_pending`
   event naming it.
-- The loop (`cache/loop.d64`) is only a cache: a run that dies leaves it marked as not closed, and the next start rebuilds it from the
-  takes and the log.
+- The loop (`cache/loop.d64`) is a cache of the takes and the log, but aspace never rebuilds it and never marks it dirty: the moves
+  in progress are listed in the session and resume after a kill. Only a loop file that is lost, the wrong size, an old format or corrupt
+  needs `a5rebuild` (docs/REBUILD.md).
 
 ## Noticing
 
@@ -45,8 +46,8 @@ The space must not be running. It looks at:
 - **empty spare files** made ahead of time by the keeper: removed (they are empty).
 - **rows whose file is missing or unfinished**: told, not mended.
 
-When it has put anything back it also drops the loop file, so the next start rebuilds it with those takes in. It logs a `recovered` event
-with the counts, and exits 0 when nothing was lost, 1 otherwise. Nothing of yours is deleted; the nearest thing is the loop cache.
+When it has put anything back it also makes the loop file new from the store (as `a5rebuild --tank` does), so the loop has those takes in. It logs a `recovered` event
+with the counts, and exits 0 when nothing was lost, 1 otherwise. Nothing of yours is deleted; the nearest thing is the loop file, which is made again from the store.
 
 ## For tests
 

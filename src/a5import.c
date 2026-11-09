@@ -77,7 +77,7 @@ int main( int argc, char **argv )
     int64_t loop = json_num( asp_descriptor( s ), "loop", 0 );
     snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
     AspTank *t = asp_tank_open( tp, err, sizeof err );
-    if( t && ( asp_tank_dirty( t ) || asp_tank_frames( t ) != loop ) ) { asp_tank_close( t ); t = NULL; }     /* it will be rebuilt at the next start */
+    if( t && ( asp_tank_frames( t ) != loop ) ) { asp_tank_close( t ); t = NULL; }     /* it will be rebuilt at the next start */
     iter = asp_gen_next_iter( s );
     char part[1300];
     if( asp_tmp_path( s, part, sizeof part ) || asp_audio_to_take( file, part, &h, err, sizeof err ) ) { fprintf( stderr, "a5import: %s\n", err ); return 1; }

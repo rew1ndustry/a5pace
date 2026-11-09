@@ -50,7 +50,7 @@ rebuilt from the store on the next start.
 (and so will the gui and the backend), so how a space is started is decided in one place: the file `DIR/start` (lines
 `edge card|sim`, `args ...` extra options for a5pace, `release 1` to let go of pipewire for the card), else an `edge` line
 in `~/.config/a5pace/defaults`, else the sound card if there is one, else a simulated card. `A5START_EDGE=sim|card`
-overrides. It runs detached; its words go to `DIR/run.log`; `a5hell DIR --no-start` does not start it.
+overrides. It runs detached; its words go to `DIR/run.log` (the run before is kept as `DIR/run.log.1`, so a run that died leaves its reason); `a5hell DIR --no-start` does not start it.
 
 **Tape.** `a5pace run --tape` keeps the input exactly as the card gave it, as stereo FLAC in `DIR/tape/input-DATE.flac`
 (zero bits the converter leaves out compress away, so it is small). Sample n of the tape is tick n/9600 of the run, so the
@@ -70,9 +70,11 @@ the one question that mode asks), or from a profile (`automix loop`, `automix ke
 Fading is not a mode yet. A take's gain and pan are, for now, one constant setting across the whole take
 (`lev`: a right shift per output channel, or off; a mixed take is a gain shift and a pan shift, `MIX iter off [gN] [pN]`: +N left-shifts every sample N bits (louder, saturating), -N right-shifts (quieter); pan +N shifts the left side N bits quieter and the right side N bits louder, -N the mirror; gain and pan are summed per channel and applied once. No dB and no multiplies anywhere in gain; only envelopes will do real gain maths); fades will be envelopes on a take (a perceived
 linear drop over the whole take) once envelopes are mapped out.
-A take that changes place (a mono conversion, a swap, an overlap removal) is moved by a job a slice at a time
-(a fifth of a second of work a tick), started when the playhead is not in the take and will not reach it before
-the move is done. A take that fills the loop waits one pass and goes anyway (that one may click).
+A take that changes place (a mono conversion, a swap, an overlap removal) or changes level is moved by a job, one chip (a tick) at a time,
+on the chip the output is about to play, so what you do is heard within a tick or two: a take that fills the loop is in place after one
+lap of work (the first chips are heard at once, the rest as the job reaches them), and several moves on one chip simply add. A normal job waits for the playhead to come round to the take's start (the next pass), and is heard at once from there; NOW (`!`) starts at
+once, wherever the playhead is. Quitting finishes
+every job before the space closes.
 
 ## The output
 The loop is the sum of the takes in 64 bits. On the way out it is brought down by a right shift so the peak fits 32

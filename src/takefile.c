@@ -165,6 +165,9 @@ AspTakeR *asp_tr_open( const char *path )
 
 const AspHdr *asp_tr_hdr( const AspTakeR *r ) { return &r->h; }
 int asp_tr_get( AspTakeR *r, int32_t *pcm, unsigned max ) { return asp_dec_get( r->dec, pcm, max ); }
+int64_t asp_tr_tell( AspTakeR *r ) { return asp_dec_tell( r->dec ); }
+int asp_tr_seek( AspTakeR *r, int64_t pos )
+  { return pos < 0 || lseek( r->fd, (off_t)( ASP_HDR_SIZE + pos ), SEEK_SET ) < 0 ? -1 : asp_dec_moved( r->dec, pos ); }
 int asp_tr_errors( const AspTakeR *r ) { return asp_dec_errors( r->dec ); }
 void asp_tr_close( AspTakeR *r ) { if( r ) { asp_dec_free( r->dec ); close( r->fd ); free( r ); } }
 
