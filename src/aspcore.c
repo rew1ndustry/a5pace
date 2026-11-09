@@ -14,7 +14,6 @@
 
 #define RATE        48000
 #define HANG        10            /* ticks of silence a take keeps after the last sound */
-#define BUDGET      48000         /* frames of take a tick may spend on level moves */
 
 typedef struct
   {
@@ -71,6 +70,7 @@ struct AspCore
   char     profile[64], settings[1100];
   int      started;
   double   m_in[2], m_out[2];       /* the meters: rms of the last tick in dB */
+  double   t_tick, budget_ms, load, load_max;   /* the tick's start, the time after which no move begins, the load of the last tick and the worst this pass (percent of a tick) */
   int      out_shift;               /* how far the last output tick was brought down to fit */
   int      mix_now;                 /* the change being made is to be heard at once, not at the take's next start */
 
@@ -228,6 +228,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     { if( err ) snprintf( err, errn, "the loop is too short" ); return NULL; }
   AspCore *c = calloc( 1, sizeof *c );
   c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t ); c->chips = asp_tank_chips( t );
+  c->budget_ms = ( cfg->budget > 0 && cfg->budget <= 1 ? cfg->budget : 0.8 ) * ASP_TICK * 1000.0 / RATE;
   c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 0;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
@@ -479,7 +480,8 @@ static void mv_visit( AspCore *c, Move *m, int64_t a, int64_t *cost )
    only while the tick has budget: a move that has begun is never held back */
 static int mv_may_begin( const AspCore *c, const Move *m, int64_t a, int64_t k, int64_t acur, int64_t cost, int imm_run )
   {
-  if( cost >= BUDGET ) return 0;
+  (void)cost;
+  if( now_ms() - c->t_tick >= c->budget_ms ) return 0;       /* a started move is never cut short; this only holds back those not yet begun */
   if( m->now || c->drain ) return a >= acur && ( c->drain || ! imm_run );
   return k == m->fc;
   }
@@ -1057,7 +1059,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   {
   int64_t rel = c->tick - c->origin, recpos = ( rel * ASP_TICK ) % c->size, scan = ASP_TICK;
   int track = c->enc != NULL;
-  double t0 = now_ms();
+  double t0 = now_ms(); c->t_tick = t0;
   memcpy( c->cur, in, sizeof c->cur );
   win_advance( c, rel * ASP_TICK );
   lap( c, "window", &t0 );
@@ -1080,7 +1082,8 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   if( recpos < ASP_TICK )                                 /* the top of a pass */
     {
     if( c->newt ) ++c->iter;
-    logf_( c, "top", "{\"iter\":%llu,\"peak\":%llu,\"take\":%d}", (unsigned long long)c->iter, (unsigned long long)c->peak, track );
+    logf_( c, "top", "{\"iter\":%llu,\"peak\":%llu,\"take\":%d,\"load\":%.0f,\"moves\":%d}", (unsigned long long)c->iter, (unsigned long long)c->peak, track, c->load_max, c->nmv );
+    c->load_max = 0;
     c->newt = track;
     lap( c, "top", &t0 );
     }
@@ -1116,6 +1119,8 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   }
   memcpy( c->prev, c->cur, sizeof c->prev );
   c->have_prev = 1;
+  c->load = ( now_ms() - c->t_tick ) / ( ASP_TICK * 1000.0 / RATE ) * 100;
+  if( c->load > c->load_max ) c->load_max = c->load;
   }
 
 static double rms_db( const int32_t *p, int ch )
@@ -1183,6 +1188,7 @@ void asp_core_status( const AspCore *c, AspCoreStatus *st )
   st->iter = c->iter; st->live = c->live; st->take_open = c->enc != NULL;
   for( int ch = 0; ch < 2; ch++ ) { st->in_db[ch] = c->m_in[ch]; st->out_db[ch] = c->m_out[ch]; }
   st->take_iter = c->t_iter; st->take_off = c->t_off; st->take_frames = c->t_frames;
+  st->load = c->load; st->gain_shift = c->out_shift;
   st->sync_shift = c->sync ? asp_sync_level( c->sync ) : 0;
   st->loop_takes = in; st->jobs = c->nmv; st->automix = c->cfg.automix;
   st->input = c->cfg.input; st->lowcut = asp_gate_lowcut( c->gate ); st->strict = asp_gate_strict( c->gate ); st->gate_db = asp_gate_margin( c->gate ); st->ring_db = asp_gate_ring( c->gate ); st->gate_learnt = asp_gate_learnt( c->gate );

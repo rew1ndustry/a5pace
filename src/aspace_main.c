@@ -9,6 +9,7 @@
             --sync-loudest N --sync-start N --sync-target N --sync-muted  the sync tone: ceiling, first level, wanted input peak
             --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
+            --budget PCT  percent of a tick (default 80) after which no level move that has not begun is started; a begun one always finishes
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             --tape  keep the input as it came (flac, in DIR/tape/); --tape-loop also the loop as it went out (heavy)
@@ -306,8 +307,8 @@ static void handle( void *u, int cl, const char *line )
       mode_name( st.automix.mode ), st.automix.n, st.gate_db, st.ring_db, st.lowcut, st.strict, st.input == 1 ? "left" : st.input == 2 ? "right" : st.input == 3 ? "stereo" : "auto", st.gate_learnt, st.sync_shift, (long long)st.log_seq, r->ticks_timed ? r->tick_ms_sum / r->ticks_timed : 0.0, r->tick_ms_max, (long long)r->slow_ticks, asp_core_profile( r->core ), asp_session_id( r->store ) );
     ctl_ok( c, cl );
     }
-  else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence) */
-    { ctl_say( c, cl, "%.1f %.1f %.1f %.1f", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1] ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence), then the tick load in percent and the output gain in bits down */
+    { ctl_say( c, cl, "%.1f %.1f %.1f %.1f %.0f %d", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1], st.load, st.gain_shift ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "GAINRESET" ) )             /* GAINRESET: the output gain forgets past clips */
     { asp_core_gainreset( r->core ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
@@ -547,6 +548,7 @@ static int cmd_run( int argc, char **argv )
     else if( ! strcmp( argv[i], "--profile" ) && i + 1 < argc ) profile = argv[++i];                   /* a named setup from the list (a5pace profiles) */
     else if( ! strcmp( argv[i], "--sync-loudest" ) && i + 1 < argc ) addflag( flagtext, "sync_loudest", argv[++i] );   /* never shifted less than N bits down from asp4's sync */
     else if( ! strcmp( argv[i], "--sync-start" ) && i + 1 < argc ) addflag( flagtext, "sync_start", argv[++i] );
+    else if( ! strcmp( argv[i], "--budget" ) && i + 1 < argc ) cfg.budget = atof( argv[++i] ) / 100;   /* percent of a tick after which no new level move begins (default 80) */
     else if( ! strcmp( argv[i], "--latency" ) && i + 1 < argc ) cfg.declared_latency = atoll( argv[++i] );   /* declared round trip, frames: no hunt */
     else if( ! strcmp( argv[i], "--sync-muted" ) ) cfg.sync.output_muted = 1;                           /* the shell has muted what is heard */
     else if( ! strcmp( argv[i], "--sync-target" ) && i + 1 < argc ) addflag( flagtext, "sync_target", argv[++i] );

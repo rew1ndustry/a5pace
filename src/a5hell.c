@@ -201,8 +201,9 @@ static void map_scroll( int key, int h )
   }
 
 /* the meters: rms of the last tick of what comes in and goes out, -60 .. 0 dB, with a mark where the level peaked a moment ago */
+static double mload = 0; static int mgain = 0;
 static double mlev[4] = { -200, -200, -200, -200 }, mhold[4] = { -200, -200, -200, -200 };
-static void meter_line( const char *l, void *u ) { (void)u; sscanf( l, "%lf %lf %lf %lf", mlev, mlev + 1, mlev + 2, mlev + 3 ); }
+static void meter_line( const char *l, void *u ) { (void)u; sscanf( l, "%lf %lf %lf %lf %lf %d", mlev, mlev + 1, mlev + 2, mlev + 3, &mload, &mgain ); }
 static void meter_update( int cmd )
   {
   ctlc_cmd( cmd, "METER", meter_line, NULL );
@@ -225,6 +226,7 @@ static void meters( int r, int w )
   printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[1], mhold[1] );
   printf( "%s    output  L ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[2], mhold[2] );
   printf( "%s  R ", term_sgr( C_TEXT ) ); meter_bar( bw, mlev[3], mhold[3] );
+  printf( "%s   load %.0f%%  gain %s%d", term_sgr( mload > 100 ? C_HIGH : mload > 80 ? C_MID : C_TEXT ), mload, mgain ? "-" : "", mgain );
   printf( "%s\033[K", term_sgr( C_TEXT ) );
   }
 

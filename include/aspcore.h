@@ -34,6 +34,7 @@ typedef struct
   int    mono_detect;          /* record a take from one channel (or two identical ones) as mono (default 1) */
   int    mono_lev;             /* where a mono take sits: level shift on both channels, 1 = centre (default 1) */
   AspAutomix automix;
+  double budget;               /* fraction of a tick (0 = 0.8) after which no level move that has not begun is started; one that has begun always finishes */
   int64_t declared_latency;    /* frames, > 0: the round trip is declared, not measured; no sync tone, play from the first tick */
   } AspCoreCfg;
 
@@ -50,6 +51,8 @@ typedef struct
   AspAutomix automix;
   double   gate_db, ring_db, lowcut; int gate_learnt, strict, input;
   int64_t  log_seq, loop_frames, peak;
+  double   load;                    /* time the last tick took, in percent of a tick (over 100: the tick overran) */
+  int      gain_shift;              /* how far the last output tick was brought down to fit (bits) */
   } AspCoreStatus;
 
 void     asp_core_defaults( AspCoreCfg *c );
