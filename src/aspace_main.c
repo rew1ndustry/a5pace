@@ -7,14 +7,26 @@
             --fast  simulated: as fast as it will go     --step  simulated: only on STEP n
             -C PORT control port (0 any free; default 0)  --live / --safe  record / do not (default: as it was last time, safe at the first)
             --sync-loudest N --sync-start N --sync-target N --sync-muted  the sync tone: ceiling, first level, wanted input peak
-            --tank PATH  keep the loop file there (it is only a cache: rebuilt from the store when missing)
+            --tank PATH  keep the loop file there (a cache, e.g. /dev/shm; aspace never rebuilds it: if it is missing, the wrong size or an old format, run a5rebuild)
             --profile NAME  a named gate/sync setup from the list (a5pace profiles)
             --budget PCT  percent of a tick (default 80) after which no level move that has not begun is started; a begun one always finishes
             --latency FRAMES  the round trip is declared, not measured: no sync tone (SYNC still measures)
             --lowcut HZ --strict  the gate ignores anything below the instrument's lowest note; no single-band opening
             --tape  keep the input as it came (flac, in DIR/tape/); --tape-loop also the loop as it went out (heavy)
             -g DB -r DB  gate margin, ring  --automix SPEC (off | overlap N | swap [each])
-   the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode. */
+   the port is written to DIR/ctl as "PORT PID". logs go to stderr; stdout is audio in pipe mode.
+
+   the model (aspcore.c has the detail):
+   - the loop file is chips of one tick (ASP_TICK frames), each with its own header; no file header. the core keeps a window of chips
+     in memory and each tick reads one chip at the front and writes one at the back, on separate forward-only handles.
+   - a gain/pan change (or a take going in or out) is a move: it is added to the chips as the record head enters them, and a move
+     that has begun is on the SQL list (moves) until its last chip is written. NOW (!) begins at the chip under the head; a normal
+     move begins at its take's first chip. a move that has begun is never cut short; --budget only holds back moves not yet begun.
+   - quit = drain: the first SIGINT/SIGTERM or QUIT makes every move run as NOW and the core keeps ticking until none is left, then
+     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode the ticks still come from stdin, so the
+     edge must keep feeding while it drains.
+   - the tank is never marked dirty and never rebuilt by the core; a5rebuild is the last resort, outside it.
+   - the log's top event carries the worst tick load of the pass (percent of a tick), METER the load of the last tick. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -599,8 +611,7 @@ static int cmd_run( int argc, char **argv )
     }
   r.core = asp_core_open( r.store, r.tank, &cfg, err, sizeof err );
   if( ! r.core ) { fprintf( stderr, "%s\n", err ); return 1; }
-  if( profile || flagtext[0] || ! stored[0] ) asp_core_settings( r.core, pname, settings );   /* what is in force is in the log
-  */
+  if( profile || flagtext[0] || ! stored[0] ) asp_core_settings( r.core, pname, settings );   /* what is in force is in the log */
   int chosen = 0;
   r.ctl = ctl_open( port, &chosen );
   if( ! r.ctl ) { fprintf( stderr, "aspace: no control port\n" ); return 1; }
