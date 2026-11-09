@@ -308,6 +308,8 @@ static void handle( void *u, int cl, const char *line )
     }
   else if( ! strcmp( w[0], "METER" ) )                 /* METER: in_left in_right out_left out_right, rms of the last tick in dB (-200 silence) */
     { ctl_say( c, cl, "%.1f %.1f %.1f %.1f", st.in_db[0], st.in_db[1], st.out_db[0], st.out_db[1] ); ctl_ok( c, cl ); }
+  else if( ! strcmp( w[0], "GAINRESET" ) )             /* GAINRESET: the output gain forgets past clips */
+    { asp_core_gainreset( r->core ); ctl_ok( c, cl ); }
   else if( ! strcmp( w[0], "LINE" ) )          /* one line a person can read */
     {
     int64_t pos = st.phase ? ( ( st.tick - st.origin ) * ASP_TICK ) % st.loop_frames : 0; char atx[40];
@@ -369,6 +371,7 @@ static void handle( void *u, int cl, const char *line )
       "CLICK ADD iter file style l r IN|KEEP   a click for a5click (a take file under tmp/); CLICK CLEAR takes them out",
       "GRID                                 one row a take: iter off id in mixed gain pan pending mono len",
       "MAP HIGH n above | MAP [from [to]]   iter off frames in|out|open tick0 hex: the levels of the takes, a byte a tick",
+      "GAINRESET                            the output gain forgets past clips and comes back up",
       "METER                                in_l in_r out_l out_r: rms of the last tick, dB",
       "PROFILES | PROFILE name | SETTINGS   gate profiles: list, choose, what is in force",
       "GATE n|+n|-n   RING n   LOWCUT hz   STRICT 0|1   RELEARN      the gate",

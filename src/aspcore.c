@@ -408,6 +408,21 @@ static void win_play( AspCore *c, int64_t P, int64_t *mix )
     }
   }
 
+/* the loop's range (max - min over both channels) on every chip the next output tick touches: the gain lookahead. A chip
+   is looked at whole, so the slope may start up to one chip early (safe), and a clip never reaches the output unannounced */
+static uint64_t win_look( AspCore *c, int64_t P )
+  {
+  int64_t F = P + c->latency, lo = 0, hi = 0, end = F + ASP_TICK;
+  while( F < end )
+    {
+    int64_t a = chip_of( c, F ); WChip *w = win_get( c, a );
+    int64_t cs = chip_start( c, a ), n = chip_frames( c, fmod_( a, c->chips ) );
+    if( w ) for( int64_t i = 0; i < 2 * n; i++ ) { int64_t v = w->mix[i]; if( v < lo ) lo = v; else if( v > hi ) hi = v; }
+    F = cs + n;
+    }
+  return (uint64_t)( hi - lo );
+  }
+
 /* the gain the tick was played at goes on the chips it touched */
 static void win_stamp( AspCore *c, int64_t P )
   {
@@ -507,6 +522,7 @@ static void win_enter( AspCore *c, int64_t P )
   }
 
 void asp_core_drain( AspCore *c ) { c->drain = 1; }
+void asp_core_gainreset( AspCore *c ) { c->peak = 0; }          /* the next lookahead finds the gain the loop needs now */
 void asp_core_flush( AspCore *c ) { win_flush( c ); }
 int asp_core_moves( const AspCore *c ) { return c->nmv; }
 
@@ -1092,6 +1108,7 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     logf_( c, "wrap", "{\"iter\":%llu,\"pass\":%lld}", (unsigned long long)c->iter, (long long)c->pass );
     }
   lap( c, "wrap", &t0 );
+  { uint64_t look = win_look( c, rel * ASP_TICK ); if( look > c->peak ) c->peak = look; }   /* clip: the gain comes down over this tick, before the loud chip is played */
   win_play( c, rel * ASP_TICK, mix );
   c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, &c->out_shift );
   win_stamp( c, rel * ASP_TICK );

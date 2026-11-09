@@ -97,6 +97,8 @@ int      asp_core_pending( const AspCore *c, int64_t id );
 /* closing: every queued move now runs as if it were NOW (it keeps its place in the order, nothing is dropped); keep calling
    asp_core_tick until asp_core_moves is 0, then close */
 void     asp_core_drain( AspCore *c );
+/* GAINRESET: forget the loop peak, the output gain comes back up to what the chips ahead need (slope over one tick) */
+void     asp_core_gainreset( AspCore *c );
 int      asp_core_moves( const AspCore *c );                       /* moves still queued */
 /* the tank file whole: what the window holds of the loop goes to it (the window is read again on the next tick). for tests and tools that read the tank while the core runs; the core itself never needs it */
 void     asp_core_flush( AspCore *c );

@@ -195,7 +195,7 @@ int main( void )
   }
   rig_close( &r );
 
-  /* --- the output fades when it has to come down further to fit, and is exact when steady --- */
+  /* --- the lookahead sees a loud chip before it is played, so the output is never clipped: down at once, and steady --- */
   asp_core_defaults( &cfg );
   rig_open( &r, &cfg, 30 );
   {
@@ -203,14 +203,14 @@ int main( void )
   for( int i = 0; i < ASP_TICK; i++ ) { loud[2*i] = loud[2*i+1] = ( i & 1 ) ? -1200000000LL : 1200000000LL; }   /* peak to peak 2.4e9: needs 2 bits down */
   for( int64_t pos = 0; pos < LOOP; pos += ASP_TICK ) asp_tank_put( r.t, pos, LOOP - pos < ASP_TICK ? LOOP - pos : ASP_TICK, loud );
   int32_t in[2 * ASP_TICK] = { 0 }, a[2 * ASP_TICK], b[2 * ASP_TICK], c[2 * ASP_TICK];
-  asp_core_tick( r.c, in, a );                                /* the first: nothing known about the peak yet */
-  asp_core_tick( r.c, in, b );                                /* the shift has to change: this one fades */
+  asp_core_tick( r.c, in, a );                                /* the first: the chips ahead are looked at whole, so it slopes down over this tick, before the loud chip is the one played */
+  asp_core_tick( r.c, in, b );
   asp_core_tick( r.c, in, c );                                /* steady at the new shift */
   double ma = 0, mb0 = 0, mb1 = 0, mc = 0;
   for( int i = 0; i < 100; i++ ) { ma += llabs( a[2*i] ); mb0 += llabs( b[2*i] ); mb1 += llabs( b[2*(ASP_TICK-1-i)] ); mc += llabs( c[2*i] ); }
-  printf( "output shift: first tick %.3g, fading tick %.3g .. %.3g, after %.3g\n", ma / 100, mb0 / 100, mb1 / 100, mc / 100 );
-  CHECK( ma / 100 > 1.1e9 && mb0 / 100 > 1.1e9 * 0.99 && mb1 / 100 < 3.2e8 && mc / 100 > 2.9e8 && mc / 100 < 3.1e8 );
-  int smooth = 1; for( int i = 2; i < ASP_TICK - 2; i++ ) if( llabs( llabs( (int64_t)b[2*i] ) - llabs( (int64_t)b[2*(i-2)] ) ) > 400000 ) smooth = 0;
+  printf( "output shift: first tick %.3g, next tick %.3g .. %.3g, after %.3g\n", ma / 100, mb0 / 100, mb1 / 100, mc / 100 );
+  CHECK( ma / 100 > 1.1e9 && mb0 / 100 > 2.9e8 && mb0 / 100 < 3.1e8 && mb1 / 100 < 3.1e8 && mc / 100 > 2.9e8 && mc / 100 < 3.1e8 );
+  int smooth = 1; for( int i = 2; i < ASP_TICK - 2; i++ ) if( llabs( llabs( (int64_t)a[2*i] ) - llabs( (int64_t)a[2*(i-2)] ) ) > 400000 ) smooth = 0;
   CHECK( smooth );                                            /* no step anywhere inside the fading tick */
   }
   rig_close( &r );
