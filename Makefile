@@ -38,7 +38,7 @@ CODEC_DEP    =
 CODEC_LIBS   = -lm
 endif
 
-LIBOBJ = build/codec_$(CODEC).o build/takefile.o build/keeper.o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o build/asppeaks.o
+LIBOBJ = build/codec_$(CODEC).o build/takefile.o build/keeper.o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspchip.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o build/asppeaks.o
 all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5peaks bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5hell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec bin/test_takefile bin/test_keeper
 
 $(FLACLIB):
@@ -105,6 +105,9 @@ build/aspcore.o: src/aspcore.c include/settings.h include/aspcore.h include/asps
 build/sync.o: src/sync.c include/sync.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -Wno-misleading-indentation -Wno-sign-compare $(INC) -c -o $@ $<
+build/aspchip.o: src/aspchip.c include/aspchip.h include/plat.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 build/asptank.o: src/asptank.c include/asptank.h include/plat.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
@@ -128,6 +131,9 @@ bin/test_store: tests/test_store.c $(LIBOBJ) $(SQL_OBJ)
 bin/asptank: src/asptank_cli.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
+bin/test_chip: tests/test_chip.c build/aspchip.o include/aspchip.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ tests/test_chip.c build/aspchip.o
 bin/test_tank: tests/test_tank.c $(LIBOBJ) $(SQL_OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(LIBOBJ) $(SQL_OBJ) $(FLAC_LIBS) $(SQL_LIBS)
@@ -200,7 +206,8 @@ bin/test_gate: tests/test_gate.c build/gate.o
 
 # the tests make their own artist, not yours
 test: export XDG_CONFIG_HOME = $(CURDIR)/build/testcfg
-test: all bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mixparse
+	bin/test_chip
 	bin/test_codec
 	bin/test_takefile
 	bin/test_keeper
