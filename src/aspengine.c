@@ -57,6 +57,7 @@ struct AspJob
   int64_t pos0, lo, hi, cursor;   /* cursor: the next frame of the take to move (lo .. hi) */
   int64_t base, have, at;         /* frame index of the block's first frame; frames in it; how many are used */
   int32_t *buf;                   /* the block, as stored */
+  int64_t *offs; int64_t noff, capoff;   /* the stream offset of each tick met so far, stacked as the take is streamed: tick k starts at offs[k] */
   int ch;                         /* channels as stored */
   int osrc, nsrc;                 /* a side that is one channel of a take stored with more: which, or -1 for all as they are */
   AspPlace from, to;
@@ -92,7 +93,7 @@ AspJob *asp_job_take( AspStore *s, int64_t id, int64_t lo, int64_t hi, AspPlace 
   return j;
   }
 
-void asp_job_free( AspJob *j ) { if( j ) { asp_tr_close( j->r ); free( j->buf ); free( j ); } }
+void asp_job_free( AspJob *j ) { if( j ) { asp_tr_close( j->r ); free( j->buf ); free( j->offs ); free( j ); } }
 int64_t asp_job_span( const AspJob *j ) { return j->hi - j->lo; }
 int64_t asp_job_pos0( const AspJob *j ) { return j->pos0; }
 
@@ -159,6 +160,20 @@ int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
     if( j->at == j->have )                                     /* the block is used up: the next */
       {
       if( j->cursor >= end ) break;
+      if( ( j->base + j->have ) / ASP_TICK == j->noff )          /* a tick not met before: where it starts, to come back to */
+        {
+        int64_t at = asp_tr_tell( j->r );
+        if( at >= 0 )
+          {
+          if( j->noff == j->capoff )
+            {
+            int64_t *o = realloc( j->offs, (size_t)( j->capoff ? 2 * j->capoff : 256 ) * sizeof *o );
+            if( ! o ) return -1;
+            j->offs = o; j->capoff = j->capoff ? 2 * j->capoff : 256;
+            }
+          j->offs[j->noff++] = at;
+          }
+        }
       int n = asp_tr_get( j->r, j->buf, ASP_TICK );
       if( n < 0 ) return -1;
       if( n == 0 ) return -1;                                  /* it ended before the frames its header counts */
@@ -182,6 +197,17 @@ int asp_job_step_to( AspJob *j, AspTank *t, int64_t budget, int64_t limit )
     }
   if( j->cursor < j->hi ) return 0;
   return asp_tr_errors( j->r ) ? -1 : 1;                       /* a damaged block is a failed move */
+  }
+
+/* go on from the start of tick k of the take, from the stacked offset, with no decoding of what lies before. 1 if the job has not
+   streamed that far yet (go on forward: it stacks as it goes), -1 if the tick is before the part it was asked for or after the end */
+int asp_job_goto( AspJob *j, int64_t k )
+  {
+  if( k < 0 || k * ASP_TICK < j->lo || k * ASP_TICK >= j->hi ) return -1;
+  if( k >= j->noff ) return 1;
+  if( asp_tr_seek( j->r, j->offs[k] ) ) return -1;
+  j->base = k * ASP_TICK; j->have = j->at = 0; j->cursor = k * ASP_TICK;
+  return 0;
   }
 
 int asp_job_step( AspJob *j, AspTank *t, int64_t budget ) { return asp_job_step_to( j, t, budget, -1 ); }

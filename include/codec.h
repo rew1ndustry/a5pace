@@ -36,6 +36,13 @@ AspDec *asp_dec_new( int channels, AspSource source, void *user );
 /* up to max frames of the current block into pcm; 0 at the end of the stream; -1 if the source or the stream failed.
    a block is handed out over as many calls as max needs. */
 int     asp_dec_get( AspDec *d, int32_t *pcm, unsigned max );
+/* where in the stream (bytes since the decoder was made, header included) the next block starts: asked between blocks, never
+   in the middle of one (-1 then, or if it cannot be told). the first ask reads the stream's own header, so the source must still
+   be where the decoder left it. a tick put whole is a block, so these are tick offsets. */
+int64_t asp_dec_tell( AspDec *d );
+/* the source has been moved to byte pos of the stream, a position asp_dec_tell gave: what the decoder held is forgotten and it
+   goes on from there, in any direction. 0 ok */
+int     asp_dec_moved( AspDec *d, int64_t pos );
 int     asp_dec_errors( const AspDec *d );                 /* damaged blocks met so far */
 void    asp_dec_free( AspDec *d );
 #endif

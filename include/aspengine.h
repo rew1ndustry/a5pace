@@ -36,6 +36,9 @@ int     asp_job_step( AspJob *j, AspTank *t, int64_t budget_frames );    /* 1 do
    lies over it, in turn. limit: how far along (in frames from the start of the take) it may go; asp_job_step has none. */
 int     asp_job_step_to( AspJob *j, AspTank *t, int64_t budget_frames, int64_t limit );
 int64_t asp_job_cursor( const AspJob *j );
+/* go on from the start of tick k (ASP_TICK frames) of the take: seeks to the offset stacked when the job first streamed it, so a
+   lap after the first costs no decoding of what lies before. 0 done; 1 not streamed that far yet; -1 out of its range */
+int     asp_job_goto( AspJob *j, int64_t k );
 int     asp_job_retarget( AspJob *j, AspPlace to );                     /* before it has started: 1 if it is now nothing to do */
 int64_t asp_job_span( const AspJob *j );                                /* frames it will touch, from pos0 */
 int64_t asp_job_pos0( const AspJob *j );

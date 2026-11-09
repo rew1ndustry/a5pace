@@ -41,6 +41,10 @@ AspTakeR *asp_tr_open( const char *path );                              /* NULL:
 const AspHdr *asp_tr_hdr( const AspTakeR *r );
 int  asp_tr_get( AspTakeR *r, int32_t *pcm, unsigned max );             /* frames as stored; 0 at the end; -1 failed */
 int  asp_tr_errors( const AspTakeR *r );
+/* the codec's offsets (codec.h) counted from the end of the file header: where the next tick starts, asked between ticks (-1 if it
+   cannot be told); and going there, backward or forward, to go on decoding from it. a tick put whole is one block. */
+int64_t asp_tr_tell( AspTakeR *r );
+int  asp_tr_seek( AspTakeR *r, int64_t pos );
 void asp_tr_close( AspTakeR *r );
 
 /* a take through a view: src -1 gives the channels as stored, src n gives channel n alone. cb gets blocks; non zero aborts.

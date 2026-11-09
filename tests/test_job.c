@@ -121,6 +121,32 @@ int main( void )
   memset( model, 0, sizeof model ); CHECK( same( t ) );
   }
 
+  /* the offsets a job stacks as it streams: coming back to a tick goes straight to it, forward or back */
+  {
+  AspPlace st = { 0, 0, 0 };
+  asp_tank_clear( t ); memset( model, 0, sizeof model );
+  AspJob *j = asp_job_take( s, a.id, 0, -1, OFF, -1, st, -1 );
+  CHECK( asp_job_step_to( j, t, INT64_MAX, 15000 ) == 0 );          /* ticks 0 and 1 begun (a tick is 9600 frames) */
+  CHECK( asp_job_goto( j, 3 ) == 1 );                                 /* not streamed that far: carry on forward */
+  CHECK( asp_job_goto( j, 4 ) == -1 && asp_job_goto( j, -1 ) == -1 ); /* beyond the 30000 frames */
+  CHECK( asp_job_goto( j, 1 ) == 0 && asp_job_cursor( j ) == 9600 );   /* back to the start of tick 1 */
+  int rc; while( ! ( rc = asp_job_step( j, t, 5000 ) ) ) {}
+  CHECK( rc == 1 );
+  mput( S, 15000, 2, 0, 1, st ); mput( S + 2 * 9600, 30000 - 9600, 2, 9600, 1, st );   /* frames 9600 .. 15000 went in twice */
+  CHECK( same( t ) );
+  CHECK( asp_job_goto( j, 3 ) == 0 && asp_job_cursor( j ) == 28800 );  /* all four are stacked now: forward, with no decoding of 0..2 */
+  while( ! ( rc = asp_job_step( j, t, 5000 ) ) ) {}
+  CHECK( rc == 1 );
+  mput( S + 2 * 28800, 30000 - 28800, 2, 28800, 1, st );
+  CHECK( same( t ) );
+  CHECK( asp_job_goto( j, 0 ) == 0 );                                  /* and the top again */
+  while( ! ( rc = asp_job_step( j, t, 5000 ) ) ) {}
+  mput( S, 30000, 2, 0, 1, st );
+  CHECK( rc == 1 && same( t ) );
+  asp_job_free( j );
+  asp_tank_clear( t ); memset( model, 0, sizeof model );
+  }
+
   /* what cannot be moved says so: a channel that is not there, a take that never ended, one cut short, one damaged */
   {
   AspPlace st = { 0, 0, 0 };
