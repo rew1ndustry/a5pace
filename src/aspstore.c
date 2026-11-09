@@ -189,9 +189,13 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
       run( s, "create table if not exists peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);"
               "update session set schema_version=3; pragma user_version=3;" ); }
   sqlite3_finalize( q );
-  if( ! s->readonly )          /* sessions made before the moves list get it here */
-    run( s, "create table if not exists moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL, from_l TEXT, from_r TEXT, to_l TEXT, to_r TEXT,"
+  if( ! s->readonly )          /* sessions made before the moves list get it here; the first, text-level shape (branch only, never filled) is replaced */
+    {
+    sqlite3_stmt *o;
+    if( ! sqlite3_prepare_v2( s->db, "select from_l from moves limit 0", -1, &o, NULL ) ) { sqlite3_finalize( o ); run( s, "drop table moves;" ); }
+    run( s, "create table if not exists moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL, from_p TEXT NOT NULL, to_p TEXT NOT NULL,"
             " immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL);" );
+    }
   if( ! s->readonly ) detect_crash( s );
   return s;
   }
@@ -296,13 +300,17 @@ int asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max )
   }
 
 /* moves in progress (see include/aspstore.h) */
-int64_t asp_move_add( AspStore *s, int64_t take, const char *fl, const char *fr, const char *tl, const char *tr, int immediate )
+static void place_text( const int *p, char *b, size_t n ) { snprintf( b, n, "%d %d %d %d %d %d", p[0], p[1], p[2], p[3], p[4], p[5] ); }
+static void place_read( const char *t, int *p )
+  { if( ! t || sscanf( t, "%d %d %d %d %d %d", p, p + 1, p + 2, p + 3, p + 4, p + 5 ) != 6 ) for( int i = 0; i < 6; i++ ) p[i] = 0; }
+int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int immediate )
   {
-  sqlite3_stmt *q; int64_t id = -1;
+  sqlite3_stmt *q; int64_t id = -1; char f[64], t[64];
   if( s->readonly || take <= 0 ) return -1;
-  if( sqlite3_prepare_v2( s->db, "insert into moves(take_id,from_l,from_r,to_l,to_r,immediate,pos,pass) values(?,?,?,?,?,?,-1,0)", -1, &q, NULL ) ) return -1;
-  sqlite3_bind_int64( q, 1, take ); sqlite3_bind_text( q, 2, fl, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 3, fr, -1, SQLITE_STATIC );
-  sqlite3_bind_text( q, 4, tl, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 5, tr, -1, SQLITE_STATIC ); sqlite3_bind_int( q, 6, immediate != 0 );
+  place_text( from, f, sizeof f ); place_text( to, t, sizeof t );
+  if( sqlite3_prepare_v2( s->db, "insert into moves(take_id,from_p,to_p,immediate,pos,pass) values(?,?,?,?,-1,0)", -1, &q, NULL ) ) return -1;
+  sqlite3_bind_int64( q, 1, take ); sqlite3_bind_text( q, 2, f, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 3, t, -1, SQLITE_STATIC );
+  sqlite3_bind_int( q, 4, immediate != 0 );
   if( sqlite3_step( q ) == SQLITE_DONE ) id = sqlite3_last_insert_rowid( s->db );
   sqlite3_finalize( q );
   return id;
@@ -327,14 +335,13 @@ int asp_move_done( AspStore *s, int64_t id )
 int asp_moves_list( AspStore *s, AspMove *out, int max )
   {
   sqlite3_stmt *q; int n = 0;
-  if( sqlite3_prepare_v2( s->db, "select id,take_id,from_l,from_r,to_l,to_r,immediate,pos,pass from moves order by id", -1, &q, NULL ) ) return 0;
+  if( sqlite3_prepare_v2( s->db, "select id,take_id,from_p,to_p,immediate,pos,pass from moves order by id", -1, &q, NULL ) ) return 0;
   while( n < max && sqlite3_step( q ) == SQLITE_ROW )
     {
     AspMove *m = &out[n++];
     m->id = sqlite3_column_int64( q, 0 ); m->take = sqlite3_column_int64( q, 1 );
-    for( int i = 0; i < 4; i++ )
-      { const char *c = (const char *)sqlite3_column_text( q, 2 + i ); snprintf( m->lev[i], sizeof m->lev[i], "%s", c ? c : "" ); }
-    m->immediate = sqlite3_column_int( q, 6 ); m->pos = sqlite3_column_int64( q, 7 ); m->pass = sqlite3_column_int64( q, 8 );
+    place_read( (const char *)sqlite3_column_text( q, 2 ), m->from ); place_read( (const char *)sqlite3_column_text( q, 3 ), m->to );
+    m->immediate = sqlite3_column_int( q, 4 ); m->pos = sqlite3_column_int64( q, 5 ); m->pass = sqlite3_column_int64( q, 6 );
     }
   sqlite3_finalize( q );
   return n;

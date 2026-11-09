@@ -113,12 +113,12 @@ int main( void )
   AspMove mv[4];
   s = asp_open( p, 0, e );
   CHECK( s && asp_moves_list( s, mv, 4 ) == 0 );
-  int64_t m1 = asp_move_add( s, 1, "0", "-", "1", "2", 0 ), m2 = asp_move_add( s, 2, "-", "-", "0", "0", 1 );
+  int64_t m1 = asp_move_add( s, 1, (int[]){ 0, 99, 0, 0, 0, 0 }, (int[]){ 1, 2, 1, -3, 2, 1 }, 0 ), m2 = asp_move_add( s, 2, (int[]){ 99, 99, 0, 0, 0, 0 }, (int[]){ 0, 0, 0, 0, 0, 0 }, 1 );
   CHECK( m1 > 0 && m2 > m1 && asp_move_progress( s, m1, 7, 3 ) == 0 && asp_move_progress( s, 999, 1, 1 ) != 0 );
   asp_close( s );
   s = asp_open( p, 0, e );
   CHECK( s && asp_moves_list( s, mv, 4 ) == 2 && mv[0].id == m1 && mv[0].take == 1 && mv[0].pos == 7 && mv[0].pass == 3
-         && ! strcmp( mv[0].lev[1], "-" ) && ! strcmp( mv[0].lev[3], "2" ) && mv[1].immediate == 1 && mv[1].pos == -1 );
+         && mv[0].from[1] == 99 && mv[0].to[1] == 2 && mv[0].to[3] == -3 && mv[0].to[4] == 2 && mv[0].to[5] == 1 && mv[1].immediate == 1 && mv[1].pos == -1 );
   CHECK( asp_move_done( s, m1 ) == 0 && asp_move_done( s, m2 ) == 0 && asp_moves_list( s, mv, 4 ) == 0 );
   asp_close( s );
   }
