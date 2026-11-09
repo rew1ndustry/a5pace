@@ -195,10 +195,10 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
     if( ! sqlite3_prepare_v2( s->db, "select 1 from moves limit 0", -1, &o, NULL ) )
       {
       sqlite3_finalize( o );
-      if( sqlite3_prepare_v2( s->db, "select osrc from moves limit 0", -1, &o, NULL ) ) run( s, "drop table moves;" ); else sqlite3_finalize( o );
+      if( sqlite3_prepare_v2( s->db, "select state from moves limit 0", -1, &o, NULL ) ) run( s, "drop table moves;" ); else sqlite3_finalize( o );
       }
     run( s, "create table if not exists moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL, from_p TEXT NOT NULL, to_p TEXT NOT NULL,"
-            " osrc INTEGER NOT NULL, nsrc INTEGER NOT NULL, immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL);" );
+            " osrc INTEGER NOT NULL, nsrc INTEGER NOT NULL, immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL, state TEXT NOT NULL);" );
     }
   if( ! s->readonly ) detect_crash( s );
   return s;
@@ -307,14 +307,14 @@ int asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max )
 static void place_text( const int *p, char *b, size_t n ) { snprintf( b, n, "%d %d %d %d %d %d", p[0], p[1], p[2], p[3], p[4], p[5] ); }
 static void place_read( const char *t, int *p )
   { if( ! t || sscanf( t, "%d %d %d %d %d %d", p, p + 1, p + 2, p + 3, p + 4, p + 5 ) != 6 ) for( int i = 0; i < 6; i++ ) p[i] = 0; }
-int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int osrc, int nsrc, int immediate )
+int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int osrc, int nsrc, int immediate, const char *state )
   {
   sqlite3_stmt *q; int64_t id = -1; char f[64], t[64];
   if( s->readonly || take <= 0 ) return -1;
   place_text( from, f, sizeof f ); place_text( to, t, sizeof t );
-  if( sqlite3_prepare_v2( s->db, "insert into moves(take_id,from_p,to_p,osrc,nsrc,immediate,pos,pass) values(?,?,?,?,?,?,-1,0)", -1, &q, NULL ) ) return -1;
+  if( sqlite3_prepare_v2( s->db, "insert into moves(take_id,from_p,to_p,osrc,nsrc,immediate,pos,pass,state) values(?,?,?,?,?,?,-1,0,?)", -1, &q, NULL ) ) return -1;
   sqlite3_bind_int64( q, 1, take ); sqlite3_bind_text( q, 2, f, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 3, t, -1, SQLITE_STATIC );
-  sqlite3_bind_int( q, 4, osrc ); sqlite3_bind_int( q, 5, nsrc ); sqlite3_bind_int( q, 6, immediate != 0 );
+  sqlite3_bind_int( q, 4, osrc ); sqlite3_bind_int( q, 5, nsrc ); sqlite3_bind_int( q, 6, immediate != 0 ); sqlite3_bind_text( q, 7, state ? state : "", -1, SQLITE_STATIC );
   if( sqlite3_step( q ) == SQLITE_DONE ) id = sqlite3_last_insert_rowid( s->db );
   sqlite3_finalize( q );
   return id;
@@ -339,7 +339,7 @@ int asp_move_done( AspStore *s, int64_t id )
 int asp_moves_list( AspStore *s, AspMove *out, int max )
   {
   sqlite3_stmt *q; int n = 0;
-  if( sqlite3_prepare_v2( s->db, "select id,take_id,from_p,to_p,osrc,nsrc,immediate,pos,pass from moves order by id", -1, &q, NULL ) ) return 0;
+  if( sqlite3_prepare_v2( s->db, "select id,take_id,from_p,to_p,osrc,nsrc,immediate,pos,pass,state from moves order by id", -1, &q, NULL ) ) return 0;
   while( n < max && sqlite3_step( q ) == SQLITE_ROW )
     {
     AspMove *m = &out[n++];
@@ -347,6 +347,7 @@ int asp_moves_list( AspStore *s, AspMove *out, int max )
     place_read( (const char *)sqlite3_column_text( q, 2 ), m->from ); place_read( (const char *)sqlite3_column_text( q, 3 ), m->to );
     m->osrc = sqlite3_column_int( q, 4 ); m->nsrc = sqlite3_column_int( q, 5 );
     m->immediate = sqlite3_column_int( q, 6 ); m->pos = sqlite3_column_int64( q, 7 ); m->pass = sqlite3_column_int64( q, 8 );
+    snprintf( m->state, sizeof m->state, "%s", (const char *)sqlite3_column_text( q, 9 ) );
     }
   sqlite3_finalize( q );
   return n;
@@ -516,6 +517,7 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   t.iter = iter; t.off = off; snprintf( t.artist, sizeof t.artist, "%s", s->artist_hex );
   t.frames = (int64_t)h.frames; t.rate = h.rate; t.channels = h.channels; t.bits = h.bits; snprintf( t.status, sizeof t.status, "%s", status );
   if( asp_take_path( s, &t, dst, sizeof dst ) ) return -1;
+  int nostate = state_json && ! state_json[0];                       /* "": none yet, a move will store it when it is done */
   if( ! state_json ) { snprintf( st, sizeof st, "{\"status\":\"%s\"}", status ); state_json = st; }
   if( s->keeper )
     {
@@ -524,7 +526,7 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
     t.id = s->next_id++;
     s->pend = realloc( s->pend, ( s->npend + 1 ) * sizeof *s->pend );
     s->pend[s->npend].t = t; snprintf( s->pend[s->npend].part, sizeof s->pend[0].part, "%s", part ); s->npend++;
-    asp_take_set_state( s, t.id, state_json, "aspace", tick );
+    if( ! nostate ) asp_take_set_state( s, t.id, state_json, "aspace", tick );
     { char a[1400]; const char *nm = strrchr( part, '/' );          /* what a recovery needs to find the take again if the row is never made */
       snprintf( a, sizeof a, "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"part\":\"%s\"}", (long long)t.id, (long long)iter, (long long)off, nm ? nm + 1 : part );
       asp_log( s, "aspace", "take_pending", a, tick ); }
@@ -535,7 +537,7 @@ int asp_take_adopt( AspStore *s, int64_t iter, int64_t off, const char *part, co
   snprintf( dir, sizeof dir, "%s", dst ); *strrchr( dir, '/' ) = 0;
   if( mkdir_p( dir ) || ! access( dst, F_OK ) || rename( part, dst ) ) return -1;
   asp_settle_now( dst );                                             /* safe on the disk before there is a row */
-  if( commit_take( s, &t, state_json, status, tick ) ) return -1;
+  if( commit_take( s, &t, nostate ? NULL : state_json, status, tick ) ) return -1;
   return asp_take_find( s, iter, off, out );
   }
 

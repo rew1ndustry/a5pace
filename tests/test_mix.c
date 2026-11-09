@@ -309,6 +309,21 @@ int main( void )
   { AspMove mv[16]; CHECK( asp_moves_list( r.s, mv, 16 ) == 0 ); }
   states( &r, &s ); CHECK( s.st[4].gsh == 3 );
   CHECK( matches( &r ) );
+  /* a kill with a move started: the store's list still holds it, the next open goes on from the last chip written, and the loop is whole */
+  {
+  AspMixCmd kl = { 1, -2, 0, 0, 0, 0 }; kl.now = 1;
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &kl ) == 1 );
+  AspMove mv[16]; int n = 0, i;
+  for( i = 0; i < 20 && ! n; i++ ) { sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); n = asp_moves_list( r.s, mv, 16 ); }
+  CHECK( n == 1 && mv[0].take == s.id[4] && mv[0].pos > 0 && asp_core_moves( r.c ) == 1 );       /* started, not finished */
+  asp_core_close( r.c );                                                     /* the kill: no drain */
+  { AspCoreCfg c2 = cfg; c2.declared_latency = LAT; char e[ASP_ERR]; r.c = asp_core_open( r.s, r.t, &c2, e, sizeof e ); r.sim.core = r.c; }
+  CHECK( r.c && asp_core_moves( r.c ) == 1 );                                 /* resumed */
+  for( i = 0; i < 100 && asp_core_moves( r.c ); i++ ) sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK );
+  CHECK( i < 100 && asp_moves_list( r.s, mv, 16 ) == 0 );
+  states( &r, &s ); CHECK( s.st[4].gsh == -2 );
+  CHECK( matches( &r ) );
+  }
   }
   rig_close( &r );
 

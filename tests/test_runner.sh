@@ -32,7 +32,7 @@ pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
 chk "no rebuild after a clean close" "! grep -q rebuilding $t/err2"
 $c QUIT > /dev/null; wait $pid || true
-# a crash leaves the loop dirty, and the next start rebuilds it from the store
+# a kill leaves the loop as it is (moves in progress are in the store's list, and go on at the next start): never a rebuild
 $here/bin/a5pace run --live -q -S 7001 --fast $d 2> /dev/null &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
@@ -40,7 +40,7 @@ sleep 0.3; kill -9 $pid; wait $pid 2>/dev/null || true; rm -f $d/ctl
 $here/bin/a5pace run --live -S 7001 --fast $d 2> $t/err3 &
 pid=$!
 n=0; while [ ! -f $d/ctl ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
-chk "a crash is noticed and the loop rebuilt" "grep -q rebuilding $t/err3"
+chk "a crash is not rebuilt" "! grep -q rebuilding $t/err3"
 $c QUIT > /dev/null; wait $pid || true
 # a declared latency starts playing at once, without the hunt
 $here/bin/a5pace run --live -q -S 7001 --fast --latency 4321 $d 2> /dev/null &

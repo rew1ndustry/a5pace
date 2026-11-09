@@ -154,7 +154,9 @@ static void load_cb( int64_t id, const char *json, void *u )
     }
   asp_parse_state( json, &st );
   if( asp_take_get( c->store, id, &k ) ) return;
-  LoopTake *t = lt_add( c );
+  LoopTake *t = NULL;
+  for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].id == id ) t = c->lt + i;     /* a take met again (a resumed move brings its state): replaced in place */
+  if( t ) memset( t, 0, sizeof *t ); else t = lt_add( c );
   t->id = id; t->iter = k.iter; t->off = k.off; t->len = st.len >= 0 ? st.len : k.frames;
   t->now = t->base = (AspPlace){ st.l, st.r, st.flip, st.gsh, st.pan, st.mixed };
   t->in = strcmp( st.status, "off" ) != 0; t->mono = st.mono; t->src = st.src; t->peak = st.peak; t->gen = strstr( json, "\"generated\"" ) != NULL;
@@ -175,6 +177,29 @@ void asp_core_defaults( AspCoreCfg *c )
   c->live = 1; c->feed = 1; c->mono_detect = 1; c->mono_lev = 0;
   }
 
+/* the moves a run left in the store's list (a kill): each goes on as if it were NOW, from the last chip written. a take that has no state
+   yet (a new one) takes the state the move brings, and one that has takes it too: the in-memory take is where the moves are going */
+static Move *mv_add( AspCore *c, AspJob *j, int64_t id, const char *st );
+static void resume_moves( AspCore *c )
+  {
+  enum { MAX = 1024 };
+  AspMove *mv = malloc( MAX * sizeof *mv );
+  int n = mv ? asp_moves_list( c->store, mv, MAX ) : 0;
+  Load ld = { c };
+  for( int i = 0; i < n; i++ )
+    {
+    AspMove *k = mv + i; AspPlace f, g;
+    memcpy( &f, k->from, sizeof f ); memcpy( &g, k->to, sizeof g );
+    if( k->state[0] ) load_cb( k->take, k->state, &ld );
+    AspJob *j = asp_job_take( c->store, k->take, k->pos > 0 ? k->pos : 0, -1, f, k->osrc, g, k->nsrc );
+    Move *m = mv_add( c, j, k->take, k->state );
+    if( ! m ) { asp_move_done( c->store, k->id ); continue; }
+    m->row = k->id; m->now = 1;
+    logf_( c, "move_resumed", "{\"take\":%lld,\"from_frame\":%lld}", (long long)k->take, (long long)( k->pos > 0 ? k->pos : 0 ) );
+    }
+  free( mv );
+  }
+
 AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *err, int errn )
   {
   AspCoreCfg d;
@@ -193,13 +218,9 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
   asp_gate_set_strict( c->gate, cfg->strict );
   c->sync = asp_sync_new( &cfg->sync );
   c->phase = 0;
-  if( ! asp_tank_legacy( t ) )
-    {
-    if( asp_tank_dirty( t ) ) logf_( c, "tank_dirty", "{}" );
-    asp_tank_set_dirty( t, 1 );
-    }
   Load ld = { c };
   asp_fold( s, -1, load_cb, &ld );
+  resume_moves( c );
   { /* the count only goes up, and only a take moves it. a run starts in the next empty iteration: the one after the newest take's
        (not counting the generated 90000 series), 1 for a space with none. the store says so, not the loop file's header (a cache:
        it is lost when the loop is rebuilt, and an old run could have left it wrong). during the run the count moves at the top of a
@@ -243,19 +264,20 @@ static void mv_row( AspCore *c, Move *m )
   m->row = 0;
   if( m->id <= 0 ) return;
   asp_job_places( m->job, &f, &g, &os, &ns );
-  int64_t r = asp_move_add( c->store, m->id, (const int *)&f, (const int *)&g, os, ns, m->now || c->drain );
+  int64_t r = asp_move_add( c->store, m->id, (const int *)&f, (const int *)&g, os, ns, m->now || c->drain, m->st );
   if( r > 0 ) m->row = r; else logf_( c, "error", "{\"what\":\"move not listed\"}" );
   }
 static void mv_gone( AspCore *c, Move *m ) { if( m->row ) asp_move_done( c->store, m->row ); m->row = 0; }
 
-static void mv_add( AspCore *c, AspJob *j, int64_t id, const char *st )
+static Move *mv_add( AspCore *c, AspJob *j, int64_t id, const char *st )
   {
-  if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return; }
+  if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return NULL; }
   if( c->nmv == c->capmv ) { c->capmv = c->capmv ? 2 * c->capmv : 16; c->mv = realloc( c->mv, c->capmv * sizeof *c->mv ); }
   Move *m = c->mv + c->nmv++;
   m->job = j; m->id = id; m->now = c->mix_now; m->row = 0;
   snprintf( m->st, sizeof m->st, "%s", st );
   m->s0 = asp_job_pos0( j ) % c->size; m->S = last_start( c, m->s0 );
+  return m;
   }
 
 static void mv_run( AspCore *c )
@@ -392,13 +414,13 @@ int64_t asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const cha
   lt.now = lt.base = (AspPlace){ ll, lr, 0, 0, 0, 0 };
   snprintf( lt.gtail, sizeof lt.gtail, ",\"generated\":\"%.8s\"%s%.20s%s", kind, click ? ",\"style\":\"" : "", click ? style : "", click ? "\"" : "" );
   state_json( &lt, in ? "mix" : "off", st, sizeof st );
-  if( asp_take_adopt( c->store, *iter, 0, path, in ? "mix" : "off", st, c->tick, &k ) ) return -1;
+  if( asp_take_adopt( c->store, *iter, 0, path, in ? "mix" : "off", "", c->tick, &k ) ) return -1;       /* no state until the move is done */
   if( asp_take_peak( c->store, k.id, -1, &lt.peak ) ) lt.peak = 0;
   lt.id = k.id;
   LoopTake *t = lt_add( c ); *t = lt;
   if( click ) logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
   else logf_( c, "take_imported", "{\"take\":%lld,\"iter\":%lld,\"len\":%lld,\"mono\":%d,\"in\":%d}", (long long)k.id, (long long)*iter, (long long)fr, ch == 1, in );
-  if( in && c->cfg.feed ) queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1, "" );
+  if( ! ( in && c->cfg.feed && queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1, st ) ) ) asp_take_set_state( c->store, k.id, st, "aspace", c->tick );
   return k.id;
   }
 
@@ -699,7 +721,7 @@ static void take_end_( AspCore *c, const int32_t *last )
   char st[300];
   state_json( &lt, lt.in ? "mix" : "off", st, sizeof st );
 
-  if( bad || asp_take_adopt( c->store, c->t_iter, c->t_off, c->part, lt.in ? "mix" : "off", st, c->tick, &tk ) )
+  if( bad || asp_take_adopt( c->store, c->t_iter, c->t_off, c->part, lt.in ? "mix" : "off", "", c->tick, &tk ) )
     {
     logf_( c, "error", "{\"what\":\"take not stored\",\"iter\":%lld,\"off\":%lld,\"part\":\"%s\"}",
            (long long)c->t_iter, (long long)c->t_off, c->part );
@@ -710,12 +732,17 @@ static void take_end_( AspCore *c, const int32_t *last )
   LoopTake *t = lt_add( c );
   *t = lt;
   t->ready_pass = c->pass + 1;
+  int held = 0;                                             /* a move holds the take's state until it is done */
   if( c->t_feed )                                           /* the live feed heard it one way; the loop is to hear it as decided */
     {
     int osrc = c->t_fix >= 0 ? c->t_fix : -1, nsrc = mono ? src : -1;
     if( osrc != nsrc || fin.l != live.l || fin.r != live.r || fin.flip != live.flip )
-      mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, osrc, fin, nsrc ), tk.id, "" );
+      {
+      Move *m = mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, osrc, fin, nsrc ), tk.id, st );
+      if( m ) { mv_row( c, m ); held = 1; }                  /* it is in the tank already (live), so it is listed now, not when it starts */
+      }
     }
+  if( ! held ) asp_take_set_state( c->store, tk.id, st, "aspace", c->tick );
   logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
          (long long)tk.id, (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames,
          level_db( h.peak[0] ), level_db( h.peak[1] ), (long long)h.clips[0], (long long)h.clips[1],
@@ -943,14 +970,24 @@ int64_t asp_core_revert( AspCore *c, int64_t seq )
   {
   if( c->live ) return -1;
   if( c->enc ) take_end( c, NULL );
-  for( int i = 0; i < c->nmv; i++ ) { mv_gone( c, c->mv + i ); asp_job_free( c->mv[i].job ); }
-  c->nmv = 0;
   int64_t r = asp_revert( c->store, seq, "aspace" );
   if( r < 0 ) return -1;
-  if( asp_rebuild( c->tank, c->store, -1 ) ) { logf_( c, "error", "{\"what\":\"rebuild after revert failed\"}" ); return -1; }
-  c->nlt = 0;
+  /* queued and running moves are left alone. the tank follows by moves, never by a rebuild: every take whose place differs between
+     what it is going to (in memory) and the reverted state gets a move from the one to the other, and a take that is not in the
+     reverted state goes out */
+  LoopTake *old = c->lt; int nold = c->nlt;
+  c->lt = NULL; c->nlt = c->caplt = 0;
   Load ld = { c };
   asp_fold( c->store, -1, load_cb, &ld );
+  for( int i = 0; i < nold; i++ )
+    {
+    const LoopTake *o = old + i; LoopTake *n = NULL; char st[300] = "";
+    for( int k = 0; k < c->nlt; k++ ) if( c->lt[k].id == o->id ) n = c->lt + k;
+    if( n ) state_json( n, n->in ? "mix" : "off", st, sizeof st );
+    AspPlace to = n ? n->now : o->now; int in = n ? n->in : 0;
+    if( ( o->in != in || ( in && ! asp_place_eq( o->now, to ) ) ) && c->cfg.feed ) queue_move( c, (LoopTake *)( n ? n : o ), o->now, to, o->in, in, st );
+    }
+  free( old );
   logf_( c, "reverted", "{\"to\":%lld,\"seq\":%lld,\"takes\":%d}", (long long)seq, (long long)r, c->nlt );
   return r;
   }
@@ -958,14 +995,12 @@ int64_t asp_core_revert( AspCore *c, int64_t seq )
 int asp_core_close( AspCore *c )
   {
   if( c->enc ) take_end( c, NULL );
-  for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );   /* the log says where they were going: a rebuild finishes them */
-  if( c->nmv ) logf_( c, "moves_dropped", "{\"n\":%d}", c->nmv );
+  for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );   /* the store's list of moves says where they were: the next open goes on */
+  if( c->nmv ) logf_( c, "moves_left", "{\"n\":%d}", c->nmv );
   if( ! asp_tank_legacy( c->tank ) )
     {
     asp_tank_set_head( c->tank, c->iter, c->peak );
     asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
-    /* the tank only matches the log if every move finished */
-    asp_tank_set_dirty( c->tank, c->nmv != 0 );
     }
   logf_( c, "core_close", "{}" );
   asp_gate_free( c->gate );
