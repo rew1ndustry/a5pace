@@ -585,7 +585,7 @@ static int cmd_run( int argc, char **argv )
   if( tankpath ) snprintf( tp, sizeof tp, "%s", tankpath ); else snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
   r.tank = frames ? asp_tank_open( tp, err, sizeof err ) : NULL;
   int rebuild = 0;
-  if( r.tank && ( asp_tank_dirty( r.tank ) || asp_tank_frames( r.tank ) != frames || asp_tank_legacy( r.tank ) ) ) { rebuild = 1; asp_tank_close( r.tank ); r.tank = NULL; }
+  if( r.tank && ( asp_tank_frames( r.tank ) != frames ) ) { rebuild = 1; asp_tank_close( r.tank ); r.tank = NULL; }
   if( ! r.tank )
     {
     if( ! frames ) { fprintf( stderr, "%s: no loop length in the session\n", dir ); return 1; }

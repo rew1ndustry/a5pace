@@ -98,24 +98,29 @@ int main( void )
   CHECK( asp_rebuild( t, s, q0 ) == 0 && same( t ) );                   /* before any state: empty */
 
   CHECK( asp_tank_set_head( t, 193, 12345 ) == 0 );
-  CHECK( asp_tank_bind( t, asp_session_id( s ) ) == 0 && asp_tank_set_seq( t, 77 ) == 0 && asp_tank_set_dirty( t, 1 ) == 0 );
+  CHECK( asp_tank_bind( t, asp_session_id( s ) ) == 0 && asp_tank_set_seq( t, 77 ) == 0 );
   asp_tank_close( t );
   t = asp_tank_open( p, e, sizeof e );
   CHECK( t && asp_tank_iter( t ) == 193 && asp_tank_peak( t ) == 12345 && asp_tank_frames( t ) == LOOP );
-  CHECK( t && ! asp_tank_legacy( t ) && asp_tank_seq( t ) == 77 && asp_tank_dirty( t ) && asp_tank_rate( t ) == 48000 );
+  CHECK( t && asp_tank_seq( t ) == 77 && asp_tank_rate( t ) == 48000 );
   CHECK( t && asp_tank_bound( t, asp_session_id( s ) ) && ! asp_tank_bound( t, "0000000000000000000000000000000000000000000000000000000000000001" ) );
   CHECK( t && same( t ) );                                   /* the data is untouched by header writes */
-  asp_tank_set_dirty( t, 0 );
-  { /* an asp4 file opens as legacy with the same data layout */
-    char lp[300]; snprintf( lp, sizeof lp, "%s/old.d64", dir );
-    FILE *o = fopen( lp, "wb" ); unsigned char h[16] = { 193 }; fwrite( h, 1, 16, o );
-    for( int i = 0; i < 100; i++ ) { unsigned char fr[16] = { (unsigned char)i, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }; fwrite( fr, 1, 16, o ); }
-    fclose( o );
-    AspTank *l = asp_tank_open( lp, e, sizeof e ); int64_t m[8];
-    CHECK( l && asp_tank_legacy( l ) && asp_tank_frames( l ) == 100 && asp_tank_iter( l ) == 193 );
-    CHECK( l && asp_tank_get( l, 3, 2, m ) == 0 && m[0] == 3 && m[1] == -1 && m[2] == 4 );
-    CHECK( l && asp_tank_set_seq( l, 1 ) != 0 );
-    asp_tank_close( l );
+  { /* the stream: a chip written whole reads back whole, with its own header and crc; a put marks it stale */
+    AspChipHead h, g; uint32_t last = asp_tank_chips( t ) - 1; int nf = asp_tank_chip_frames( t, last );
+    static int64_t m[2 * ASP_TICK], r[2 * ASP_TICK];
+    CHECK( asp_tank_chips( t ) >= 1 && nf > 0 && nf <= ASP_TICK );
+    for( int i = 0; i < 2 * nf; i++ ) m[i] = (int64_t)i * 1000003 - 77;
+    memset( &h, 0, sizeof h ); h.f.iter = 5; h.f.pass = 9; h.f.seq = 3; h.f.peak = 4; h.f.out_shift = 2;
+    CHECK( asp_tank_chip_write( t, last, &h, m ) == 0 );
+    CHECK( asp_tank_chip_read( t, last, &g, r ) == 0 && ! memcmp( m, r, sizeof( int64_t ) * 2 * nf ) );
+    CHECK( g.f.iter == 5 && g.f.pass == 9 && g.f.out_shift == 2 && g.f.index == last && g.f.frames == (uint32_t)nf && g.f.rate == 48000 );
+    CHECK( ! ( g.f.flags & ASP_CHIP_FSTALE ) );
+    { int64_t one[2] = { 1, 2 }, back[2];
+      CHECK( asp_tank_put( t, asp_tank_frames( t ) - 1, 1, one ) == 0 && asp_tank_get( t, asp_tank_frames( t ) - 1, 1, back ) == 0 && back[0] == 1 );
+      CHECK( asp_tank_chip_read( t, last, &g, r ) == 0 && ( g.f.flags & ASP_CHIP_FSTALE ) && r[2 * nf - 2] == 1 ); }
+    CHECK( asp_tank_chip_write( t, last, &h, r ) == 0 && asp_tank_chip_read( t, last, &g, m ) == 0 && ! ( g.f.flags & ASP_CHIP_FSTALE ) );
+    CHECK( asp_tank_chip_read( t, asp_tank_chips( t ), &g, m ) == -1 );
+    { FILE *o = fopen( "/nonexistent/x", "rb" ); CHECK( ! o ); }
   }
   asp_tank_close( t ); asp_close( s ); free( A ); free( B );
   snprintf( cmd, sizeof cmd, "rm -rf %s", dir ); if( system( cmd ) ) {}

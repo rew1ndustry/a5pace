@@ -1,18 +1,11 @@
-/* asptank: the loop. a .d64 file is a 128 byte header then N frames of two s64 (L then R),
-   all little endian:
-     0   "ASP5TANK"          magic
-     8   u32 version (1)    12  u32 header size (128)
-     16  u64 frames         24  u32 rate   28 u32 channels (2)
-     32  u64 iteration      40  u64 peak (peak to peak monitor)
-     48  u64 log seq        the log point this loop reflects
-     56  u32 flags (1 = open/dirty)   60 u32 reserved
-     64  32 bytes           session id (sha-256, binary); zero if not bound
-     96  32 bytes           reserved, zero
-   an asp4 file (u64 iteration, u64 peak, then frames) is opened as legacy, header 16.
+/* asptank: the loop. a .d64 file is chips back to back, one per tick (see aspchip.h for the 128 byte chip header:
+   magic, iteration, pass, seq, peak, output gain, session, crcs). each chip is ASP_TICK frames of two s64 (L then R),
+   all little endian; the last chip has what is left. there is no file header: every chip is complete in itself.
    the tank is a derived cache: asp_rebuild (aspengine.h) regenerates it from the store. */
 #ifndef ASPTANK_H
 #define ASPTANK_H
 #include <stdint.h>
+#include "aspchip.h"
 
 #define ASP_TICK   9600           /* frames in a tick: 1/5 s at 48 kHz */
 #define ASP_LEV_OFF 99            /* the channel is not in the loop */
@@ -27,14 +20,19 @@ int64_t  asp_tank_frames( AspTank *t );
 uint64_t asp_tank_iter( AspTank *t );
 uint64_t asp_tank_peak( AspTank *t );
 int      asp_tank_set_head( AspTank *t, uint64_t iter, uint64_t peak );
-int      asp_tank_legacy( AspTank *t );                      /* asp4 header: no seq, flags or session */
 int      asp_tank_rate( AspTank *t );
 uint64_t asp_tank_seq( AspTank *t );
 int      asp_tank_set_seq( AspTank *t, uint64_t seq );
 int      asp_tank_bind( AspTank *t, const char *session_hex );      /* 64 hex chars */
 int      asp_tank_bound( AspTank *t, const char *session_hex );     /* 1 if bound to it (or unbound) */
-int      asp_tank_dirty( AspTank *t );                       /* was not closed cleanly */
-int      asp_tank_set_dirty( AspTank *t, int dirty );
+uint32_t asp_tank_chips( AspTank *t );
+int      asp_tank_chip_frames( AspTank *t, uint32_t k );
+
+/* the stream: chip k read or written whole, by handles of their own, so the tick reads chip k+1 and writes chip k with
+   no seek (but the wrap from the last chip to the first). read: 0 good, -1 io, -2 bad header, -3 frames fail their crc.
+   write: the caller sets iter, pass, seq, peak, out_shift, flags in h; the rest is filled in. mix has 2 * frames int64. */
+int  asp_tank_chip_read( AspTank *t, uint32_t k, AspChipHead *h, int64_t *mix );
+int  asp_tank_chip_write( AspTank *t, uint32_t k, const AspChipHead *h, const int64_t *mix );
 
 /* n frames at pos, wrapping round the loop. mix has 2n int64 */
 int  asp_tank_get( AspTank *t, int64_t pos, int64_t n, int64_t *mix );

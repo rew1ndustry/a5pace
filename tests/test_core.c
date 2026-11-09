@@ -171,7 +171,6 @@ int main( void )
   CHECK( st.phase == 1 && st.latency == LAT && st.origin > origin && count( sd, "sync_found" ) == 2 );
 
   asp_core_close( c );
-  CHECK( ! asp_tank_dirty( t ) );
   asp_tank_close( t ); asp_close( s );
   free( outs );
   snprintf( cmd, sizeof cmd, "rm -rf %s", dir ); if( system( cmd ) ) {}

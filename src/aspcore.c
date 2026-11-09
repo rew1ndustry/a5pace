@@ -997,11 +997,8 @@ int asp_core_close( AspCore *c )
   if( c->enc ) take_end( c, NULL );
   for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );   /* the store's list of moves says where they were: the next open goes on */
   if( c->nmv ) logf_( c, "moves_left", "{\"n\":%d}", c->nmv );
-  if( ! asp_tank_legacy( c->tank ) )
-    {
-    asp_tank_set_head( c->tank, c->iter, c->peak );
-    asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
-    }
+  asp_tank_set_head( c->tank, c->iter, c->peak );
+  asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
   logf_( c, "core_close", "{}" );
   asp_gate_free( c->gate );
   asp_sync_free( c->sync );

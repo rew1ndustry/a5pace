@@ -31,6 +31,7 @@
 #define ASP_CHIP_HEAD    128
 #define ASP_CHIP_VERSION 1
 #define ASP_CHIP_FCLIP   1u
+#define ASP_CHIP_FSTALE  2u      /* the frames were changed by a random put; their dcrc is not current until the next stream write */
 
 typedef union
   {
