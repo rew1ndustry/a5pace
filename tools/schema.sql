@@ -19,6 +19,6 @@ CREATE TABLE notes(id INTEGER PRIMARY KEY, take_id INTEGER, seq INTEGER,
 CREATE TABLE peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);  -- a level byte a tick, see asppeaks.h
 CREATE TABLE moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL,
   from_p TEXT NOT NULL, to_p TEXT NOT NULL, osrc INTEGER NOT NULL, nsrc INTEGER NOT NULL,   -- placements as text "l r flip gsh pan mixed" (AspPlace); l/r 99 = out
-  immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL,  -- pos/pass: last chip written, pos -1 = none; empty when drained
+  immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL,  -- pos = first chip it visited (-1 = none yet), pass = how many chips from there are written; empty when drained
   state TEXT NOT NULL);            -- the take's state json once the move is done (stored then, not before; a new take has none until then)
 CREATE TABLE peers(id TEXT PRIMARY KEY, addr TEXT, last_seen REAL);

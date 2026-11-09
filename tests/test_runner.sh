@@ -15,6 +15,7 @@ chk "synced to the simulated latency" "$c STATE | grep -q '\"latency\":7001'"
 wait_for "$c STATE | grep -q '\"gate_learnt\":1'"
 $c SIM BURST 1 0.1 5 > /dev/null
 wait_for "$c STATE | grep -q '\"loop_takes\":1'"
+wait_for "$c TAKES | grep -q 'ch 1 .*\"mono\":1'"        # its state is stored when its move is done: a lap on
 chk "a take was recorded, from one channel, as mono" "$c TAKES | grep -q 'ch 1 .*\"mono\":1'"
 $c SAFE > /dev/null
 chk "safe shows" "$c LINE | grep -q SAFE"

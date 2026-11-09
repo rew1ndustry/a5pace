@@ -80,7 +80,7 @@ int  asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max );
 
 /* moves in progress: an additive job on a looping tape (tank += to - from; to off = take out, from off = put in). One row from the
    moment it is accepted until it is drained, so the table is empty after a clean close and after a kill is what to resume. A placement
-   is six ints in the order of AspPlace: l, r, flip, gsh, pan, mixed; osrc/nsrc: which channel of a take stored with more each side hears, or -1 for all. pos/pass = the last chip written (-1 = none yet).
+   is six ints in the order of AspPlace: l, r, flip, gsh, pan, mixed; osrc/nsrc: which channel of a take stored with more each side hears, or -1 for all. pos = the first chip the move visited (-1 = none yet), pass = how many chips from there are written to the tank.
    add returns the id, or -1. */
 typedef struct { int64_t id, take, pos, pass; int immediate, osrc, nsrc; int from[6], to[6]; char state[300]; } AspMove;
 /* state: the take's state json after the move; the core stores it when the move is done, and a resumed move brings it back */

@@ -98,6 +98,8 @@ int      asp_core_pending( const AspCore *c, int64_t id );
    asp_core_tick until asp_core_moves is 0, then close */
 void     asp_core_drain( AspCore *c );
 int      asp_core_moves( const AspCore *c );                       /* moves still queued */
+/* the tank file whole: what the window holds of the loop goes to it (the window is read again on the next tick). for tests and tools that read the tank while the core runs; the core itself never needs it */
+void     asp_core_flush( AspCore *c );
 /* generated tracks for a space that is running (a5click, a5import). part is the file name under tmp/; kind "click" (the
    loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */
 int64_t  asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in );

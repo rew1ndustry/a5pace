@@ -39,10 +39,16 @@ static void rig_open( Rig *r, const AspCoreCfg *cfg, int seconds )
   sim_sync( &r->sim );
   }
 
+/* a move takes a lap to begin (it waits for the head to reach the take) and a chip a tick to run: let them finish, as the quit does */
+static void settle( Rig *r ) { for( int i = 0; i < 400 && asp_core_moves( r->c ); i++ ) sim_until( &r->sim, ( r->sim.tickn + 1 ) * ASP_TICK ); }
+static int holding;                                               /* a test that looks at moves half way */
+
 /* the live loop against one rebuilt from the log */
 static int matches( Rig *r )
   {
   char rp[300], e[ASP_ERR]; snprintf( rp, sizeof rp, "%s/rebuilt.d64", r->dir );
+  if( ! holding ) settle( r );
+  asp_core_flush( r->c );
   AspTank *b = asp_tank_create( rp, LOOP, 48000, e, sizeof e );
   if( asp_rebuild( b, r->s, -1 ) ) return 0;
   static int64_t x[2 * 5000], y[2 * 5000]; int ok = 1;
@@ -57,11 +63,11 @@ static int matches( Rig *r )
   }
 
 static void rig_close( Rig *r )
-  { char cmd[200]; asp_core_close( r->c ); asp_tank_close( r->t ); asp_close( r->s ); free( r->sim.outs ); snprintf( cmd, sizeof cmd, "rm -rf %s", r->dir ); if( system( cmd ) ) {} }
+  { char cmd[200]; asp_core_close( r->c ); asp_tank_close( r->t ); asp_close( r->s ); free( r->sim.outs ); snprintf( cmd, sizeof cmd, "rm -rf %s", r->dir ); if( ! getenv( "KEEP" ) && system( cmd ) ) {} }
 
 typedef struct { int n; AspTakeState st[32]; int64_t id[32]; } States;
 static void grab( int64_t id, const char *j, void *u ) { States *s = u; if( s->n < 32 ) { asp_parse_state( j, &s->st[s->n] ); s->id[s->n++] = id; } }
-static void states( Rig *r, States *s ) { s->n = 0; asp_fold( r->s, -1, grab, s ); }
+static void states( Rig *r, States *s ) { if( ! holding ) settle( r ); s->n = 0; asp_fold( r->s, -1, grab, s ); }
 
 int main( void )
   {
@@ -237,6 +243,7 @@ int main( void )
     sim_step( &r.sim ); asp_core_status( r.c, &st );
     head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;
     } while( ( head - st0 + LOOP ) % LOOP < len / 3 || ( head - st0 + LOOP ) % LOOP > len / 2 );
+  asp_core_flush( r.c );
   CHECK( asp_tank_get( r.t, 0, LOOP, snap ) == 0 );
   AspMixCmd m = { 1, -12, 0, 0, 0, 0 };
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
@@ -246,6 +253,7 @@ int main( void )
     sim_step( &r.sim ); asp_core_status( r.c, &st );
     head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;      /* the first position not yet played */
     int64_t ho = ( head - st0 + LOOP ) % LOOP;
+    asp_core_flush( r.c );
     CHECK( asp_tank_get( r.t, 0, LOOP, now ) == 0 );
     if( ho < len )
       {
@@ -314,8 +322,8 @@ int main( void )
   AspMixCmd kl = { 1, -2, 0, 0, 0, 0 }; kl.now = 1;
   CHECK( asp_core_mix( r.c, k4.iter, k4.off, &kl ) == 1 );
   AspMove mv[16]; int n = 0, i;
-  for( i = 0; i < 20 && ! n; i++ ) { sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); n = asp_moves_list( r.s, mv, 16 ); }
-  CHECK( n == 1 && mv[0].take == s.id[4] && mv[0].pos > 0 && asp_core_moves( r.c ) == 1 );       /* started, not finished */
+  for( i = 0; i < 20 && ! ( n && mv[0].pos >= 0 ); i++ ) { sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); n = asp_moves_list( r.s, mv, 16 ); }   /* until a chip of it is written */
+  CHECK( n == 1 && mv[0].take == s.id[4] && mv[0].pos >= 0 && asp_core_moves( r.c ) == 1 );       /* started, not finished */
   asp_core_close( r.c );                                                     /* the kill: no drain */
   { AspCoreCfg c2 = cfg; c2.declared_latency = LAT; char e[ASP_ERR]; r.c = asp_core_open( r.s, r.t, &c2, e, sizeof e ); r.sim.core = r.c; }
   CHECK( r.c && asp_core_moves( r.c ) == 1 );                                 /* resumed */

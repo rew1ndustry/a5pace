@@ -25,7 +25,15 @@ typedef struct
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
-typedef struct { AspJob *job; int64_t id, s0, S, row; int now; char st[300]; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
+/* a move is done to the chips one at a time as the record head enters them (see the window below). started: its first chip has been
+   visited (it is then listed in the store); k0: that chip; nk: the chip it visits next (it keeps to the head's order, so a resume can
+   replay it); n visits made in memory, nw of them written to the tank (vfirst: the loop chip number, unrolled, of the first not yet
+   written); fin: no visit left; bad: it failed; fc: the chip a normal move begins on */
+typedef struct { AspJob *job; int64_t id, row; int now; char st[300];
+                 int started, fin, bad; int64_t fc, k0, nk, n, nw, vfirst; } Move;
+
+/* a chip in the window: the tank's chip a (a = lap * chips + k, counted from the tick the loop began) in memory */
+typedef struct { AspChipHead h; int64_t a; int64_t mix[2 * ASP_TICK]; } WChip;
 
 struct AspCore
   {
@@ -68,9 +76,14 @@ struct AspCore
 
   /* level moves, run in order, a slice a tick */
   Move *mv; int nmv, capmv;
+  /* the window: chips from the one just behind the record head to the last the next output tick touches; one read at the front and
+     one write at the back a tick. all jobs and the live feed edit the chips here, in memory */
+  WChip *win; int wcap, win_on, win_err;
+  int64_t chips, wa0, wa1, w_enter, w_P;       /* chips in the loop; held: [wa0, wa1); next chip the record head has not entered; this tick's record start (frames from the loop's start) */
   int      drain;                   /* closing: every move runs as if it were NOW, until none is left */
   };
 
+static int win_fits( const AspCore *c, int64_t latency );
 static void logf_( AspCore *c, const char *type, const char *form, ... )
   {
   char buf[600];
@@ -191,11 +204,16 @@ static void resume_moves( AspCore *c )
     AspMove *k = mv + i; AspPlace f, g;
     memcpy( &f, k->from, sizeof f ); memcpy( &g, k->to, sizeof g );
     if( k->state[0] ) load_cb( k->take, k->state, &ld );
-    AspJob *j = asp_job_take( c->store, k->take, k->pos > 0 ? k->pos : 0, -1, f, k->osrc, g, k->nsrc );
+    AspJob *j = asp_job_take( c->store, k->take, 0, -1, f, k->osrc, g, k->nsrc );
     Move *m = mv_add( c, j, k->take, k->state );
     if( ! m ) { asp_move_done( c->store, k->id ); continue; }
     m->row = k->id; m->now = 1;
-    logf_( c, "move_resumed", "{\"take\":%lld,\"from_frame\":%lld}", (long long)k->take, (long long)( k->pos > 0 ? k->pos : 0 ) );
+    if( k->pos >= 0 )                                    /* it had begun: pos is the first chip it visited, pass how many chips of it were written */
+      {
+      asp_job_replay( j, c->size, (uint32_t)k->pos, k->pass );
+      m->started = 1; m->k0 = k->pos; m->n = m->nw = k->pass; m->nk = ( k->pos + k->pass ) % c->chips;
+      }
+    logf_( c, "move_resumed", "{\"take\":%lld,\"first_chip\":%lld,\"chips_done\":%lld}", (long long)k->take, (long long)k->pos, (long long)( k->pos >= 0 ? k->pass : 0 ) );
     }
   free( mv );
   }
@@ -209,7 +227,7 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
   if( asp_tank_frames( t ) < 4 * ASP_TICK )
     { if( err ) snprintf( err, errn, "the loop is too short" ); return NULL; }
   AspCore *c = calloc( 1, sizeof *c );
-  c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t );
+  c->store = s; c->tank = t; c->cfg = *cfg; c->size = asp_tank_frames( t ); c->chips = asp_tank_chips( t );
   c->live = cfg->live; c->iter = asp_tank_iter( t ); c->peak = asp_tank_peak( t ); c->newt = 0;
   c->gate = asp_gate_new( gate_say, c );
   asp_gate_set( c->gate, cfg->gate_db, cfg->ring_db );
@@ -229,9 +247,9 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
     for( int i = 0; i < c->nlt; i++ ) if( c->lt[i].iter < 90000 && c->lt[i].iter > top ) top = c->lt[i].iter;
     c->iter = (uint64_t)top + 1; c->newt = 0;
   }
-  asp_tank_set_head( c->tank, c->iter, c->peak );
   if( cfg->declared_latency > 0 )                       /* declared, not measured: play from the first tick */
     {
+    if( ! win_fits( c, cfg->declared_latency ) ) { if( err ) snprintf( err, errn, "the loop is too short for the declared latency" ); free( c ); return NULL; }
     c->latency = cfg->declared_latency; c->origin = 0; c->hush = c->latency / ASP_TICK + 5; c->phase = 1;
     logf_( c, "sync_declared", "{\"frames\":%lld}", (long long)c->latency );
     }
@@ -241,23 +259,170 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
   return c;
   }
 
-/* --- level moves --- */
+/* --- level moves and the window --- */
 
-/* the first position of the loop the head has not yet read, counted on from the start (the head laps the loop) */
-static int64_t unread( const AspCore *c ) { return (int64_t)c->pass * c->size + c->outpos + ASP_TICK; }
+/* the chip model (nut, firm; see CLAUDE.md "Moves rule"). The tank is chips of one tick. The core keeps a window of them in memory: the
+   front one read ahead, the back one under (or just behind) the record head, which is `latency` behind the playback head. Each tick
+   reads one chip at the front and writes one at the back, on separate forward-only handles: no seeks but each handle's own wrap, no
+   other tank access. Every job and the live feed of the open take edit the chips here. A move adds to a chip as the record head
+   enters it, in any order among moves, so the sum is right in the end; what it adds is heard on the next lap. A chip is written
+   once the record head is a tick past its end (a pre-roll can still reach back into it). A kill loses the edits in chips not yet
+   written: the store's list of moves says how many chips each had written, and a resume redoes the rest.
+   Frames are counted from the tick the loop began (rel * ASP_TICK); a chip is lap * chips + k, so a lap is a run of chips and
+   the window never mistakes one lap for the next (the loop must be longer than the window). */
 
-/* a take is only changed behind the head. the change starts once the head has played the start of the take, and
-   follows it along, a position being touched only after the head has gone past it; so whatever the head is playing
-   is whole, and the next time it comes round it plays the new. S is the last time the head passed the take's start */
-static int64_t last_start( const AspCore *c, int64_t s0 )
+static int64_t fdiv_( int64_t a, int64_t b ) { int64_t q = a / b; return a % b < 0 ? q - 1 : q; }
+static int64_t fmod_( int64_t a, int64_t b ) { int64_t r = a % b; return r < 0 ? r + b : r; }
+static int chip_frames( const AspCore *c, int64_t k ) { return k == c->chips - 1 ? (int)( c->size - k * ASP_TICK ) : ASP_TICK; }
+static int64_t chip_of( const AspCore *c, int64_t F ) { int64_t lap = fdiv_( F, c->size ); return lap * c->chips + ( F - lap * c->size ) / ASP_TICK; }
+static int64_t chip_start( const AspCore *c, int64_t a ) { int64_t lap = fdiv_( a, c->chips ); return lap * c->size + ( a - lap * c->chips ) * ASP_TICK; }
+static int64_t chip_end( const AspCore *c, int64_t a ) { return chip_start( c, a ) + chip_frames( c, fmod_( a, c->chips ) ); }
+
+/* the loop must be longer than the window, or a chip would be held twice */
+static int win_fits( const AspCore *c, int64_t latency ) { return c->size >= latency + 4 * ASP_TICK; }
+
+static WChip *win_get( AspCore *c, int64_t a )
   {
-  int64_t u = unread( c ), back = ( ( u - s0 ) % c->size + c->size ) % c->size;
-  return u - back;
+  if( ! c->win_on || a < c->wa0 || a >= c->wa1 ) return NULL;
+  WChip *w = c->win + fmod_( a, c->wcap );
+  return w->a == a ? w : NULL;
   }
 
-/* the move in the store's list of moves in progress (a take the store does not hold, id < 0, is not listed). a move is listed when it
-   starts, not when it is queued (a pending move is forgotten after a kill); gone from the list once done. st is the take's state
-   after the move: the store keeps the state from before the move began, and takes this one only when the move completes */
+/* the frames at F (counted from the loop's start) in the window: the mix there and how many frames of that chip are left, or NULL */
+static int64_t *win_at( AspCore *c, int64_t F, int64_t *room, WChip **wc )
+  {
+  int64_t a = chip_of( c, F ); WChip *w = win_get( c, a );
+  if( ! w ) return NULL;
+  int64_t off = F - chip_start( c, a );
+  if( room ) *room = chip_frames( c, fmod_( a, c->chips ) ) - off;
+  if( wc ) *wc = w;
+  return w->mix + 2 * off;
+  }
+
+static void mv_row( AspCore *c, Move *m );
+static void mv_gone( AspCore *c, Move *m );
+
+static void mv_finish( AspCore *c, int i )
+  {
+  Move *m = c->mv + i;
+  if( ! m->bad && m->id > 0 && m->st[0] ) asp_take_set_state( c->store, m->id, m->st, "aspace", c->tick );   /* done: the take is now what the move made it */
+  mv_gone( c, m );
+  asp_job_free( m->job );
+  memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv );
+  }
+
+/* chip a has gone to the tank: the moves that visited it have it written */
+static void win_wrote( AspCore *c, int64_t a )
+  {
+  for( int i = c->nmv - 1; i >= 0; i-- )
+    {
+    Move *m = c->mv + i;
+    if( ! m->started || m->nw >= m->n || m->vfirst != a ) continue;
+    m->nw++; m->vfirst++;
+    if( m->row ) asp_move_progress( c->store, m->row, m->k0, m->nw );
+    if( m->fin && m->nw == m->n ) mv_finish( c, i );
+    }
+  }
+
+static void win_read( AspCore *c, int64_t a )
+  {
+  WChip *w = c->win + fmod_( a, c->wcap );
+  int rc = asp_tank_chip_read( c->tank, (uint32_t)fmod_( a, c->chips ), &w->h, w->mix );
+  if( rc )                                                       /* a chip that will not read is silence (a5rebuild is for a corrupt loop) */
+    {
+    if( ! c->win_err ) { c->win_err = 1; logf_( c, "error", "{\"what\":\"chip not read\",\"chip\":%lld,\"rc\":%d}", (long long)fmod_( a, c->chips ), rc ); }
+    memset( &w->h, 0, sizeof w->h ); memset( w->mix, 0, sizeof w->mix );
+    }
+  w->a = a;
+  }
+
+static void win_write( AspCore *c, int64_t a )
+  {
+  WChip *w = win_get( c, a );
+  if( ! w ) return;
+  AspChipHead h = w->h;
+  h.f.pass = (uint64_t)fdiv_( a, c->chips ); h.f.seq = (uint64_t)asp_log_last( c->store ); h.f.peak = c->peak;
+  if( asp_tank_chip_write( c->tank, (uint32_t)fmod_( a, c->chips ), &h, w->mix ) )
+    logf_( c, "error", "{\"what\":\"chip not written\",\"chip\":%lld}", (long long)fmod_( a, c->chips ) );
+  win_wrote( c, a );
+  }
+
+/* the window is empty: it starts at the chip just behind the record head */
+static void win_build( AspCore *c, int64_t P )
+  {
+  int cap = (int)( c->latency / ASP_TICK ) + 8;
+  if( cap != c->wcap ) { free( c->win ); c->win = calloc( (size_t)cap, sizeof *c->win ); c->wcap = cap; }
+  for( int i = 0; i < c->wcap; i++ ) c->win[i].a = INT64_MIN;
+  c->wa0 = c->wa1 = chip_of( c, P - ASP_TICK );
+  c->w_enter = chip_of( c, P );
+  c->win_on = 1; c->win_err = 0;
+  }
+
+/* at the start of a tick (record start P): the chips the record head has left go to the tank, and the front is read up to the last
+   chip the next output tick touches */
+static void win_advance( AspCore *c, int64_t P )
+  {
+  if( ! c->win_on ) win_build( c, P );
+  while( c->wa0 < c->wa1 && chip_end( c, c->wa0 ) <= P - ASP_TICK ) { win_write( c, c->wa0 ); c->wa0++; }
+  int64_t af = chip_of( c, P + c->latency + ASP_TICK - 1 );
+  while( c->wa1 <= af ) win_read( c, c->wa1++ );
+  c->w_P = P;
+  }
+
+/* resync, an edge drop or close: what the record head has entered goes to the tank, and the window is empty */
+static void win_flush( AspCore *c )
+  {
+  if( ! c->win_on ) return;
+  for( int64_t a = c->wa0; a < c->wa1 && a < c->w_enter; a++ ) win_write( c, a );
+  c->win_on = 0;
+  }
+
+/* the live feed of the open take: levels added at loop position p (counted on, it may pass the end of the loop) */
+static void win_level( AspCore *c, int64_t p, const int32_t *pcm, int64_t n, int ol, int orr, int nl, int nr )
+  {
+  int64_t d = fmod_( p - c->w_P, c->size );
+  if( d >= c->size - ASP_TICK ) d -= c->size;                  /* at most a tick behind the record head (a pre-roll), or ahead */
+  int64_t F = c->w_P + d;
+  while( n > 0 )
+    {
+    int64_t room; int64_t *m = win_at( c, F, &room, NULL );
+    if( ! m ) { logf_( c, "error", "{\"what\":\"feed outside the window\",\"at\":%lld}", (long long)F ); return; }
+    int64_t k = n < room ? n : room;
+    asp_mix_level( pcm, k, m, ol, orr, nl, nr );
+    pcm += 2 * k; F += k; n -= k;
+    }
+  }
+
+/* the next output tick (frames from P + latency) out of the window; silence where it is not held */
+static void win_play( AspCore *c, int64_t P, int64_t *mix )
+  {
+  int64_t F = P + c->latency;
+  memset( mix, 0, sizeof( int64_t ) * 2 * ASP_TICK );
+  for( int64_t i = 0; i < ASP_TICK; )
+    {
+    int64_t room; int64_t *m = win_at( c, F + i, &room, NULL );
+    if( ! m ) break;
+    int64_t k = ASP_TICK - i < room ? ASP_TICK - i : room;
+    memcpy( mix + 2 * i, m, sizeof( int64_t ) * 2 * k );
+    i += k;
+    }
+  }
+
+/* the gain the tick was played at goes on the chips it touched */
+static void win_stamp( AspCore *c, int64_t P )
+  {
+  int64_t F = P + c->latency;
+  for( int64_t i = 0; i < ASP_TICK; )
+    {
+    int64_t room; WChip *w; int64_t *m = win_at( c, F + i, &room, &w );
+    if( ! m ) break;
+    w->h.f.out_shift = c->out_shift;
+    i += room;
+    }
+  }
+
+/* --- the moves --- */
+
 static void mv_row( AspCore *c, Move *m )
   {
   AspPlace f, g; int os, ns;
@@ -274,42 +439,75 @@ static Move *mv_add( AspCore *c, AspJob *j, int64_t id, const char *st )
   if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return NULL; }
   if( c->nmv == c->capmv ) { c->capmv = c->capmv ? 2 * c->capmv : 16; c->mv = realloc( c->mv, c->capmv * sizeof *c->mv ); }
   Move *m = c->mv + c->nmv++;
-  m->job = j; m->id = id; m->now = c->mix_now; m->row = 0;
+  memset( m, 0, sizeof *m );
+  m->job = j; m->id = id; m->now = c->mix_now;
   snprintf( m->st, sizeof m->st, "%s", st );
-  m->s0 = asp_job_pos0( j ) % c->size; m->S = last_start( c, m->s0 );
+  m->fc = asp_job_first_chip( j, c->size );
   return m;
   }
 
-static void mv_run( AspCore *c )
+/* chip a, which is in the window, is visited by the move: its share goes into the chip */
+static void mv_visit( AspCore *c, Move *m, int64_t a, int64_t *cost )
   {
-  int64_t budget = BUDGET, head = (int64_t)c->pass * c->size + c->outpos;       /* this tick's position is read after this */
-  for( int i = 0; i < c->nmv; )
+  WChip *w = win_get( c, a ); int64_t k = fmod_( a, c->chips ); int r = 0;
+  if( ! m->started ) { m->started = 1; m->k0 = k; m->n = m->nw = 0; if( ! m->row ) mv_row( c, m ); }   /* it begins now: from here it is listed until done */
+  if( ! w ) r = -1;
+  else if( asp_job_wants( m->job, c->size, (uint32_t)k ) ) r = asp_job_chip( m->job, c->size, (uint32_t)k, w->mix, cost );
+  if( m->nw == m->n ) m->vfirst = a;
+  m->n++; m->nk = ( k + 1 ) % c->chips;
+  if( r < 0 ) { logf_( c, "error", "{\"what\":\"level move failed\"}" ); m->bad = 1; }
+  if( r != 0 ) m->fin = 1;
+  }
+
+/* may this move that has not begun begin on chip a (k its number in the loop; acur the chip under the head)? a normal move begins on
+   the chip its take starts on; a NOW move (every move, when draining) on the chip under the head, one NOW at a time unless draining.
+   only while the tick has budget: a move that has begun is never held back */
+static int mv_may_begin( const AspCore *c, const Move *m, int64_t a, int64_t k, int64_t acur, int64_t cost, int imm_run )
+  {
+  if( cost >= BUDGET ) return 0;
+  if( m->now || c->drain ) return a >= acur && ( c->drain || ! imm_run );
+  return k == m->fc;
+  }
+
+/* the record head has entered the chips up to the one holding the last frame of this tick: stamp them and visit them with the moves.
+   a move that has begun goes on with the next chip in the head's order, so a resume can replay it */
+static void win_enter( AspCore *c, int64_t P )
+  {
+  if( ! c->win_on ) return;
+  int64_t acur = chip_of( c, P ), ahi = chip_of( c, P + ASP_TICK - 1 ), cost = 0;
+  for( int i = c->nmv - 1; i >= 0; i-- )                                  /* a move with nothing to do */
     {
-    Move *m = c->mv + i; int r = 0;
-    int imm = m->now || c->drain;
-    int64_t lim = imm ? -1 : head - m->S;
-    if( budget > 0 && ( lim != 0 ) && ( lim > 0 || imm ) )
+    int64_t left = c->mv[i].started ? 1 : asp_job_cells_left( c->mv[i].job, c->size );
+    if( left <= 0 ) { c->mv[i].bad = left < 0; mv_finish( c, i ); }
+    }
+  int imm_run = 0;
+  for( int i = 0; i < c->nmv; i++ ) if( c->mv[i].started && ! c->mv[i].fin && ( c->mv[i].now || c->drain ) ) imm_run++;
+  if( acur < c->w_enter )                                                 /* NOW on a chip already entered: it begins on the chip under the head */
+    for( int i = 0; i < c->nmv; i++ )
       {
-      int64_t before = asp_job_cursor( m->job );
-      if( ! m->row && before == 0 ) mv_row( c, m );              /* it starts now: from here it is listed until done */
-      r = asp_job_step_to( m->job, c->tank, budget, lim );
-      budget -= asp_job_cursor( m->job ) - before;
-      if( r == 0 && m->row ) asp_move_progress( c->store, m->row, asp_job_cursor( m->job ), c->pass );
+      Move *m = c->mv + i;
+      if( m->started || ! ( m->now || c->drain ) || ! mv_may_begin( c, m, acur, fmod_( acur, c->chips ), acur, cost, imm_run ) ) continue;
+      mv_visit( c, m, acur, &cost ); imm_run++;
       }
-    if( r != 0 )
-      {
-      if( r < 0 ) logf_( c, "error", "{\"what\":\"level move failed\"}" );
-      else if( m->id > 0 && m->st[0] ) asp_take_set_state( c->store, m->id, m->st, "aspace", c->tick );   /* done: the take is now what the move made it */
-      mv_gone( c, m );
-      asp_job_free( m->job );
-      memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv );
-      continue;
-      }
-    i++;
+  while( c->w_enter <= ahi )
+    {
+    int64_t a = c->w_enter++, k = fmod_( a, c->chips ); WChip *w = win_get( c, a );
+    if( w ) w->h.f.iter = c->iter;
+    for( int pass = 0; pass < 2; pass++ )                                 /* normal moves first, then the immediate */
+      for( int i = 0; i < c->nmv; i++ )
+        {
+        Move *m = c->mv + i;
+        int imm = m->now || c->drain;
+        if( m->fin || imm != pass ) continue;
+        if( m->started ? m->nk != k : ! mv_may_begin( c, m, a, k, acur, cost, imm_run ) ) continue;
+        if( ! m->started && imm ) imm_run++;
+        mv_visit( c, m, a, &cost );
+        }
     }
   }
 
 void asp_core_drain( AspCore *c ) { c->drain = 1; }
+void asp_core_flush( AspCore *c ) { win_flush( c ); }
 int asp_core_moves( const AspCore *c ) { return c->nmv; }
 
 int asp_core_pending( const AspCore *c, int64_t id )
@@ -326,14 +524,14 @@ static int queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int 
     {
     Move *m = c->mv + i;
     if( m->id != t->id ) continue;
-    if( ! m->row )                                       /* a pending move is not listed: nothing to unlist */
+    if( ! m->started )                                   /* a move not begun can still be changed; (a new take's correction is listed already, and stays so) */
       {
       int r = asp_job_retarget( m->job, g );
       if( r >= 0 )
         {
         if( c->mix_now ) m->now = 1;
         if( r == 1 ) { asp_job_free( m->job ); memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv ); return 0; }
-        snprintf( m->st, sizeof m->st, "%s", st ); m->S = last_start( c, m->s0 );
+        snprintf( m->st, sizeof m->st, "%s", st );
         return 1;
         }
       }
@@ -645,7 +843,7 @@ void asp_core_automix( AspCore *c, int mode, int n, int each )
 static void take_feed( AspCore *c, const int32_t *pcm, int64_t n, int lev )
   {
   if( c->t_feed && n > 0 )
-    asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, lev, lev );
+    win_level( c, c->t_sec * RATE + c->t_frames, pcm, n, ASP_LEV_OFF, ASP_LEV_OFF, lev, lev );
   }
 
 /* frames of a take, from its start, counted so that frame 0 is the start of its second of the loop */
@@ -662,7 +860,7 @@ static int take_put( AspCore *c, const int32_t *pcm, int64_t n )
       {
       int64_t k = n - i < 4096 ? n - i : 4096;
       for( int64_t j = 0; j < k; j++ ) d[2*j] = d[2*j+1] = pcm[2 * ( i + j ) + c->t_fix];
-      asp_tank_level( c->tank, c->t_sec * RATE + c->t_frames + i, d, k, ASP_LEV_OFF, ASP_LEV_OFF, c->cfg.mono_lev, c->cfg.mono_lev );
+      win_level( c, c->t_sec * RATE + c->t_frames + i, d, k, ASP_LEV_OFF, ASP_LEV_OFF, c->cfg.mono_lev, c->cfg.mono_lev );
       }
     }
   else take_feed( c, pcm, n, 0 );
@@ -759,7 +957,6 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
   while( tries-- && ! asp_take_find( c->store, (int64_t)c->iter, sec, &dummy ) )
     {
     ++c->iter;                                           /* that take exists: the next iteration */
-    asp_tank_set_head( c->tank, c->iter, c->peak );
     }
   double t0 = now_ms();
   if( asp_tmp_path( c->store, c->part, sizeof c->part ) ) return -1;
@@ -793,6 +990,7 @@ static int take_new( AspCore *c, int64_t off, int64_t scan, int wrapped )
 
 static void sync_begin( AspCore *c )
   {
+  win_flush( c );
   if( c->sync ) asp_sync_free( c->sync );
   c->sync = asp_sync_new( &c->cfg.sync );
   c->sync_k = 0;
@@ -810,6 +1008,12 @@ static void sync_tick( AspCore *c, const int32_t *in, int32_t *out )
     {
     int r = asp_sync_in( c->sync, c->sync_in );
     const AspSyncResult *res = asp_sync_result( c->sync );
+    if( r == 1 && ! win_fits( c, res->frames ) )
+      {
+      logf_( c, "sync_failed", "{\"what\":\"the loop is too short for the round trip\",\"frames\":%lld}", (long long)res->frames );
+      sync_begin( c );
+      return;
+      }
     if( r == 1 )
       {
       c->latency = res->frames;
@@ -839,6 +1043,8 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
   int track = c->enc != NULL;
   double t0 = now_ms();
   memcpy( c->cur, in, sizeof c->cur );
+  win_advance( c, rel * ASP_TICK );
+  lap( c, "window", &t0 );
 
   if( c->gate_relearn && ! track ) { c->gate_relearn = 0; c->gate_ready = 0; logf_( c, "gate_reset", "{}" ); }
   if( c->tick > c->hush )
@@ -857,12 +1063,13 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
 
   if( recpos < ASP_TICK )                                 /* the top of a pass */
     {
-    if( c->newt ) { ++c->iter; asp_tank_set_head( c->tank, c->iter, c->peak ); }
-    asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
+    if( c->newt ) ++c->iter;
     logf_( c, "top", "{\"iter\":%llu,\"peak\":%llu,\"take\":%d}", (unsigned long long)c->iter, (unsigned long long)c->peak, track );
     c->newt = track;
     lap( c, "top", &t0 );
     }
+  win_enter( c, rel * ASP_TICK );
+  lap( c, "moves", &t0 );
 
   if( c->live && c->tick > c->hush && scan < ASP_TICK )
     {
@@ -885,10 +1092,9 @@ static void play_tick( AspCore *c, const int32_t *in, int32_t *out )
     logf_( c, "wrap", "{\"iter\":%llu,\"pass\":%lld}", (unsigned long long)c->iter, (long long)c->pass );
     }
   lap( c, "wrap", &t0 );
-  mv_run( c );
-  lap( c, "moves", &t0 );
-  if( asp_tank_get( c->tank, outpos, ASP_TICK, mix ) ) memset( out, 0, sizeof( int32_t ) * 2 * ASP_TICK );
-  else c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, &c->out_shift );
+  win_play( c, rel * ASP_TICK, mix );
+  c->peak = asp_mix_out( c->peak, out, ASP_TICK, mix, &c->out_shift );
+  win_stamp( c, rel * ASP_TICK );
   lap( c, "tank", &t0 );
   }
   memcpy( c->prev, c->cur, sizeof c->prev );
@@ -995,14 +1201,13 @@ int64_t asp_core_revert( AspCore *c, int64_t seq )
 int asp_core_close( AspCore *c )
   {
   if( c->enc ) take_end( c, NULL );
+  win_flush( c );                                                    /* what the head has entered goes to the tank; moves that finish are done */
   for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );   /* the store's list of moves says where they were: the next open goes on */
   if( c->nmv ) logf_( c, "moves_left", "{\"n\":%d}", c->nmv );
-  asp_tank_set_head( c->tank, c->iter, c->peak );
-  asp_tank_set_seq( c->tank, (uint64_t)asp_log_last( c->store ) );
   logf_( c, "core_close", "{}" );
   asp_gate_free( c->gate );
   asp_sync_free( c->sync );
-  free( c->lt ); free( c->mv ); asp_pk_free( &c->pk );
+  free( c->lt ); free( c->mv ); free( c->win ); asp_pk_free( &c->pk );
   free( c );
   return 0;
   }
