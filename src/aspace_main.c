@@ -23,8 +23,8 @@
      that has begun is on the SQL list (moves) until its last chip is written. NOW (!) begins at the chip under the head; a normal
      move begins at its take's first chip. a move that has begun is never cut short; --budget only holds back moves not yet begun.
    - quit = drain: the first SIGINT/SIGTERM or QUIT makes every move run as NOW and the core keeps ticking until none is left, then
-     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode the ticks still come from stdin, so the
-     edge must keep feeding while it drains.
+     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode it stops reading stdin and writing stdout
+     at once and ticks on silence as fast as it can; if the edge closes first, the same happens.
    - the tank is never marked dirty and never rebuilt by the core; a5rebuild is the last resort, outside it.
    - the log's top event carries the worst tick load of the pass (percent of a tick), METER the load of the last tick. */
 #define _POSIX_C_SOURCE 200809L
@@ -649,10 +649,14 @@ static int cmd_run( int argc, char **argv )
       }
     else
       {
-      if( read_tick( in ) ) break;                        /* the edge closed */
+      if( ! draining && read_tick( in ) ) { if( ! quit ) quit = 1; continue; }   /* the edge closed: drain what is queued, then close */
+      if( draining ) memset( in, 0, sizeof in );          /* draining: no waiting for the edge; silence in, nothing out, as fast as the core goes */
       { struct timespec a, b; clock_gettime( CLOCK_MONOTONIC, &a ); asp_core_tick( r.core, in, out ); clock_gettime( CLOCK_MONOTONIC, &b ); timed( &r, ( b.tv_sec - a.tv_sec ) * 1e3 + ( b.tv_nsec - a.tv_nsec ) / 1e6 ); }
-      tape_tap( &r, in, out );
-      if( write_tick( out ) ) break;
+      if( ! draining )
+        {
+        tape_tap( &r, in, out );
+        if( write_tick( out ) && ! quit ) quit = 1;       /* the edge closed: drain */
+        }
       }
     asp_store_poll( r.store );
     if( ctl_watchers( r.ctl ) || ( r.sim.tickn % 25 ) == 0 )
