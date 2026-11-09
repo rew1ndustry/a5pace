@@ -94,6 +94,10 @@ int      asp_core_map( const AspCore *c, int64_t from, int64_t to, AspMapCb cb, 
    the shell pins them under the map */
 int      asp_core_map_high( const AspCore *c, int64_t above, int n, AspMapCb cb, void *u );
 int      asp_core_pending( const AspCore *c, int64_t id );
+/* closing: every queued move now runs as if it were NOW (it keeps its place in the order, nothing is dropped); keep calling
+   asp_core_tick until asp_core_moves is 0, then close */
+void     asp_core_drain( AspCore *c );
+int      asp_core_moves( const AspCore *c );                       /* moves still queued */
 /* generated tracks for a space that is running (a5click, a5import). part is the file name under tmp/; kind "click" (the
    loop long, mono) or "file". *iter <= 0 picks the next free iteration in the 90000 series */
 int64_t  asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const char *kind, const char *style, int ll, int lr, int in );

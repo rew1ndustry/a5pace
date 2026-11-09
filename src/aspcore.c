@@ -25,7 +25,7 @@ typedef struct
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
-typedef struct { AspJob *job; int64_t id, s0, S; int now; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
+typedef struct { AspJob *job; int64_t id, s0, S, row; int now; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
 
 struct AspCore
   {
@@ -68,6 +68,7 @@ struct AspCore
 
   /* level moves, run in order, a slice a tick */
   Move *mv; int nmv, capmv;
+  int      drain;                   /* closing: every move runs as if it were NOW, until none is left */
   };
 
 static void logf_( AspCore *c, const char *type, const char *form, ... )
@@ -233,6 +234,18 @@ static int64_t last_start( const AspCore *c, int64_t s0 )
   return u - back;
   }
 
+/* the move in the store's list of moves in progress (a take the store does not hold, id < 0, is not listed); gone from it once done */
+static void mv_row( AspCore *c, Move *m )
+  {
+  AspPlace f, g; int os, ns;
+  m->row = 0;
+  if( m->id <= 0 ) return;
+  asp_job_places( m->job, &f, &g, &os, &ns );
+  int64_t r = asp_move_add( c->store, m->id, (const int *)&f, (const int *)&g, os, ns, m->now || c->drain );
+  if( r > 0 ) m->row = r; else logf_( c, "error", "{\"what\":\"move not listed\"}" );
+  }
+static void mv_gone( AspCore *c, Move *m ) { if( m->row ) asp_move_done( c->store, m->row ); m->row = 0; }
+
 static void mv_add( AspCore *c, AspJob *j, int64_t id )
   {
   if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return; }
@@ -240,6 +253,7 @@ static void mv_add( AspCore *c, AspJob *j, int64_t id )
   Move *m = c->mv + c->nmv++;
   m->job = j; m->id = id; m->now = c->mix_now;
   m->s0 = asp_job_pos0( j ) % c->size; m->S = last_start( c, m->s0 );
+  mv_row( c, m );
   }
 
 static void mv_run( AspCore *c )
@@ -248,16 +262,19 @@ static void mv_run( AspCore *c )
   for( int i = 0; i < c->nmv; )
     {
     Move *m = c->mv + i; int r = 0;
-    int64_t lim = m->now ? -1 : head - m->S;
-    if( budget > 0 && ( lim != 0 ) && ( lim > 0 || m->now ) )
+    int imm = m->now || c->drain;
+    int64_t lim = imm ? -1 : head - m->S;
+    if( budget > 0 && ( lim != 0 ) && ( lim > 0 || imm ) )
       {
       int64_t before = asp_job_cursor( m->job );
       r = asp_job_step_to( m->job, c->tank, budget, lim );
       budget -= asp_job_cursor( m->job ) - before;
+      if( r == 0 && m->row ) asp_move_progress( c->store, m->row, asp_job_cursor( m->job ), c->pass );
       }
     if( r != 0 )
       {
       if( r < 0 ) logf_( c, "error", "{\"what\":\"level move failed\"}" );
+      mv_gone( c, m );
       asp_job_free( m->job );
       memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv );
       continue;
@@ -265,6 +282,9 @@ static void mv_run( AspCore *c )
     i++;
     }
   }
+
+void asp_core_drain( AspCore *c ) { c->drain = 1; }
+int asp_core_moves( const AspCore *c ) { return c->nmv; }
 
 int asp_core_pending( const AspCore *c, int64_t id )
   {
@@ -285,8 +305,9 @@ static void queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int
       if( r >= 0 )
         {
         if( c->mix_now ) m->now = 1;
+        mv_gone( c, m );
         if( r == 1 ) { asp_job_free( m->job ); memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv ); }
-        else m->S = last_start( c, m->s0 );
+        else { m->S = last_start( c, m->s0 ); mv_row( c, m ); }
         return;
         }
       }
@@ -917,7 +938,7 @@ int64_t asp_core_revert( AspCore *c, int64_t seq )
   {
   if( c->live ) return -1;
   if( c->enc ) take_end( c, NULL );
-  for( int i = 0; i < c->nmv; i++ ) asp_job_free( c->mv[i].job );
+  for( int i = 0; i < c->nmv; i++ ) { mv_gone( c, c->mv + i ); asp_job_free( c->mv[i].job ); }
   c->nmv = 0;
   int64_t r = asp_revert( c->store, seq, "aspace" );
   if( r < 0 ) return -1;

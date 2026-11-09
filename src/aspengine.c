@@ -142,6 +142,9 @@ static inline void contrib( const int32_t *p, int ch, int src, AspPlace pl, int 
 
 int64_t asp_job_cursor( const AspJob *j ) { return j->cursor; }
 
+void asp_job_places( const AspJob *j, AspPlace *from, AspPlace *to, int *from_src, int *to_src )
+  { *from = j->from; *to = j->to; *from_src = j->osrc; *to_src = j->nsrc; }
+
 int asp_job_retarget( AspJob *j, AspPlace to )
   {
   if( j->cursor > j->lo ) return -1;

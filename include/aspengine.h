@@ -42,6 +42,7 @@ int     asp_job_goto( AspJob *j, int64_t k );
 int     asp_job_retarget( AspJob *j, AspPlace to );                     /* before it has started: 1 if it is now nothing to do */
 int64_t asp_job_span( const AspJob *j );                                /* frames it will touch, from pos0 */
 int64_t asp_job_pos0( const AspJob *j );
+void    asp_job_places( const AspJob *j, AspPlace *from, AspPlace *to, int *from_src, int *to_src );   /* what it is moving from and to now */
 void    asp_job_free( AspJob *j );
 int     asp_move_take( AspTank *t, AspStore *s, int64_t take_id, int src, int64_t lo, int64_t hi, AspPlace from, AspPlace to );
 

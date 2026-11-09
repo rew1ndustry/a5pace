@@ -80,10 +80,10 @@ int  asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max );
 
 /* moves in progress: an additive job on a looping tape (tank += to - from; to off = take out, from off = put in). One row from the
    moment it is accepted until it is drained, so the table is empty after a clean close and after a kill is what to resume. A placement
-   is six ints in the order of AspPlace: l, r, flip, gsh, pan, mixed. pos/pass = the last chip written (-1 = none yet).
+   is six ints in the order of AspPlace: l, r, flip, gsh, pan, mixed; osrc/nsrc: which channel of a take stored with more each side hears, or -1 for all. pos/pass = the last chip written (-1 = none yet).
    add returns the id, or -1. */
-typedef struct { int64_t id, take, pos, pass; int immediate; int from[6], to[6]; } AspMove;
-int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int immediate );
+typedef struct { int64_t id, take, pos, pass; int immediate, osrc, nsrc; int from[6], to[6]; } AspMove;
+int64_t asp_move_add( AspStore *s, int64_t take, const int *from, const int *to, int osrc, int nsrc, int immediate );
 int  asp_move_progress( AspStore *s, int64_t id, int64_t pos, int64_t pass );
 int  asp_move_done( AspStore *s, int64_t id );
 int  asp_moves_list( AspStore *s, AspMove *out, int max );          /* oldest first; returns how many */

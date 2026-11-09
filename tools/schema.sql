@@ -18,6 +18,6 @@ CREATE TABLE notes(id INTEGER PRIMARY KEY, take_id INTEGER, seq INTEGER,
   kind TEXT, text TEXT);
 CREATE TABLE peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);  -- a level byte a tick, see asppeaks.h
 CREATE TABLE moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL,
-  from_p TEXT NOT NULL, to_p TEXT NOT NULL,   -- placements as text "l r flip gsh pan mixed" (AspPlace); l/r 99 = out
+  from_p TEXT NOT NULL, to_p TEXT NOT NULL, osrc INTEGER NOT NULL, nsrc INTEGER NOT NULL,   -- placements as text "l r flip gsh pan mixed" (AspPlace); l/r 99 = out
   immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL);  -- pos/pass: last chip written, pos -1 = none; empty when drained
 CREATE TABLE peers(id TEXT PRIMARY KEY, addr TEXT, last_seen REAL);

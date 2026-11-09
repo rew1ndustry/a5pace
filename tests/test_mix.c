@@ -274,12 +274,16 @@ int main( void )
   m.gsh = 5;                                                        /* a second value replaces, never adds */
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
   CHECK( asp_core_mix( r.c, 9999, -1, &m ) == 0 );
+  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ), mine = 0;      /* the queued move is in the store's list, once, at its newest place */
+    for( int i = 0; i < n; i++ ) if( mv[i].take == s.id[0] ) { mine++; CHECK( mv[i].to[3] == 5 && mv[i].to[4] == -30 && mv[i].to[5] == 1 && mv[i].pos == -1 ); }
+    CHECK( mine == 1 ); }
   sim_until( &r.sim, base + LOOP * 4 + 48000 * 4 );
   states( &r, &s );
   printf( "by hand: %s(shift %d, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gsh, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
   CHECK( s.n == 5 && ! strcmp( s.st[0].status, "mix" ) && s.st[0].mixed && s.st[0].gsh == 5 && s.st[0].pan == -30 );
   CHECK( ! strcmp( s.st[1].status, "off" ) && ! strcmp( s.st[2].status, "off" ) );     /* the hold went on for the rest */
   CHECK( asp_core_pending( r.c, s.id[0] ) == 0 );
+  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ); for( int i = 0; i < n; i++ ) CHECK( mv[i].take != s.id[0] ); }   /* done: out of the list */
   CHECK( matches( &r ) );
   /* mute takes it out whatever its mix, the mix can still be changed, play brings it back at that mix */
   AspTake k4; CHECK( asp_take_get( r.s, s.id[4], &k4 ) == 0 );
@@ -295,6 +299,15 @@ int main( void )
   CHECK( asp_core_mix( r.c, k4.iter, k4.off, &mu ) == 1 );
   sim_until( &r.sim, base + LOOP * 9 );
   states( &r, &s ); CHECK( ! strcmp( s.st[4].status, "mix" ) && s.st[4].mixed && s.st[4].gsh == -5 );
+  CHECK( matches( &r ) );
+  /* quit = drain: a change waiting for the head runs at once, none is dropped, the list ends empty and the loop is whole */
+  AspMixCmd dr = { 1, 3, 0, 0, 0, 0 };
+  CHECK( asp_core_mix( r.c, k4.iter, k4.off, &dr ) == 1 );
+  CHECK( asp_core_pending( r.c, s.id[4] ) == 1 && asp_core_moves( r.c ) >= 1 );
+  asp_core_drain( r.c );
+  { int i; for( i = 0; i < 100 && asp_core_moves( r.c ); i++ ) sim_until( &r.sim, ( r.sim.tickn + 1 ) * ASP_TICK ); CHECK( i < 100 ); }
+  { AspMove mv[16]; CHECK( asp_moves_list( r.s, mv, 16 ) == 0 ); }
+  states( &r, &s ); CHECK( s.st[4].gsh == 3 );
   CHECK( matches( &r ) );
   }
   rig_close( &r );

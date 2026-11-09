@@ -32,7 +32,7 @@
 #include "simedge.h"
 
 static volatile sig_atomic_t quit;
-static void onsig( int s ) { (void)s; quit = 1; }
+static void onsig( int s ) { (void)s; if( quit < 2 ) quit++; }   /* the second one gives up the drain */
 
 typedef struct
   {
@@ -464,7 +464,7 @@ static void handle( void *u, int cl, const char *line )
     ctl_ok( c, cl );
     }
   else if( ! strcmp( w[0], "WATCH" ) ) { ctl_watch( c, cl, 1 ); ctl_ok( c, cl ); }
-  else if( ! strcmp( w[0], "QUIT" ) ) { ctl_ok( c, cl ); quit = 1; }
+  else if( ! strcmp( w[0], "QUIT" ) ) { ctl_ok( c, cl ); if( ! quit ) quit = 1; }
   else if( ! strcmp( w[0], "SIM" ) && r->simmode && n > 3 && ! strcasecmp( w[1], "BURST" ) )
     {
     /* SIM BURST ch amp [ticks_from_now]: ch 0 left 1 right 2 both; amp as a fraction of full scale */
@@ -615,12 +615,15 @@ static int cmd_run( int argc, char **argv )
   int64_t last = asp_log_last( r.store );
   struct timespec t0; clock_gettime( CLOCK_MONOTONIC, &t0 );
   int64_t started = 0;
-  while( ! quit )
+  int draining = 0;                                       /* quit = drain: tick on until no move is queued (a second signal gives up) */
+  while( quit < 2 && ( ! quit || asp_core_moves( r.core ) > 0 ) )
     {
+    if( quit && ! draining ) { draining = 1; asp_core_drain( r.core ); if( ! quiet ) fprintf( stderr, "aspace: draining %d moves\n", asp_core_moves( r.core ) ); }
     ctl_poll( r.ctl, handle, &r );
     if( r.simmode )
       {
-      if( r.step ) { if( r.steps <= 0 ) { nap( 5 ); continue; } r.steps--; }
+      if( draining ) ;                                    /* no waiting for the clock or for steps */
+      else if( r.step ) { if( r.steps <= 0 ) { nap( 5 ); continue; } r.steps--; }
       else if( ! fast )                                   /* real time */
         {
         struct timespec t; clock_gettime( CLOCK_MONOTONIC, &t );
