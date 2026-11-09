@@ -39,7 +39,18 @@ int64_t asp_job_cursor( const AspJob *j );
 /* go on from the start of tick k (ASP_TICK frames) of the take: seeks to the offset stacked when the job first streamed it, so a
    lap after the first costs no decoding of what lies before. 0 done; 1 not streamed that far yet; -1 out of its range */
 int     asp_job_goto( AspJob *j, int64_t k );
-int     asp_job_retarget( AspJob *j, AspPlace to );                     /* before it has started: 1 if it is now nothing to do */
+/* the chip path (the core's tick): the loop is chips of ASP_TICK frames (the last what is left, of `loop` frames in all), and a job is
+   done to one chip at a time, in any order the head brings them. a take's frames lie at pos0 + f; a visit to chip k adds the next
+   lap's share of the take to that chip's mix (2 * its frames int64), so a take longer than the loop arrives a lap at a time.
+   returns 1 when the job is done (every chip it covers has had all its laps), 0 more, -1 failed. *cost gets the frames decoded added
+   (streaming forward to a tick not met yet costs the ticks before it; a seek to one met before costs nothing) */
+int     asp_job_chip( AspJob *j, int64_t loop, uint32_t k, int64_t *mix, int64_t *cost );
+int     asp_job_wants( AspJob *j, int64_t loop, uint32_t k );          /* 1 if chip k still has a lap of this job to take */
+int64_t asp_job_cells_left( const AspJob *j, int64_t loop );          /* visits still owed, in all */
+uint32_t asp_job_first_chip( AspJob *j, int64_t loop );               /* the chip the part asked for starts on: where a normal job begins */
+/* a resumed job: the visits already made were chips start, start + 1 ... (wrapping), n of them, each taking a lap if the job had one there */
+int     asp_job_replay( AspJob *j, int64_t loop, uint32_t start, int64_t n );
+int     asp_job_retarget( AspJob *j, AspPlace to );                   /* before it has started: 1 if it is now nothing to do */
 int64_t asp_job_span( const AspJob *j );                                /* frames it will touch, from pos0 */
 int64_t asp_job_pos0( const AspJob *j );
 void    asp_job_places( const AspJob *j, AspPlace *from, AspPlace *to, int *from_src, int *to_src );   /* what it is moving from and to now */

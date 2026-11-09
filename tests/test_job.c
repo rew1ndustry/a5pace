@@ -38,6 +38,30 @@ static int32_t hv( int64_t n )                            /* a sample that can b
 static int same( AspTank *t )
   { static int64_t g[LOOP * 2]; return ! asp_tank_get( t, 0, LOOP, g ) && ! memcmp( g, model, sizeof model ); }
 
+
+#define NCH ( ( LOOP + ASP_TICK - 1 ) / ASP_TICK )
+static int64_t cm[NCH][2 * ASP_TICK];                      /* the loop as chips, for the chip path */
+static int csame( void )
+  {
+  for( int k = 0; k < NCH; k++ )
+    {
+    int64_t cf = k + 1 == NCH ? LOOP - (int64_t)k * ASP_TICK : ASP_TICK;
+    if( memcmp( cm[k], model + 2 * (int64_t)k * ASP_TICK, (size_t)cf * 16 ) ) return 0;
+    }
+  return 1;
+  }
+/* visit the chips in the order given (cycling) until the job says done; returns the visits made, or -1 if it failed or never finished */
+static int visits( AspJob *j, const int *order, int n, int64_t *cost )
+  {
+  for( int v = 0; v < 100000; v++ )
+    {
+    int rc = asp_job_chip( j, LOOP, (uint32_t)order[v % n], cm[order[v % n]], cost );
+    if( rc < 0 ) return -1;
+    if( rc == 1 ) return v + 1;
+    }
+  return -1;
+  }
+
 int main( void )
   {
   char dir[] = "/tmp/aspjob_testXXXXXX", p[300], e[ASP_ERR], cmd[600], f1[300], f2[300];
@@ -145,6 +169,73 @@ int main( void )
   CHECK( rc == 1 && same( t ) );
   asp_job_free( j );
   asp_tank_clear( t ); memset( model, 0, sizeof model );
+  }
+
+  /* the chip path: the loop is 3 chips (9600, 9600, 811); the takes lie at positions that are not chip aligned, and one is longer than the loop */
+  {
+  AspPlace st = { 0, 0, 0 }, c = { 1, 1, 0 };
+  const int fwd[3] = { 0, 1, 2 }, now2[3] = { 2, 0, 1 };
+  int64_t cost = 0;
+  asp_tank_clear( t ); memset( model, 0, sizeof model ); memset( cm, 0, sizeof cm );
+  AspJob *j = asp_job_take( s, a.id, 0, -1, OFF, -1, st, -1 );          /* 30000 frames at 0: two laps on chips 0 and 1, one on chip 2 */
+  CHECK( asp_job_cells_left( j, LOOP ) == 5 && asp_job_first_chip( j, LOOP ) == 0 );
+  CHECK( asp_job_wants( j, LOOP, 2 ) );
+  CHECK( visits( j, fwd, 3, &cost ) == 5 && cost > 0 );                 /* the 5 cells took 5 visits, in head order */
+  CHECK( asp_job_cells_left( j, LOOP ) == 0 && ! asp_job_wants( j, LOOP, 0 ) );
+  asp_job_free( j );
+  mput( S, 30000, 2, 0, 1, st );  CHECK( csame() );
+
+  memset( model, 0, sizeof model ); memset( cm, 0, sizeof cm );
+  j = asp_job_take( s, b.id, 0, -1, OFF, -1, c, -1 );                    /* mono, 9000 frames at 48000 (= 7978 in the loop): chips 0 (end) and 1 */
+  CHECK( asp_job_cells_left( j, LOOP ) == 2 && asp_job_first_chip( j, LOOP ) == 0 && ! asp_job_wants( j, LOOP, 2 ) );
+  CHECK( visits( j, now2, 3, NULL ) == 3 );                             /* NOW from chip 2: 2 has nothing, then 0, then 1 */
+  asp_job_free( j );
+  mput( M, 9000, 1, 48000, 1, c );  CHECK( csame() );
+
+  /* killed after its first visit: a new job, told that visit was made, finishes the rest and the sum is whole */
+  memset( model, 0, sizeof model ); memset( cm, 0, sizeof cm );
+  j = asp_job_take( s, b.id, 0, -1, OFF, -1, c, -1 );  CHECK( visits( j, fwd, 3, NULL ) > 0 );  asp_job_free( j );
+  mput( M, 9000, 1, 48000, 1, c );  CHECK( csame() );
+  j = asp_job_take( s, b.id, 0, -1, c, -1, OFF, -1 );                    /* take it out again: chip 0 first, then the job dies */
+  CHECK( asp_job_chip( j, LOOP, 0, cm[0], NULL ) == 0 );
+  asp_job_free( j );
+  j = asp_job_take( s, b.id, 0, -1, c, -1, OFF, -1 );
+  CHECK( asp_job_replay( j, LOOP, 0, 1 ) == 0 && asp_job_cells_left( j, LOOP ) == 1 );
+  { int o1[1] = { 1 }; CHECK( visits( j, o1, 1, NULL ) == 1 ); }
+  asp_job_free( j );
+  memset( model, 0, sizeof model );  CHECK( csame() );
+
+  /* a part of a take, and a take out again: frames 100 .. 5000 of a, in and out */
+  memset( model, 0, sizeof model ); memset( cm, 0, sizeof cm );
+  j = asp_job_take( s, a.id, 100, 5000, OFF, -1, st, -1 );
+  CHECK( visits( j, fwd, 3, NULL ) > 0 ); asp_job_free( j );
+  mput( S + 200, 4900, 2, 100, 1, st );  CHECK( csame() );
+  j = asp_job_take( s, a.id, 100, 5000, st, -1, OFF, -1 );
+  CHECK( visits( j, now2, 3, NULL ) > 0 ); asp_job_free( j );
+  memset( model, 0, sizeof model );  CHECK( csame() );
+  }
+
+  /* three minutes through the chip path, 400 laps, exact */
+  {
+  AspPlace st = { 0, 0, 0 };
+  const int fwd[3] = { 0, 1, 2 }; const int64_t N = 48000LL * 180;
+  char big[300]; snprintf( big, sizeof big, "%s/big2.d32", dir );
+  FILE *f = fopen( big, "wb" );
+  for( int64_t i = 0; i < N; i += 4096 )
+    { unsigned char bb[4096 * 8]; int64_t k = N - i < 4096 ? N - i : 4096;
+      for( int64_t m = 0; m < k * 2; m++ ) { uint32_t v = (uint32_t)hv( i * 2 + m ); bb[4*m] = v; bb[4*m+1] = v >> 8; bb[4*m+2] = v >> 16; bb[4*m+3] = v >> 24; }
+      fwrite( bb, 8, k, f ); }
+  fclose( f );
+  AspTake bg; CHECK( asp_take_add_d32( s, 5, 0, big, 2, 48000, "off", 0, &bg ) == 0 );
+  unlink( big );
+  memset( model, 0, sizeof model ); memset( cm, 0, sizeof cm );
+  AspJob *j = asp_job_take( s, bg.id, 0, -1, OFF, -1, st, -1 );
+  int64_t cost = 0;
+  CHECK( visits( j, fwd, 3, &cost ) > 0 );
+  asp_job_free( j );
+  for( int64_t i = 0; i < N; i++ ) { int64_t at = i % LOOP; model[2*at] += hv( i * 2 ); model[2*at+1] += hv( i * 2 + 1 ); }
+  CHECK( csame() );
+  CHECK( cost < 3 * N );                                                /* the stacked offsets were used: not a decode from the top for every lap */
   }
 
   /* what cannot be moved says so: a channel that is not there, a take that never ended, one cut short, one damaged */
