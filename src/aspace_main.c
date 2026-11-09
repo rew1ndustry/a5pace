@@ -19,11 +19,12 @@
    the model (aspcore.c has the detail):
    - the loop file is chips of one tick (ASP_TICK frames), each with its own header; no file header. the core keeps a window of chips
      in memory and each tick reads one chip at the front and writes one at the back, on separate forward-only handles.
-   - a gain/pan change (or a take going in or out) is a move: it is added to the chips as the record head enters them, and a move
-     that has begun is on the SQL list (moves) until its last chip is written. NOW (!) begins at the chip under the head; a normal
-     move begins at its take's first chip. a move that has begun is never cut short; --budget only holds back moves not yet begun.
+   - a gain/pan change (or a take going in or out) is a move: it is added to the chips the output is about to play (heard within
+     a tick; the live feed adds at the record head), and a move that has begun is on the SQL list (moves) until its last chip is
+     written. NOW (!) begins at the chip being played at once; a normal move waits for the output to reach its take's first chip
+     (the next pass), and is heard at once from there. a move that has begun is never cut short; --budget only holds back moves not yet begun.
    - quit = drain: the first SIGINT/SIGTERM or QUIT makes every move run as NOW and the core keeps ticking until none is left, then
-     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode it stops reading stdin and writing stdout
+     closes (a second signal gives up; the SQL list resumes them next time). in pipe mode stdin and stdout become /dev/null at once (the card sees the end of its input and stops quietly, no under- or overrun message), and it stops reading stdin and writing stdout
      at once and ticks on silence as fast as it can; if the edge closes first, the same happens.
    - the tank is never marked dirty and never rebuilt by the core; a5rebuild is the last resort, outside it.
    - the log's top event carries the worst tick load of the pass (percent of a tick), METER the load of the last tick. */
@@ -35,6 +36,7 @@
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include "aspcore.h"
 #include "aspengine.h"
@@ -45,6 +47,16 @@
 #include "simedge.h"
 
 static volatile sig_atomic_t quit;
+/* quit = drain: the audio is disconnected for good. stdin and stdout become /dev/null: the card's playback sees the end of its input and stops,
+   the capture side dies of its broken pipe, and neither complains of an under- or overrun while the moves finish as fast as the core goes */
+static void disconnect_audio( void )
+  {
+  int nul = open( "/dev/null", O_RDWR );
+  if( nul < 0 ) return;
+  dup2( nul, STDIN_FILENO ); dup2( nul, STDOUT_FILENO );
+  if( nul > STDERR_FILENO ) close( nul );
+  }
+
 static void onsig( int s ) { (void)s; if( quit < 2 ) quit++; }   /* the second one gives up the drain */
 
 typedef struct
@@ -631,7 +643,7 @@ static int cmd_run( int argc, char **argv )
   int draining = 0;                                       /* quit = drain: tick on until no move is queued (a second signal gives up) */
   while( quit < 2 && ( ! quit || asp_core_moves( r.core ) > 0 ) )
     {
-    if( quit && ! draining ) { draining = 1; asp_core_drain( r.core ); if( ! quiet ) fprintf( stderr, "aspace: draining %d moves\n", asp_core_moves( r.core ) ); }
+    if( quit && ! draining ) { draining = 1; asp_core_drain( r.core ); if( ! r.simmode ) disconnect_audio(); if( ! quiet ) fprintf( stderr, "aspace: draining %d moves\n", asp_core_moves( r.core ) ); }
     ctl_poll( r.ctl, handle, &r );
     if( r.simmode )
       {

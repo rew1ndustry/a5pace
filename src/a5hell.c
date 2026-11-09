@@ -277,6 +277,7 @@ static void help( void )
 " u / U   undo last take / iteration       f  gate profile   w  wipe loop\n"
 " h       history: up/down, . next start, ! now, esc\n"
 " x       export: a all, m mix, l loop     T  takes as text\n"
+" z       reset the output gain (it forgets past clips and comes back up)\n"
 " PgUp PgDn Home End  scroll (End follows)      q  leave    Q  stop aspace\n"
 "\n"
 " the map: left/right jump take to take (past the first: the whole iteration),\n up/down to the nearest take in the next row. shift+arrows select, esc clears.\n"
@@ -389,6 +390,7 @@ int main( int argc, char **argv )
         case 'l': strcpy( c, "LIVE" ); break;
         case 's': strcpy( c, "SAFE" ); break;
         case 'r': strcpy( c, "SYNC" ); break;
+        case 'z': strcpy( c, "GAINRESET" ); break;                 /* the output gain forgets past clips and comes back up */
         case 'g':
           {
           int d = ask( " gate:  l learn the floor again (when nothing is playing)   + more sensitive   - less sensitive (3 dB)" );

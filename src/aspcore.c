@@ -24,10 +24,10 @@ typedef struct
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
-/* a move is done to the chips one at a time as the record head enters them (see the window below). started: its first chip has been
-   visited (it is then listed in the store); k0: that chip; nk: the chip it visits next (it keeps to the head's order, so a resume can
+/* a move is done to the chips one at a time as the output reaches them (see the window below). started: its first chip has been
+   visited (it is then listed in the store); k0: that chip; nk: the chip it visits next (it keeps to the output's order, so a resume can
    replay it); n visits made in memory, nw of them written to the tank (vfirst: the loop chip number, unrolled, of the first not yet
-   written); fin: no visit left; bad: it failed; fc: the chip a normal move begins on */
+   written); fin: no visit left; bad: it failed; fc: the chip its take starts on */
 typedef struct { AspJob *job; int64_t id, row; int now; char st[300];
                  int started, fin, bad; int64_t fc, k0, nk, n, nw, vfirst; } Move;
 
@@ -79,7 +79,7 @@ struct AspCore
   /* the window: chips from the one just behind the record head to the last the next output tick touches; one read at the front and
      one write at the back a tick. all jobs and the live feed edit the chips here, in memory */
   WChip *win; int wcap, win_on, win_err;
-  int64_t chips, wa0, wa1, w_enter, w_P;       /* chips in the loop; held: [wa0, wa1); next chip the record head has not entered; this tick's record start (frames from the loop's start) */
+  int64_t chips, wa0, wa1, w_enter, v_enter, w_P;       /* chips in the loop; held: [wa0, wa1); next chip the record head has not entered; next chip the output has not reached, where the moves visit; this tick's record start (frames from the loop's start) */
   int      drain;                   /* closing: every move runs as if it were NOW, until none is left */
   };
 
@@ -265,8 +265,10 @@ AspCore *asp_core_open( AspStore *s, AspTank *t, const AspCoreCfg *cfg, char *er
 /* the chip model (nut, firm; see CLAUDE.md "Moves rule"). The tank is chips of one tick. The core keeps a window of them in memory: the
    front one read ahead, the back one under (or just behind) the record head, which is `latency` behind the playback head. Each tick
    reads one chip at the front and writes one at the back, on separate forward-only handles: no seeks but each handle's own wrap, no
-   other tank access. Every job and the live feed of the open take edit the chips here. A move adds to a chip as the record head
-   enters it, in any order among moves, so the sum is right in the end; what it adds is heard on the next lap. A chip is written
+   other tank access. Every job and the live feed of the open take edit the chips here. The live feed adds to the chip under the record
+   head; a move adds to the chip the output is about to play (the front: read, update, gain, play), in any order among moves, so the
+   sum is right in the end and an insert is heard within a tick. A normal move waits for the output to reach its take's first
+   chip (it comes in at the next pass, nut: not mid-song), then is heard at once; NOW (!) begins on the chip being played. The record head stamps the iteration on the chips it enters. A chip is written
    once the record head is a tick past its end (a pre-roll can still reach back into it). A kill loses the edits in chips not yet
    written: the store's list of moves says how many chips each had written, and a resume redoes the rest.
    Frames are counted from the tick the loop began (rel * ASP_TICK); a chip is lap * chips + k, so a lap is a run of chips and
@@ -355,7 +357,7 @@ static void win_build( AspCore *c, int64_t P )
   if( cap != c->wcap ) { free( c->win ); c->win = calloc( (size_t)cap, sizeof *c->win ); c->wcap = cap; }
   for( int i = 0; i < c->wcap; i++ ) c->win[i].a = INT64_MIN;
   c->wa0 = c->wa1 = chip_of( c, P - ASP_TICK );
-  c->w_enter = chip_of( c, P );
+  c->w_enter = chip_of( c, P ); c->v_enter = chip_of( c, P + c->latency );
   c->win_on = 1; c->win_err = 0;
   }
 
@@ -370,11 +372,11 @@ static void win_advance( AspCore *c, int64_t P )
   c->w_P = P;
   }
 
-/* resync, an edge drop or close: what the record head has entered goes to the tank, and the window is empty */
+/* resync, an edge drop or close: the whole window goes to the tank (the moves edit the front, ahead of the record head), and is empty */
 static void win_flush( AspCore *c )
   {
   if( ! c->win_on ) return;
-  for( int64_t a = c->wa0; a < c->wa1 && a < c->w_enter; a++ ) win_write( c, a );
+  for( int64_t a = c->wa0; a < c->wa1; a++ ) win_write( c, a );      /* the front chips too: the moves have edited them already */
   c->win_on = 0;
   }
 
@@ -476,7 +478,7 @@ static void mv_visit( AspCore *c, Move *m, int64_t a, int64_t *cost )
   }
 
 /* may this move that has not begun begin on chip a (k its number in the loop; acur the chip under the head)? a normal move begins on
-   the chip its take starts on; a NOW move (every move, when draining) on the chip under the head, one NOW at a time unless draining.
+   the chip its take starts on, when the output reaches it (the next pass); a NOW move (every move, when draining) on the chip under the head, one NOW at a time unless draining.
    only while the tick has budget: a move that has begun is never held back */
 static int mv_may_begin( const AspCore *c, const Move *m, int64_t a, int64_t k, int64_t acur, int64_t cost, int imm_run )
   {
@@ -484,14 +486,16 @@ static int mv_may_begin( const AspCore *c, const Move *m, int64_t a, int64_t k, 
   if( now_ms() - c->t_tick >= c->budget_ms ) return 0;       /* a started move is never cut short; this only holds back those not yet begun */
   if( m->now || c->drain ) return a >= acur && ( c->drain || ! imm_run );
   return k == m->fc;
+
   }
 
-/* the record head has entered the chips up to the one holding the last frame of this tick: stamp them and visit them with the moves.
+/* the moves visit the chips the next output tick plays (the front of the window, before they are played, so an insert is heard at once);
+   the record head stamps the chips it enters with the iteration.
    a move that has begun goes on with the next chip in the head's order, so a resume can replay it */
 static void win_enter( AspCore *c, int64_t P )
   {
   if( ! c->win_on ) return;
-  int64_t acur = chip_of( c, P ), ahi = chip_of( c, P + ASP_TICK - 1 ), cost = 0;
+  int64_t acur = chip_of( c, P + c->latency ), ahi = chip_of( c, P + c->latency + ASP_TICK - 1 ), cost = 0;   /* the chips the next output tick plays */
   for( int i = c->nmv - 1; i >= 0; i-- )                                  /* a move with nothing to do */
     {
     int64_t left = c->mv[i].started ? 1 : asp_job_cells_left( c->mv[i].job, c->size );
@@ -499,17 +503,18 @@ static void win_enter( AspCore *c, int64_t P )
     }
   int imm_run = 0;
   for( int i = 0; i < c->nmv; i++ ) if( c->mv[i].started && ! c->mv[i].fin && ( c->mv[i].now || c->drain ) ) imm_run++;
-  if( acur < c->w_enter )                                                 /* NOW on a chip already entered: it begins on the chip under the head */
+  for( int64_t r = chip_of( c, P + ASP_TICK - 1 ); c->w_enter <= r; c->w_enter++ )     /* the record head enters chips: they take this iteration */
+    { WChip *w = win_get( c, c->w_enter ); if( w ) w->h.f.iter = c->iter; }
+  if( acur < c->v_enter )                                                 /* NOW on a chip already visited: it begins on the chip being played */
     for( int i = 0; i < c->nmv; i++ )
       {
       Move *m = c->mv + i;
       if( m->started || ! ( m->now || c->drain ) || ! mv_may_begin( c, m, acur, fmod_( acur, c->chips ), acur, cost, imm_run ) ) continue;
       mv_visit( c, m, acur, &cost ); imm_run++;
       }
-  while( c->w_enter <= ahi )
+  while( c->v_enter <= ahi )
     {
-    int64_t a = c->w_enter++, k = fmod_( a, c->chips ); WChip *w = win_get( c, a );
-    if( w ) w->h.f.iter = c->iter;
+    int64_t a = c->v_enter++, k = fmod_( a, c->chips );
     for( int pass = 0; pass < 2; pass++ )                                 /* normal moves first, then the immediate */
       for( int i = 0; i < c->nmv; i++ )
         {

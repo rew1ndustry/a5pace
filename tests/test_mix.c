@@ -247,22 +247,24 @@ int main( void )
   CHECK( asp_tank_get( r.t, 0, LOOP, snap ) == 0 );
   AspMixCmd m = { 1, -12, 0, 0, 0, 0 };
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
-  int checked = 0, changed_behind = 0;
-  for( int i = 0; i < 40 && asp_core_pending( r.c, s.id[0] ); i++ )
+  /* a normal move waits for the output to reach its take's first chip (it comes in at the next pass, not mid-song); once it begins it
+     edits the chips the output is about to play, so it is heard at once: the first change is on the take's first chip, found when the
+     output is at the take's start (not a lap later, as when the edits trailed the record head) */
+  int64_t first_at = -1, ho_first = -1; int first_step = -1, changed_behind = 0;
+  for( int i = 0; i < 90 && asp_core_pending( r.c, s.id[0] ); i++ )
     {
     sim_step( &r.sim ); asp_core_status( r.c, &st );
     head = ( ( st.tick - 1 - st.origin ) * ASP_TICK + st.latency + ASP_TICK ) % LOOP;      /* the first position not yet played */
     int64_t ho = ( head - st0 + LOOP ) % LOOP;
     asp_core_flush( r.c );
     CHECK( asp_tank_get( r.t, 0, LOOP, now ) == 0 );
-    if( ho < len )
-      {
-      for( int64_t o = ho; o < len; o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] || now[2*at+1] != snap[2*at+1] ) { CHECK( 0 ); break; } }
-      checked++;
-      }
-    for( int64_t o = 0; o < ( ho < len ? ho : len ); o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] ) { changed_behind = 1; break; } }
+    if( first_step < 0 )
+      for( int64_t o = 0; o < len; o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] || now[2*at+1] != snap[2*at+1] ) { first_step = i; first_at = o; ho_first = ho; break; } }
+    for( int64_t o = 0; o < ( ho < len ? ho : 0 ); o++ ) { int64_t at = ( st0 + o ) % LOOP; if( now[2*at] != snap[2*at] ) { changed_behind = 1; break; } }
     }
-  CHECK( checked >= 2 && changed_behind && ! asp_core_pending( r.c, s.id[0] ) );
+  CHECK( first_step > 5 );                                                  /* it waited: the head was a third into the take */
+  CHECK( first_at >= 0 && first_at < 2 * ASP_TICK && ( ho_first + 2 * ASP_TICK ) % LOOP < 3 * ASP_TICK );
+  CHECK( changed_behind && ! asp_core_pending( r.c, s.id[0] ) );
   CHECK( matches( &r ) );
   }
   rig_close( &r );
