@@ -4,6 +4,9 @@
 #include "aspengine.h"
 #include "flacio.h"
 #include "takefile.h"
+#include "aspstore.h"
+#include <stdio.h>
+#include <unistd.h>
 
 /* --- pcm in memory --- */
 
@@ -432,4 +435,19 @@ int asp_rebuild( AspTank *t, AspStore *s, int64_t upto )
     }
   free( l.e );
   return rc;
+  }
+
+int asp_rebuild_file( AspStore *s, const char *path, char *err, int errn )
+  {
+  const char *d = asp_descriptor( s ), *p = d ? strstr( d, "\"loop\":" ) : NULL;
+  long long frames = p ? atoll( p + 7 ) : 0;
+  if( frames <= 0 ) { snprintf( err, errn, "no loop length in the session" ); return -1; }
+  unlink( path );
+  AspTank *t = asp_tank_create( path, frames, 48000, err, errn );
+  if( ! t ) return -1;
+  asp_tank_bind( t, asp_session_id( s ) );
+  int rc = asp_rebuild( t, s, -1 );
+  asp_tank_close( t );
+  if( rc ) snprintf( err, errn, "rebuild failed" );
+  return rc ? -1 : 0;
   }

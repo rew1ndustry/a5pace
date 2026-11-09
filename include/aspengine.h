@@ -68,6 +68,9 @@ int asp_apply_take( AspTank *t, AspStore *s, int64_t take_id, int64_t lo, int64_
 /* zero the tank, then put in every take that is in the loop as of log point upto (< 0 = now) */
 int asp_tank_clear( AspTank *t );
 int asp_rebuild( AspTank *t, AspStore *s, int64_t upto );
+/* the last resort, never called by the core: make the loop file at path new from the store (any old file is removed), bound to the
+   session. 0 on success; err says why not */
+int asp_rebuild_file( AspStore *s, const char *path, char *err, int errn );
 
 /* the take-state fields the engine reads from the json state */
 typedef struct { char status[8]; int l, r, flip, mono, src; int64_t gone, peak, len; int gsh, pan, mixed; } AspTakeState;

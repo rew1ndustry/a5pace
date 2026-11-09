@@ -587,16 +587,13 @@ static int cmd_run( int argc, char **argv )
   int64_t frames = json_num( asp_descriptor( r.store ), "loop", 0 );
   if( tankpath ) snprintf( tp, sizeof tp, "%s", tankpath ); else snprintf( tp, sizeof tp, "%s/cache/loop.d64", dir );
   r.tank = frames ? asp_tank_open( tp, err, sizeof err ) : NULL;
-  int rebuild = 0;
-  if( r.tank && ( asp_tank_frames( r.tank ) != frames ) ) { rebuild = 1; asp_tank_close( r.tank ); r.tank = NULL; }
+  /* the core never rebuilds: a loop file that is missing, the wrong size or an old format is for a5rebuild */
+  if( r.tank && ( asp_tank_frames( r.tank ) != frames ) ) { fprintf( stderr, "aspace: the loop file is the wrong size: run a5rebuild %s\n", dir ); return 1; }
   if( ! r.tank )
     {
     if( ! frames ) { fprintf( stderr, "%s: no loop length in the session\n", dir ); return 1; }
-    r.tank = asp_tank_create( tp, frames, 48000, err, sizeof err );
-    if( ! r.tank ) { fprintf( stderr, "%s\n", err ); return 1; }
-    asp_tank_bind( r.tank, asp_session_id( r.store ) );
-    if( ! quiet ) fprintf( stderr, "aspace: %s, rebuilding the loop from the store\n", rebuild ? "the loop was not closed cleanly" : "no loop file" );
-    if( asp_rebuild( r.tank, r.store, -1 ) ) { fprintf( stderr, "aspace: rebuild failed\n" ); return 1; }
+    fprintf( stderr, "aspace: no usable loop file (%s): run a5rebuild %s\n", err, dir );
+    return 1;
     }
   r.core = asp_core_open( r.store, r.tank, &cfg, err, sizeof err );
   if( ! r.core ) { fprintf( stderr, "%s\n", err ); return 1; }
