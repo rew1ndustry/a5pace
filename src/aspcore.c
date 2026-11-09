@@ -25,7 +25,7 @@ typedef struct
   int64_t ready_pass;             /* the first pass it may be faded in */
   } LoopTake;
 
-typedef struct { AspJob *job; int64_t id, s0, S, row; int now; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
+typedef struct { AspJob *job; int64_t id, s0, S, row; int now; char st[300]; } Move;   /* s0: where on the loop the take starts; S: that, unrolled, the last time the head passed it */
 
 struct AspCore
   {
@@ -234,7 +234,9 @@ static int64_t last_start( const AspCore *c, int64_t s0 )
   return u - back;
   }
 
-/* the move in the store's list of moves in progress (a take the store does not hold, id < 0, is not listed); gone from it once done */
+/* the move in the store's list of moves in progress (a take the store does not hold, id < 0, is not listed). a move is listed when it
+   starts, not when it is queued (a pending move is forgotten after a kill); gone from the list once done. st is the take's state
+   after the move: the store keeps the state from before the move began, and takes this one only when the move completes */
 static void mv_row( AspCore *c, Move *m )
   {
   AspPlace f, g; int os, ns;
@@ -246,14 +248,14 @@ static void mv_row( AspCore *c, Move *m )
   }
 static void mv_gone( AspCore *c, Move *m ) { if( m->row ) asp_move_done( c->store, m->row ); m->row = 0; }
 
-static void mv_add( AspCore *c, AspJob *j, int64_t id )
+static void mv_add( AspCore *c, AspJob *j, int64_t id, const char *st )
   {
   if( ! j ) { logf_( c, "error", "{\"what\":\"level move not made\"}" ); return; }
   if( c->nmv == c->capmv ) { c->capmv = c->capmv ? 2 * c->capmv : 16; c->mv = realloc( c->mv, c->capmv * sizeof *c->mv ); }
   Move *m = c->mv + c->nmv++;
-  m->job = j; m->id = id; m->now = c->mix_now;
+  m->job = j; m->id = id; m->now = c->mix_now; m->row = 0;
+  snprintf( m->st, sizeof m->st, "%s", st );
   m->s0 = asp_job_pos0( j ) % c->size; m->S = last_start( c, m->s0 );
-  mv_row( c, m );
   }
 
 static void mv_run( AspCore *c )
@@ -267,6 +269,7 @@ static void mv_run( AspCore *c )
     if( budget > 0 && ( lim != 0 ) && ( lim > 0 || imm ) )
       {
       int64_t before = asp_job_cursor( m->job );
+      if( ! m->row && before == 0 ) mv_row( c, m );              /* it starts now: from here it is listed until done */
       r = asp_job_step_to( m->job, c->tank, budget, lim );
       budget -= asp_job_cursor( m->job ) - before;
       if( r == 0 && m->row ) asp_move_progress( c->store, m->row, asp_job_cursor( m->job ), c->pass );
@@ -274,6 +277,7 @@ static void mv_run( AspCore *c )
     if( r != 0 )
       {
       if( r < 0 ) logf_( c, "error", "{\"what\":\"level move failed\"}" );
+      else if( m->id > 0 && m->st[0] ) asp_take_set_state( c->store, m->id, m->st, "aspace", c->tick );   /* done: the take is now what the move made it */
       mv_gone( c, m );
       asp_job_free( m->job );
       memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv );
@@ -292,30 +296,32 @@ int asp_core_pending( const AspCore *c, int64_t id )
   return 0;
   }
 
-static void queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int in_from, int in_to )
+/* returns 1 if a move holds the change (the store takes the new state when it completes), 0 if nothing is to be moved (the caller stores it) */
+static int queue_move( AspCore *c, LoopTake *t, AspPlace from, AspPlace to, int in_from, int in_to, const char *st )
   {
   AspPlace f = in_from ? from : (AspPlace)ASP_PLACE_OFF, g = in_to ? to : (AspPlace)ASP_PLACE_OFF;
   for( int i = c->nmv - 1; i >= 0; i-- )                /* not begun yet: it goes to the new place instead */
     {
     Move *m = c->mv + i;
     if( m->id != t->id ) continue;
-    if( asp_job_cursor( m->job ) == 0 )
+    if( ! m->row )                                       /* a pending move is not listed: nothing to unlist */
       {
       int r = asp_job_retarget( m->job, g );
       if( r >= 0 )
         {
         if( c->mix_now ) m->now = 1;
-        mv_gone( c, m );
-        if( r == 1 ) { asp_job_free( m->job ); memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv ); }
-        else { m->S = last_start( c, m->s0 ); mv_row( c, m ); }
-        return;
+        if( r == 1 ) { asp_job_free( m->job ); memmove( c->mv + i, c->mv + i + 1, ( --c->nmv - i ) * sizeof *c->mv ); return 0; }
+        snprintf( m->st, sizeof m->st, "%s", st ); m->S = last_start( c, m->s0 );
+        return 1;
         }
       }
     break;
     }
-  if( asp_place_eq( f, g ) ) return;
+  if( asp_place_eq( f, g ) ) return 0;
   int v = t->mono ? t->src : -1;                          /* a mono take is one channel of what is stored */
-  mv_add( c, asp_job_take( c->store, t->id, 0, -1, f, v, g, v ), t->id );
+  AspJob *j = asp_job_take( c->store, t->id, 0, -1, f, v, g, v );
+  mv_add( c, j, t->id, st );                               /* (logs it if the job was not made) */
+  return j != NULL;
   }
 
 /* --- automix --- */
@@ -326,10 +332,9 @@ static void change( AspCore *c, LoopTake *t, AspPlace to, int in, const char *wh
   char st[300];
   t->now = to; t->in = in;
   state_json( t, in ? "mix" : "off", st, sizeof st );
-  asp_take_set_state( c->store, t->id, st, "aspace", c->tick );
   logf_( c, "relevel", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"why\":\"%s\",\"lev\":[%d,%d],\"flip\":%d,\"in\":%d,\"mixed\":%d,\"gsh\":%d,\"pan\":%d}", (long long)t->id, (long long)t->iter, (long long)t->off, why,
          to.l == ASP_LEV_OFF ? -1 : to.l, to.r == ASP_LEV_OFF ? -1 : to.r, to.flip, in, to.mixed, to.gsh, to.pan );
-  if( c->cfg.feed ) queue_move( c, t, from, to, was, in );
+  if( ! ( c->cfg.feed && queue_move( c, t, from, to, was, in, st ) ) ) asp_take_set_state( c->store, t->id, st, "aspace", c->tick );
   }
 
 static int overlaps( AspCore *c, const LoopTake *a, const LoopTake *b )
@@ -393,7 +398,7 @@ int64_t asp_core_gen_add( AspCore *c, int64_t *iter, const char *part, const cha
   LoopTake *t = lt_add( c ); *t = lt;
   if( click ) logf_( c, "click_added", "{\"take\":%lld,\"style\":\"%s\",\"in\":%d}", (long long)k.id, style, in );
   else logf_( c, "take_imported", "{\"take\":%lld,\"iter\":%lld,\"len\":%lld,\"mono\":%d,\"in\":%d}", (long long)k.id, (long long)*iter, (long long)fr, ch == 1, in );
-  if( in && c->cfg.feed ) queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1 );
+  if( in && c->cfg.feed ) queue_move( c, t, (AspPlace)ASP_PLACE_OFF, t->now, 0, 1, "" );
   return k.id;
   }
 
@@ -668,7 +673,7 @@ static void take_end_( AspCore *c, const int32_t *last )
   if( ! bad && ( is_bump || is_quiet ) )
     {
     if( c->t_feed )                                          /* it was fed into the loop as it came: take it out again (the job keeps the file open) */
-      mv_add( c, asp_job_open( c->part, c->t_sec * RATE, 0, -1, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, c->t_fix, ASP_PLACE_OFF, -1 ), -1 );
+      mv_add( c, asp_job_open( c->part, c->t_sec * RATE, 0, -1, c->t_fix >= 0 ? (AspPlace){ c->cfg.mono_lev, c->cfg.mono_lev, 0 } : (AspPlace){ 0, 0, 0 }, c->t_fix, ASP_PLACE_OFF, -1 ), -1, "" );
     unlink( c->part );
     logf_( c, "discarded", "{\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"share\":%.3f,\"why\":\"%s\",\"peak_db\":[%.1f,%.1f]}",
            (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames, share, is_bump ? "bump" : "quiet", level_db( h.peak[0] ), level_db( h.peak[1] ) );
@@ -709,7 +714,7 @@ static void take_end_( AspCore *c, const int32_t *last )
     {
     int osrc = c->t_fix >= 0 ? c->t_fix : -1, nsrc = mono ? src : -1;
     if( osrc != nsrc || fin.l != live.l || fin.r != live.r || fin.flip != live.flip )
-      mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, osrc, fin, nsrc ), tk.id );
+      mv_add( c, asp_job_take( c->store, tk.id, 0, -1, live, osrc, fin, nsrc ), tk.id, "" );
     }
   logf_( c, "end", "{\"take\":%lld,\"iter\":%lld,\"off\":%lld,\"len\":%lld,\"peak_db\":[%.1f,%.1f],\"clips\":[%lld,%lld],\"damaged\":%d,\"mono\":%d,\"src\":%d,\"flip\":%d,\"in\":%d}",
          (long long)tk.id, (long long)c->t_iter, (long long)c->t_off, (long long)c->t_frames,

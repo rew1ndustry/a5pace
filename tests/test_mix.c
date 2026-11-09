@@ -274,9 +274,9 @@ int main( void )
   m.gsh = 5;                                                        /* a second value replaces, never adds */
   CHECK( asp_core_mix( r.c, k0.iter, k0.off, &m ) == 1 );
   CHECK( asp_core_mix( r.c, 9999, -1, &m ) == 0 );
-  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ), mine = 0;      /* the queued move is in the store's list, once, at its newest place */
-    for( int i = 0; i < n; i++ ) if( mv[i].take == s.id[0] ) { mine++; CHECK( mv[i].to[3] == 5 && mv[i].to[4] == -30 && mv[i].to[5] == 1 && mv[i].pos == -1 ); }
-    CHECK( mine == 1 ); }
+  { AspMove mv[16]; int n = asp_moves_list( r.s, mv, 16 ), mine = 0;      /* a move that has not started is not in the store's list */
+    for( int i = 0; i < n; i++ ) if( mv[i].take == s.id[0] ) mine++;
+    CHECK( mine == 0 ); }
   sim_until( &r.sim, base + LOOP * 4 + 48000 * 4 );
   states( &r, &s );
   printf( "by hand: %s(shift %d, pan %d) %s %s %s %s\n", s.st[0].status, s.st[0].gsh, s.st[0].pan, s.st[1].status, s.st[2].status, s.st[3].status, s.n > 4 ? s.st[4].status : "-" );
