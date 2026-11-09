@@ -17,4 +17,7 @@ CREATE TABLE mixes(name TEXT PRIMARY KEY, seq INTEGER NOT NULL);
 CREATE TABLE notes(id INTEGER PRIMARY KEY, take_id INTEGER, seq INTEGER,
   kind TEXT, text TEXT);
 CREATE TABLE peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);  -- a level byte a tick, see asppeaks.h
+CREATE TABLE moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL,
+  from_l TEXT, from_r TEXT, to_l TEXT, to_r TEXT,   -- placements: level text as takes.lev_l/lev_r, '-' = out
+  immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL);  -- pos/pass: last chip written, pos -1 = none; empty when drained
 CREATE TABLE peers(id TEXT PRIMARY KEY, addr TEXT, last_seen REAL);

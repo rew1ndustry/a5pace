@@ -189,6 +189,9 @@ AspStore *asp_open( const char *dir, int readonly, char err[ASP_ERR] )
       run( s, "create table if not exists peaks(take_id INTEGER PRIMARY KEY, n INTEGER NOT NULL, data BLOB NOT NULL);"
               "update session set schema_version=3; pragma user_version=3;" ); }
   sqlite3_finalize( q );
+  if( ! s->readonly )          /* sessions made before the moves list get it here */
+    run( s, "create table if not exists moves(id INTEGER PRIMARY KEY, take_id INTEGER NOT NULL, from_l TEXT, from_r TEXT, to_l TEXT, to_r TEXT,"
+            " immediate INTEGER NOT NULL, pos INTEGER NOT NULL, pass INTEGER NOT NULL);" );
   if( ! s->readonly ) detect_crash( s );
   return s;
   }
@@ -288,6 +291,51 @@ int asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max )
   if( sqlite3_prepare_v2( s->db, "select id from takes where id>? and id not in (select take_id from peaks) order by id limit ?", -1, &q, NULL ) ) return 0;
   sqlite3_bind_int64( q, 1, after ); sqlite3_bind_int( q, 2, max );
   while( sqlite3_step( q ) == SQLITE_ROW && n < max ) ids[n++] = sqlite3_column_int64( q, 0 );
+  sqlite3_finalize( q );
+  return n;
+  }
+
+/* moves in progress (see include/aspstore.h) */
+int64_t asp_move_add( AspStore *s, int64_t take, const char *fl, const char *fr, const char *tl, const char *tr, int immediate )
+  {
+  sqlite3_stmt *q; int64_t id = -1;
+  if( s->readonly || take <= 0 ) return -1;
+  if( sqlite3_prepare_v2( s->db, "insert into moves(take_id,from_l,from_r,to_l,to_r,immediate,pos,pass) values(?,?,?,?,?,?,-1,0)", -1, &q, NULL ) ) return -1;
+  sqlite3_bind_int64( q, 1, take ); sqlite3_bind_text( q, 2, fl, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 3, fr, -1, SQLITE_STATIC );
+  sqlite3_bind_text( q, 4, tl, -1, SQLITE_STATIC ); sqlite3_bind_text( q, 5, tr, -1, SQLITE_STATIC ); sqlite3_bind_int( q, 6, immediate != 0 );
+  if( sqlite3_step( q ) == SQLITE_DONE ) id = sqlite3_last_insert_rowid( s->db );
+  sqlite3_finalize( q );
+  return id;
+  }
+int asp_move_progress( AspStore *s, int64_t id, int64_t pos, int64_t pass )
+  {
+  sqlite3_stmt *q; int rc;
+  if( s->readonly ) return -1;
+  if( sqlite3_prepare_v2( s->db, "update moves set pos=?, pass=? where id=?", -1, &q, NULL ) ) return -1;
+  sqlite3_bind_int64( q, 1, pos ); sqlite3_bind_int64( q, 2, pass ); sqlite3_bind_int64( q, 3, id );
+  rc = sqlite3_step( q ); sqlite3_finalize( q );
+  return rc == SQLITE_DONE && sqlite3_changes( s->db ) == 1 ? 0 : -1;
+  }
+int asp_move_done( AspStore *s, int64_t id )
+  {
+  sqlite3_stmt *q; int rc;
+  if( s->readonly ) return -1;
+  if( sqlite3_prepare_v2( s->db, "delete from moves where id=?", -1, &q, NULL ) ) return -1;
+  sqlite3_bind_int64( q, 1, id ); rc = sqlite3_step( q ); sqlite3_finalize( q );
+  return rc == SQLITE_DONE ? 0 : -1;
+  }
+int asp_moves_list( AspStore *s, AspMove *out, int max )
+  {
+  sqlite3_stmt *q; int n = 0;
+  if( sqlite3_prepare_v2( s->db, "select id,take_id,from_l,from_r,to_l,to_r,immediate,pos,pass from moves order by id", -1, &q, NULL ) ) return 0;
+  while( n < max && sqlite3_step( q ) == SQLITE_ROW )
+    {
+    AspMove *m = &out[n++];
+    m->id = sqlite3_column_int64( q, 0 ); m->take = sqlite3_column_int64( q, 1 );
+    for( int i = 0; i < 4; i++ )
+      { const char *c = (const char *)sqlite3_column_text( q, 2 + i ); snprintf( m->lev[i], sizeof m->lev[i], "%s", c ? c : "" ); }
+    m->immediate = sqlite3_column_int( q, 6 ); m->pos = sqlite3_column_int64( q, 7 ); m->pass = sqlite3_column_int64( q, 8 );
+    }
   sqlite3_finalize( q );
   return n;
   }

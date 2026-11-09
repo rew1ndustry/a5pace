@@ -78,6 +78,15 @@ int  asp_peaks_set( AspStore *s, int64_t id, const uint8_t *v, int n );
 int  asp_peaks_get( AspStore *s, int64_t id, uint8_t *buf, int cap );
 int  asp_peaks_need( AspStore *s, int64_t after, int64_t *ids, int max );
 
+/* moves in progress: an additive job on a looping tape (tank += to - from). One row from the moment it is accepted until it is
+   drained, so the table is empty after a clean close and after a kill is what to resume. lev[0..3] = from_l, from_r, to_l, to_r
+   (level text as takes.lev_l/lev_r, '-' = out). pos/pass = the last chip written (-1 = none yet). add returns the id, or -1. */
+typedef struct { int64_t id, take, pos, pass; int immediate; char lev[4][16]; } AspMove;
+int64_t asp_move_add( AspStore *s, int64_t take, const char *fl, const char *fr, const char *tl, const char *tr, int immediate );
+int  asp_move_progress( AspStore *s, int64_t id, int64_t pos, int64_t pass );
+int  asp_move_done( AspStore *s, int64_t id );
+int  asp_moves_list( AspStore *s, AspMove *out, int max );          /* oldest first; returns how many */
+
 /* named mixes label a log point */
 int  asp_mix_name( AspStore *s, const char *name, int64_t seq );
 int64_t asp_mix_seq( AspStore *s, const char *name );          /* -1 if none */
