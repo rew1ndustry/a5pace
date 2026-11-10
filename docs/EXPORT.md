@@ -1,7 +1,7 @@
 # a5export: the audio out, as flac
 
 ```
-a5export DIR loop|mix|all [--to FOLDER] [--cleanup] [--dry]
+a5export DIR loop|mix|all [--to FOLDER] [--prefix NAME] [--fold] [--cleanup] [--dry]
 ```
 Works whether or not the space is running. It only reads the session (never writes to it) and runs at the lowest cpu
 and disk priority, so a running loop is not held up.
