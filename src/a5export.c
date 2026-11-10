@@ -1,6 +1,6 @@
 /* a5export: take the audio out of a session as flac, whether or not it is running. it only reads the store; it never
    writes to the session, and it runs at the lowest cpu and disk priority so a running loop is not held up.
-     a5export DIR [loop|mix|all] [--to FOLDER] [--cleanup] [--dry]
+     a5export DIR [loop|mix|all] [--to FOLDER] [--prefix NAME] [--fold] [--cleanup] [--dry]
    what:  all    every take (the default), as it was recorded: no gain, no pan, muted ones too
           mix    only the takes that are in the loop
           loop   the loop as it sounds, one file, built from the store (never from the live loop file, so a mix change
@@ -9,10 +9,12 @@
           new or changed is rewritten. earlier loop files stay: each is a moment. nothing is deleted.
    --cleanup (mix only): takes that an earlier mix export wrote and that have left the loop since are moved to the system
           trash, or to DIR/trash if there is none to be had. a take that an "all" export also wrote is left alone.
-   names: loop_ITER_OFF.flac for a take that is in the loop and mute_ITER_OFF.flac for one that is not (both numbers zero
-          padded to 5 digits; a file changes its prefix when the take's state does), mix_ITER.flac for the loop at that
-          iteration. generated tracks (clicks, imported files) are numbered in the 90000 series: loop_90001_00000.flac.
-          no name from the session or its folder is used. a take whose two channels are identical is written as mono.
+   names: PREFIX_ITER_OFF.flac for a take (both numbers zero padded to 5 digits), PREFIX_mix_ITER.flac for the loop at that
+          iteration. PREFIX is the name of DIR unless --prefix says otherwise. the state of the take (in the loop or not) is
+          not in the name. generated tracks (clicks, imported files) are numbered in the 90000 series: tab_90001_00000.flac.
+          no other name from the session is used. a take whose two channels are identical is written as mono.
+   --fold: a take longer than the loop (counting where it starts in it) is cut into clips of exactly the loop length, the
+          last one the tail, padded; the clips are PREFIX_ITER_OFF_000.flac, _001 ... A take that fits is one file, no _nth.
    each take is one file, padded with silence to the loop length exactly (starting where it starts in the loop), and a
    take longer than the loop to an exact multiple of it. */
 #define _GNU_SOURCE
@@ -145,10 +147,14 @@ static int silence( Out *o, int64_t frames, int ch )
   return 0;
   }
 
-typedef struct { Out *o; int och; int same; } Pass;
-static int pass_cb( const int32_t *pcm, unsigned frames, int channels, void *u )
+typedef struct { Out *o; int och; int64_t pos, lo, hi; } Pass;      /* pos: where the next frames fall in the laid out take; lo..hi: the clip */
+static int pass_cb( const int32_t *pcm, unsigned nframes, int channels, void *u )
   {
   Pass *p = u;
+  int64_t a = p->lo > p->pos ? p->lo : p->pos, e = p->pos + nframes < p->hi ? p->pos + nframes : p->hi;
+  p->pos += nframes;
+  if( e <= a ) return 0;
+  unsigned frames = (unsigned)( e - a ); pcm += ( a - ( p->pos - nframes ) ) * channels;
   if( channels == p->och ) return asp_flac_enc_write( p->o->e, pcm, frames ) ? 1 : 0;
   static int32_t b[CHUNK * 2];
   for( unsigned i = 0; i < frames; )
@@ -171,13 +177,18 @@ static int is_mono( const Tk *t )
 
 static int64_t padded( int64_t end, int64_t loop ) { return end <= 0 ? loop : ( ( end + loop - 1 ) / loop ) * loop; }
 
-static int export_take( const char *dir, const char *name, const Tk *t, int64_t loop )
+/* clip c of nclips (nclips 0: the whole take) of the take laid out from the start of the loop, silence before and after */
+static int export_take( const char *dir, const char *name, const Tk *t, int64_t loop, int c, int nclips )
   {
   int och = is_mono( t ) ? 1 : 2;
   int64_t st = ( t->off * RATE ) % loop, total = padded( st + t->frames, loop );
-  Out o; Pass p = { &o, och };
+  int64_t lo = nclips ? (int64_t)c * loop : 0, hi = nclips ? lo + loop : total;
+  Out o; Pass p = { &o, och, st, lo, hi };
   if( out_open( &o, dir, name, och ) ) return -1;
-  if( silence( &o, st, och ) || asp_take_frames( t->path, t->src, pass_cb, &p ) || silence( &o, total - st - t->frames, och ) )
+  int64_t s0 = st <= lo ? 0 : ( st < hi ? st : hi ) - lo;                                  /* leading silence in the clip */
+  int64_t end = st + t->frames, tail = hi - ( end > lo ? end : lo );                     /* trailing silence in the clip */
+  if( end >= hi ) tail = 0;
+  if( silence( &o, s0, och ) || asp_take_frames( t->path, t->src, pass_cb, &p ) || silence( &o, tail, och ) )
     { asp_flac_enc_close( o.e ); unlink( o.part ); return -1; }
   return out_close( &o );
   }
@@ -207,10 +218,13 @@ static int export_loop( const char *dir, const char *name, const char *tmp, AspS
 
 int main( int argc, char **argv )
   {
-  const char *dir = NULL, *to = NULL, *what = NULL; int dry = 0, cleanup = 0;
+  const char *dir = NULL, *to = NULL, *what = NULL, *prefix = NULL; int dry = 0, cleanup = 0, fold = 0;
   for( int i = 1; i < argc; i++ )
     {
     if( ! strcmp( argv[i], "--to" ) && i + 1 < argc ) to = argv[++i];
+    else if( ! strcmp( argv[i], "--prefix" ) && i + 1 < argc ) prefix = argv[++i];
+    else if( ! strncmp( argv[i], "--prefix=", 9 ) ) prefix = argv[i] + 9;
+    else if( ! strcmp( argv[i], "--fold" ) ) fold = 1;
     else if( ! strcmp( argv[i], "--dry" ) ) dry = 1;
     else if( ! strcmp( argv[i], "--cleanup" ) ) cleanup = 1;
     else if( ! strcmp( argv[i], "loop" ) || ! strcmp( argv[i], "mix" ) || ! strcmp( argv[i], "all" ) ) what = argv[i];
@@ -219,10 +233,11 @@ int main( int argc, char **argv )
     }
   if( ! what ) dir = NULL;                                        /* the set has to be asked for: no usage, no export */
   if( cleanup && what && strcmp( what, "mix" ) ) { fprintf( stderr, "a5export: --cleanup is for the mix export (a5export DIR mix --cleanup)\n" ); return 2; }
-  if( ! dir ) { fprintf( stderr, "usage: a5export DIR loop|mix|all [--to FOLDER] [--cleanup] [--dry]\n"
-    "  all   every take, as recorded, one flac each: loop_ITER_OFF.flac, or mute_ when it is out of the loop\n"
+  if( ! dir ) { fprintf( stderr, "usage: a5export DIR loop|mix|all [--to FOLDER] [--prefix NAME] [--fold] [--cleanup] [--dry]\n"
+    "  all   every take, as recorded, one flac each: PREFIX_ITER_OFF.flac (PREFIX is the name of DIR)\n"
     "  mix   only the takes that are in the loop\n"
-    "  loop  the loop as it sounds: mix_ITER.flac\n"
+    "  loop  the loop as it sounds: PREFIX_mix_ITER.flac\n"
+    "  --fold cuts a take longer than the loop into loop-sized clips, PREFIX_ITER_OFF_000.flac ...\n"
     "  --cleanup (mix only) moves takes that have left the loop to the trash;  --dry lists files without writing\n"
     "  files go to DIR/export unless --to says otherwise\n" ); return 2; }
   if( nice( 19 ) < 0 ) {}                                                     /* lowest cpu priority, and idle class for the disk */
@@ -232,6 +247,8 @@ int main( int argc, char **argv )
   char err[ASP_ERR], out[1300], tmp[1400];
   AspStore *s = asp_open( dir, 1, err );
   if( ! s ) { fprintf( stderr, "a5export: %s\n", err ); return 1; }
+  char pre[80]; { char rp[4096]; const char *b = realpath( dir, rp ) ? strrchr( rp, '/' ) : NULL;
+    snprintf( pre, sizeof pre, "%.60s", prefix ? prefix : b && b[1] ? b + 1 : "a5" ); }
   int64_t loop = json_num( asp_descriptor( s ), "loop", 0 );
   if( ! loop ) { fprintf( stderr, "a5export: no loop length in the session\n" ); return 1; }
   snprintf( out, sizeof out, "%s", to ? to : "" );
@@ -246,7 +263,7 @@ int main( int argc, char **argv )
   for( int i = 0; i < sn.n; i++ ) if( sn.t[i].iter > cur ) cur = sn.t[i].iter;
 
   /* the list of files and a key for each: when the key is the same as last time the file is left alone */
-  typedef struct { char name[120]; uint64_t key; int t; } Job;
+  typedef struct { char name[120]; uint64_t key; int t, c, nc; } Job;
   Job *jobs = calloc( 4096, sizeof *jobs ); int nj = 0;
   if( loopmode )
     {
@@ -257,38 +274,33 @@ int main( int argc, char **argv )
       h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->st.l, sizeof t->st.l ); h = fnv( h, &t->st.r, sizeof t->st.r ); h = fnv( h, &t->st.flip, sizeof t->st.flip );
       h = fnv( h, &t->st.gsh, sizeof t->st.gsh ); h = fnv( h, &t->st.pan, sizeof t->st.pan ); h = fnv( h, &t->st.mixed, sizeof t->st.mixed ); h = fnv( h, &t->off, sizeof t->off );
       }
-    snprintf( jobs[nj].name, 120, "mix_%05lld.flac", (long long)cur ); jobs[nj++].key = h;
+    snprintf( jobs[nj].name, 120, "%s_mix_%05lld.flac", pre, (long long)cur ); jobs[nj++].key = h;
     }
   else
     for( int i = 0; i < sn.n && nj < 4096; i++ )
       {
       Tk *t = sn.t + i;
-      uint64_t h = 1469598103934665603ULL; h = fnv( h, &loop, sizeof loop ); h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->off, sizeof t->off );
-      snprintf( jobs[nj].name, 120, "%s_%05lld_%05lld.flac", t->in ? "loop" : "mute", (long long)( t->iter >= 0 ? t->iter : GEN_SERIES - t->iter ), (long long)t->off );
-      jobs[nj].key = h; jobs[nj].t = i; nj++;
+      int64_t st = ( t->off * RATE ) % loop, nc = fold ? padded( st + t->frames, loop ) / loop : 1;
+      for( int c = 0; c < nc && nj < 4096; c++ )
+        {
+        uint64_t h = 1469598103934665603ULL; h = fnv( h, &loop, sizeof loop ); h = fnv( h, &t->iter, sizeof t->iter ); h = fnv( h, &t->st.mono, sizeof t->st.mono ); h = fnv( h, &t->st.src, sizeof t->st.src ); h = fnv( h, &t->off, sizeof t->off );
+        if( nc > 1 ) { h = fnv( h, &c, sizeof c ); h = fnv( h, &nc, sizeof nc ); }
+        long long it = t->iter >= 0 ? t->iter : GEN_SERIES - t->iter;
+        char nth[16] = ""; if( nc > 1 ) snprintf( nth, sizeof nth, "_%03d", c );
+        snprintf( jobs[nj].name, 120, "%s_%05lld_%05lld%s.flac", pre, it, (long long)t->off, nth );
+        jobs[nj].key = h; jobs[nj].t = i; jobs[nj].c = c; jobs[nj].nc = nc > 1 ? (int)nc : 0; nj++;
+        }
       }
   if( dry ) { for( int i = 0; i < nj; i++ ) printf( "%s\n", jobs[i].name ); return 0; }
   if( mkdir_p( out ) ) { fprintf( stderr, "a5export: cannot make %s\n", out ); return 1; }
   man_load( out );
-  int written = 0, kept = 0, fail = 0, moved = 0, renamed = 0;
+  int written = 0, kept = 0, fail = 0, moved = 0;
   for( int i = 0; i < nj; i++ )
     {
-    char alt[120] = ""; int af = -1;                              /* the same take under its other prefix: a state change is a rename */
-    if( ! loopmode )
-      {
-      snprintf( alt, sizeof alt, "%s%s", ! strncmp( jobs[i].name, "loop_", 5 ) ? "mute_" : "loop_", jobs[i].name + 5 );
-      for( int k = 0; k < nman; k++ ) if( ! strcmp( man[k].name, alt ) && man[k].key == jobs[i].key ) af = k;
-      }
     if( up_to_date( out, jobs[i].name, jobs[i].key ) ) kept++;
-    else if( af >= 0 && ! up_to_date( out, jobs[i].name, jobs[i].key ) )
+    else
       {
-      char a[1400], b[1400]; snprintf( a, sizeof a, "%s/%s", out, alt ); snprintf( b, sizeof b, "%s/%s", out, jobs[i].name );
-      if( ! rename( a, b ) ) { snprintf( man[af].name, 120, "%s", jobs[i].name ); renamed++; }
-      else af = -1;
-      }
-    if( af < 0 && ! up_to_date( out, jobs[i].name, jobs[i].key ) )
-      {
-      int rc = loopmode ? export_loop( out, jobs[i].name, tmp, s, loop, seq ) : export_take( out, jobs[i].name, sn.t + jobs[i].t, loop );
+      int rc = loopmode ? export_loop( out, jobs[i].name, tmp, s, loop, seq ) : export_take( out, jobs[i].name, sn.t + jobs[i].t, loop, jobs[i].c, jobs[i].nc );
       if( rc ) { fprintf( stderr, "a5export: could not write %s\n", jobs[i].name ); fail++; jobs[i].key = 0; continue; }
       written++;
       }
@@ -312,7 +324,7 @@ int main( int argc, char **argv )
       }
   { char p[1500]; snprintf( p, sizeof p, "%s/.manifest", out ); FILE *f = fopen( p, "w" );
     if( f ) { for( int k = 0; k < nman; k++ ) if( man[k].modes ) fprintf( f, "%llx %s %d\n", (unsigned long long)man[k].key, man[k].name, man[k].modes ); fclose( f ); } }
-  printf( "%s: %d written, %d unchanged, %d renamed (loop_/mute_), in %s\n", what, written, kept, renamed, out );
+  printf( "%s: %d written, %d unchanged, in %s\n", what, written, kept, out );
   if( moved ) printf( "  %d file(s) that left the loop were moved to the trash\n", moved );
   asp_close( s ); free( sn.t ); free( jobs );
   return fail != 0;
