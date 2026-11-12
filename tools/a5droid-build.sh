@@ -24,4 +24,5 @@ done
 rm -f $O/libaspace.a; $TC/bin/llvm-ar rcs $O/libaspace.a $objs
 mkdir -p $O/bin
 $CC -O2 -Wall $INC -o $O/bin/embed examples/embed.c $O/libaspace.a $O/obj/sqlite3.o $O/flac/src/libFLAC/libFLAC.a -lm
+$CC -O2 -Wall $INC -o $O/bin/a5droid src/a5droid.c $O/libaspace.a $O/obj/sqlite3.o $O/flac/src/libFLAC/libFLAC.a -laaudio -llog -lm
 file $O/bin/embed | cut -c1-120

@@ -33,3 +33,9 @@ Probably yes, with caveats, none tested here:
   path is 16-bit PCM at up to 48 kHz (the HAL's format), USB in lists up to 192 kHz stereo. Built-in capture is also subject to Samsung's voice processing unless the host
   asks for the "unprocessed" / "voice performance" input preset; mic quality has not been measured (needs a recording test).
 - Next: an audio host (AAudio, rings, worker thread) as a small NDK program, then try the UR22C (docs above), then AMidi for its loopback SysEx.
+
+## a5droid: the smoke-test host (2026-11-12)
+`src/a5droid.c` (built by `tools/a5droid-build.sh`): AAudio at 48 kHz stereo float, callbacks through two lock-free rings of 8 ticks, a worker thread ticks the core, drops and starves
+are told to the core. The round trip is declared (`--latency`, default 9600 frames), there is no loopback to hunt with. First run from `adb shell`, as the shell user: the mic (device 13, the
+bottom mic) and the output (device 3) both opened, the tick load was about 12% of a tick, one 512-frame starve at the start (the output began before the first tick; harmless), SIGINT or `--secs` drain and close.
+Not yet tried with a real take (someone has to play into it) or with headphones plugged in.
