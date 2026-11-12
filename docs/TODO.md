@@ -79,4 +79,7 @@ Not built:
   (EDGE rule 1); the sync loopback switch for hosts other than nut's (a5card has `mixer()`); macOS and Windows builds (never tried);
   a5card's driver-latency report has no SDL equivalent. `a5start` accepts `edge sdl` (untested with a real card).
 - **a5web** still lacks: `x` export, `f` profile, quit, the take zoom/dial of aspface, feeding a track (`a5import` only), restart of a dead space.
-- `scratch/` held 6.9 GB (four copies of a real session, `tl` to `tl4`, 1.8 GB each) and is now git-ignored; not deleted, it is nut's call.
+- `scratch/` (6.9 GB of test copies) was deleted by nut's leave, 2026-11-12.
+- **Library**: `make lib`, include/aspace.h, examples/embed.c (done). **Android** was tried and set aside (docs/ANDROID.md): the core runs on the phone unchanged; the acoustic sync hunt worked twice then not at all, unexplained; nut's conclusion: not worth more time for now.
+- **Multi-user**: shape 2 (each musician a space with their own audio, takes exchanged) is the design; shape 1 (one space, many remote shells) is NOT to be built until nut and Claude discuss it (nut doubts it can work).
+- A hunt that lasts over 30 s should say plainly that it cannot hear the sync tone (all edges).

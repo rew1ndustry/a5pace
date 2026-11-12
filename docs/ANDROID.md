@@ -1,4 +1,6 @@
-# Android: plan (2026-11-12, nothing built yet)
+# Android: tried 2026-11-12, set aside (nut: not worth more time for now). Read the last section first.
+
+(the plan as first written follows)
 
 The core is a library (`make lib`, include/aspace.h), so a phone host is: an app with a native library (libaspace.a + libFLAC + sqlite built
 with the NDK), a worker thread that ticks the core, and two ring buffers filled and emptied by AAudio callbacks (the C API in the NDK, no
