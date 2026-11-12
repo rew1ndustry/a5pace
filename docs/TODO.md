@@ -73,3 +73,10 @@ Not built:
 - **The offline tools** `a5tune` and `gateprobe` still load whole files (they analyse captures, not takes).
 - **A verification of the newest takes at open** after a hard power cut (`a5recover` finds what a dead run left, but nothing checks every file).
 - **Other platforms**: see docs/PORTABILITY.md.
+
+## Added 2026-11-12 (night session, branch `night-2026-11-12`)
+- **a5sdl** (docs/GUI.md): try it on a real card (`a5sdl DIR --in NAME --out NAME`, `a5sdl --list`); a resampler for the two-clock drift
+  (EDGE rule 1); the sync loopback switch for hosts other than nut's (a5card has `mixer()`); macOS and Windows builds (never tried);
+  a5card's driver-latency report has no SDL equivalent. `a5start` accepts `edge sdl` (untested with a real card).
+- **a5web** still lacks: `x` export, `f` profile, quit, the take zoom/dial of aspface, feeding a track (`a5import` only), restart of a dead space.
+- `scratch/` held 6.9 GB (four copies of a real session, `tl` to `tl4`, 1.8 GB each) and is now git-ignored; not deleted, it is nut's call.
