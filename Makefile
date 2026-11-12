@@ -39,7 +39,7 @@ CODEC_LIBS   = -lm
 endif
 
 LIBOBJ = build/codec_$(CODEC).o build/takefile.o build/keeper.o build/flacio.o build/sha256.o build/aspstore.o build/asptank.o build/aspchip.o build/aspengine.o build/clicklib.o build/gate.o build/gatesim.o build/sync.o build/settings.o build/aspcore.o build/asppeaks.o
-all: bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5hell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec bin/test_takefile bin/test_keeper
+all: bin/a5web bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/a5tune bin/gateprobe bin/a5pace bin/a5control bin/a5hell bin/aspflac bin/aspstore bin/asptank bin/test_store bin/test_tank bin/test_sync bin/test_core bin/test_job bin/test_mix bin/test_gate bin/test_codec bin/test_takefile bin/test_keeper
 
 $(FLACLIB):
 	cmake -S $(FLACDIR) -B build/flac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWITH_OGG=OFF \
@@ -196,6 +196,9 @@ bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
+bin/a5web: src/a5web.c src/ctlclient.c src/ctlclient.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5web.c src/ctlclient.c
 bin/a5hell: src/a5hell.c src/a5term.c src/a5term.h src/a5map.c src/a5map.h src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5term.c src/a5map.c src/a5mixer.c src/ctlclient.c
@@ -233,9 +236,11 @@ test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/tes
 gate-diff:
 	tests/gate_diff.sh $(FILES)
 PREFIX ?= $(HOME)
-install: bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/aspflac
+install: bin/a5web bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/aspflac
 	@mkdir -p $(PREFIX)/bin
-	install -m 755 bin/a5pace bin/a5control bin/a5hell $(PREFIX)/bin/
+	install -m 755 bin/a5pace bin/a5control bin/a5hell bin/a5web $(PREFIX)/bin/
+	@mkdir -p $(PREFIX)/etc/a5web
+	install -m 644 web/index.html web/a5web.js $(PREFIX)/etc/a5web/
 	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
 	install -m 755 bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks $(PREFIX)/bin/
 	install -m 755 bin/aspflac $(PREFIX)/bin/a5flac
