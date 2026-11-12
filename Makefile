@@ -196,6 +196,10 @@ bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
+# the portable audio edge: needs SDL2 (libsdl2-dev), so it is not in `all`; `make bin/a5sdl`
+bin/a5sdl: src/a5sdl.c src/ctlclient.c src/ctlclient.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) $(INC) $(shell pkg-config --cflags sdl2) -o $@ src/a5sdl.c src/ctlclient.c $(shell pkg-config --libs sdl2) -lpthread
 bin/a5web: src/a5web.c src/ctlclient.c src/ctlclient.h src/a5mixer.c src/a5mixer.h
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5web.c src/ctlclient.c src/a5mixer.c
@@ -223,6 +227,7 @@ test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/tes
 	bin/test_mix
 	tests/test_runner.sh
 	tests/test_web.sh
+	tests/test_sdl.sh
 	tests/test_cal.sh
 	tests/test_click.sh
 	tests/test_export.sh
@@ -240,6 +245,7 @@ PREFIX ?= $(HOME)
 install: bin/a5web bin/a5pace bin/a5control bin/a5hell bin/a5tune bin/a5create bin/a5click bin/a5export bin/a5import bin/a5recover bin/a5rebuild bin/a5peaks bin/aspflac
 	@mkdir -p $(PREFIX)/bin
 	install -m 755 bin/a5pace bin/a5control bin/a5hell bin/a5web $(PREFIX)/bin/
+	@if [ -x bin/a5sdl ]; then install -m 755 bin/a5sdl $(PREFIX)/bin/; fi
 	@mkdir -p $(PREFIX)/etc/a5web
 	install -m 644 web/index.html web/a5web.js $(PREFIX)/etc/a5web/
 	install -m 755 tools/a5card tools/a5doctor tools/a5play tools/a5cal tools/a5start $(PREFIX)/bin/
