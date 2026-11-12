@@ -57,3 +57,6 @@
 - **Later (2026-11-06)**: a5hell shows gain/pan of the take under the cursor above the meters; `mono_lev` default is 0 (see end of `docs/A5HELL-PLAN.md`).
 - **Not done / ideas**: Windows port of `a5term`; 256-colour ramp; `a5recover` making peaks itself; unit tests for `asp_pk_add`, the iteration rule and live/safe memory; the colour/block cursor look is unchecked on the user's terminal; `HANG` (2 s of quiet ends a take) is the user's call if takes feel cut short.
 - **Working habits that worked**: do one step, test it, commit with the Co-Authored-By line, say plainly what was and was not tested; run `make test` before every commit (a commit once went in with a failing test); ask before outward or destructive actions; talk first.
+
+## a5web (merged to main 2026-11-11)
+- Browser shell: `a5web DIR` (C, `src/a5web.c`, page in `web/`, docs in `docs/A5WEB.md`, test `tests/test_web.sh`). Starts the space via a5start if needed, `--quiet`, `--no-start`. Map on a canvas, keys as a5hell, mixing language parsed by `a5mixer.c` in a5web (the page has no grammar). Writes are a closed POST list behind an Origin check. No Python. Not done: `x` export, `f` profile, a Firefox look at live data (only Chrome headless was seen), restart of a dead space after launch.
