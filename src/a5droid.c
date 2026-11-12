@@ -5,6 +5,7 @@
    a drop (input ring full) or a starve (output ring empty after output began) is told to the core, as EDGE.md asks. SIGINT / SIGTERM or --secs
    ends it: the core drains its queued moves first. needs API 29 (AAudio input presets). built by tools/a5droid-build.sh, run from adb shell or an app. */
 #include <aaudio/AAudio.h>
+#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -23,6 +24,7 @@ typedef struct { int32_t *buf; _Atomic uint64_t w, r; } Ring;        /* single p
 static Ring inr, outr;
 static _Atomic long drops, starves;
 static _Atomic int flowing, quit;
+static _Atomic float playpeak, cappeak;      /* the largest sample the devices saw since the log last looked: is anything actually reaching the speaker / the mic */
 static _Atomic long capframes, playframes;   /* every frame the two devices handled, to see their clocks against the monotonic one */
 
 static void ring_init( Ring *q ) { q->buf = calloc( (size_t)RING_FRAMES * 2, 4 ); atomic_init( &q->w, 0 ); atomic_init( &q->r, 0 ); }
@@ -52,6 +54,7 @@ static aaudio_data_callback_result_t on_capture( AAudioStream *s, void *u, void 
     int k = n < 480 ? n : 480;
     for( int i = 0; i < 2 * k; i++ ) tmp[i] = to_s32( f[i] );
     if( RING_FRAMES - ring_used( &inr ) < (uint64_t)k ) atomic_fetch_add( &drops, k ); else ring_put( &inr, tmp, k );
+    for( int i = 0; i < 2 * k; i++ ) if( fabsf( f[i] ) > atomic_load( &cappeak ) ) atomic_store( &cappeak, fabsf( f[i] ) );
     f += 2 * k; n -= k;
     }
   return AAUDIO_CALLBACK_RESULT_CONTINUE;
@@ -67,6 +70,7 @@ static aaudio_data_callback_result_t on_play( AAudioStream *s, void *u, void *da
     int k = n < 480 ? n : 480;
     if( ring_used( &outr ) >= (uint64_t)k ) { ring_get( &outr, tmp, k ); for( int i = 0; i < 2 * k; i++ ) f[i] = (float)tmp[i] / 2147483648.0f; }
     else { memset( f, 0, (size_t)k * 8 ); if( atomic_load( &flowing ) ) atomic_fetch_add( &starves, k ); }
+    for( int i = 0; i < 2 * k; i++ ) if( fabsf( f[i] ) > atomic_load( &playpeak ) ) atomic_store( &playpeak, fabsf( f[i] ) );
     f += 2 * k; n -= k;
     }
   return AAUDIO_CALLBACK_RESULT_CONTINUE;
@@ -161,7 +165,10 @@ int main( int argc, char **argv )
     if( ++ticks % 5 == 0 && ticks % 50 == 0 )
       {
       AspCoreStatus ps; asp_core_status( c, &ps );
-      fprintf( stderr, "a5droid: %3ds %s in %4.0f dB out %4.0f dB takes %d%s load %.0f%% round trip %lld frames\n", ticks / 5, ps.phase ? "play" : "sync", ps.in_db[0], ps.out_db[0], ps.loop_takes, ps.take_open ? " (recording)" : "", ps.load, (long long)ps.latency );
+      fprintf( stderr, "a5droid: %3ds %s in %4.0f dB out %4.0f dB takes %d%s load %.0f%% round trip %lld frames%s\n", ticks / 5, ps.phase ? "play" : "sync", ps.in_db[0], ps.out_db[0], ps.loop_takes, ps.take_open ? " (recording)" : "", ps.load, (long long)ps.latency, ps.phase ? "" : " (hunting: tone level shift below the loudest shown next)" );
+      { float pp = atomic_exchange( &playpeak, 0 ), cp = atomic_exchange( &cappeak, 0 );
+        fprintf( stderr, "a5droid:     devices: speaker side peak %.1f dB, mic side peak %.1f dB%s\n", 20 * log10f( pp + 1e-9f ), 20 * log10f( cp + 1e-9f ), ps.phase ? "" : ", hunting" ); }
+      if( ! ps.phase ) fprintf( stderr, "a5droid:     sync tone shifted %d bits down\n", ps.sync_shift );
       }
     }
   AAudioStream_requestStop( pi ); AAudioStream_requestStop( po );

@@ -39,3 +39,10 @@ Probably yes, with caveats, none tested here:
 are told to the core. The round trip is declared (`--latency`, default 9600 frames), there is no loopback to hunt with. First run from `adb shell`, as the shell user: the mic (device 13, the
 bottom mic) and the output (device 3) both opened, the tick load was about 12% of a tick, one 512-frame starve at the start (the output began before the first tick; harmless), SIGINT or `--secs` drain and close.
 Not yet tried with a real take (someone has to play into it) or with headphones plugged in.
+
+## Empirical sync on the phone, 2026-11-12 (what is known, and what is not)
+- **Clocks** (declared latency, 12 min): capture and playback ran at the same rate (differences of +-89 ppm are one 256-frame burst, mean zero); output ring steady; no drops, no starves. No drift between the two devices.
+- **Declared latency is not to be trusted**: the guess was 9600 frames; the acoustic sync hunt (phone speaker into its bottom mic, no hardware) measured 15466 and, in a later run, 16323 frames. A 17 ms spread between two starts: the hunt has to be run on every start, as EDGE.md says.
+- **Not working at the end of the session**: after those two successes (found in about 13 s each, voice-recognition input preset), five later runs (45 s to 11 min, presets voice, unprocessed, camcorder, generic) never found the round trip. The log shows the tone going to the speaker at -0.6 dB and the mic hearing it (-10 dB with the voice preset, 0 dB camcorder, -40 dB unprocessed), the sync level climbing to its loudest, and no decode. Not yet explained. Suspects: the phone's position or what was near it (noise, a hand, a surface); the preset's gain control; the level (loudest tone clips the mic; the working runs found it at about 3 bits down). Next step: a run that records the mic during the hunt to a file, to look at what the core is being given.
+- `a5droid` prints per ten seconds the speaker-side and mic-side peaks and the sync level; `--hunt-every S` re-hunts every S seconds and logs each measured round trip (`HUNT n ...`).
+- To do: a hunt that goes on over 30 s should say so ("cannot hear the sync tone").
