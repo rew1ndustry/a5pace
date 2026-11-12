@@ -280,7 +280,9 @@ static void ensure_space( const char **extra, int nextra )
   pid_t p = fork();
   if( p == 0 ) { if( quiet ) { if( ! freopen( "/dev/null", "w", stdout ) || ! freopen( "/dev/null", "w", stderr ) ) _exit( 127 ); } else dup2( 2, 1 ); execvp( "a5start", (char *const *)av ); _exit( 127 ); }
   int status = 0;
-  if( p < 0 || waitpid( p, &status, 0 ) < 0 || ! WIFEXITED( status ) || WEXITSTATUS( status ) ) { chat( "a5start did not start it (is a5start installed? try it by hand): the page will say 'no space' until it runs" ); return; }
+  if( p < 0 || waitpid( p, &status, 0 ) < 0 ) { fprintf( stderr, "a5web: could not run a5start\n" ); exit( 1 ); }
+  if( WIFEXITED( status ) && WEXITSTATUS( status ) == 127 ) { fprintf( stderr, "a5web: a5start was not found on the path (make install puts it in ~/.local/bin)\n" ); exit( 1 ); }
+  if( ! WIFEXITED( status ) || WEXITSTATUS( status ) ) { fprintf( stderr, "a5web: a5start could not start %s, so there is nothing to show: stopping (check the path, or use --no-start to serve the page anyway)\n", dir ); exit( 1 ); }
   c = ctlc_connect( dir );
   if( c >= 0 ) { close( c ); chat( "the space is up" ); } else chat( "a5start finished but there is no control port yet: the page will pick it up when there is" );
   }

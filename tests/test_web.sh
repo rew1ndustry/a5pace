@@ -46,6 +46,7 @@ apid=$!
 wait_for "$here/bin/a5control $d2 LINE 2>/dev/null | grep -q ."
 chk "a5web started the space" "$here/bin/a5control $d2 LINE | grep -q 'iter'"
 chk "and --quiet kept quiet" "[ ! -s $t/auto.out ]"
+chk "a path that is not a space stops a5web with a message" "PATH=$here/tools:$here/bin:$PATH $here/bin/a5web $t/nosuch --port $((port+2)) --www $here/web 2>&1 | grep -q 'nothing to show'"
 $here/bin/a5control $d2 QUIT > /dev/null 2>&1 || true
 kill $apid 2>/dev/null || true
 $c QUIT > /dev/null
