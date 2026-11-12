@@ -6,3 +6,4 @@ third_party/sqlite/
 src/schema_sql.h
 *.whl
 *.tar.gz
+scratch/
