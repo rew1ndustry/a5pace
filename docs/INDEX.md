@@ -11,6 +11,8 @@ One line each. Written 2026-11-12 so that a later session need not scan the tree
 - `asppeaks.*` a level byte a tick per take. `settings.*` key=value setups and the config dir. `plat.h` the platform shims (byte order, fseek).
 ## The core (a pure function over buffers, no clocks)
 - `aspcore.h/.c` the tick loop: sync phase, play phase, window of chips, moves/jobs, live feed, drain. `aspengine.*` the loop kept from the store (takes, placements, mix). `sync.*` the FSK round-trip hunt. `gate.*`, `gatesim.*` when sound starts.
+## The library
+- `make lib` builds `build/libaspace.a` from `LIBOBJ` (every module above, no main, no sockets, no audio device). `include/aspace.h` is the one header and says how a host opens, ticks and closes; `examples/embed.c` is the smallest host (`bin/embed`), `tests/test_embed.sh` its test. `a5pace` is one host of the library, `a5sdl` another.
 ## Programs (all `a5` names; `aspstore`, `asptank`, `aspflac` are low-level debug tools)
 - `aspace_main.c` -> `a5pace`: `new`, `run` (pipe mode or `-S LAT` simulated card), the control port (`ctlsrv.*`). `a5control` (+ `ctlclient.*`) one command to a running space.
 - Shells: `a5hell` (+ `a5term`, `a5map`, `a5mixer`) terminal; `a5web` (+ `web/index.html`, `web/a5web.js`) browser; both parse the mixing language in `a5mixer.c`.
