@@ -67,6 +67,7 @@ static int command( const char *path, char *cmd, size_t n )
   else if( ! strcmp( p, "/api/line" ) ) snprintf( cmd, n, "LINE" );
   else if( ! strcmp( p, "/api/meter" ) ) snprintf( cmd, n, "METER" );
   else if( ! strcmp( p, "/api/takes" ) ) snprintf( cmd, n, "TAKES" );
+  else if( ! strcmp( p, "/api/grid" ) ) snprintf( cmd, n, "GRID" );
   else if( ! strcmp( p, "/api/map" ) )
     {
     if( q && num( q, "from", &a ) && num( q, "to", &b ) ) snprintf( cmd, n, "MAP %ld %ld", a, b );
@@ -92,6 +93,23 @@ static void serve_file( int fd, int i )
   free( b.b );
   }
 
+/* the thresholds a5hell uses ($A5HELL_CFG or ~/.local/etc/a5hell.cfg), as it has them: only the two numbers the page needs, else the defaults */
+static void serve_cfg( int fd )
+  {
+  char p[1200], l[200], o[100]; double g = -24, r = -6;
+  const char *e = getenv( "A5HELL_CFG" ), *h = getenv( "HOME" );
+  if( e ) snprintf( p, sizeof p, "%s", e ); else snprintf( p, sizeof p, "%s/.local/etc/a5hell.cfg", h ? h : "." );
+  FILE *f = fopen( p, "r" );
+  if( f )
+    {
+    while( fgets( l, sizeof l, f ) )
+      { double v; if( sscanf( l, "green_below_db %lf", &v ) == 1 ) g = v; else if( sscanf( l, "red_above_db %lf", &v ) == 1 ) r = v; }
+    fclose( f );
+    }
+  snprintf( o, sizeof o, "green_below_db %g\nred_above_db %g\n", g, r );
+  say( fd, 200, o );
+  }
+
 static void handle( int fd )
   {
   char r[4096]; size_t n = 0;
@@ -110,6 +128,7 @@ static void handle( int fd )
   char ok1[40], ok2[40]; snprintf( ok1, sizeof ok1, "127.0.0.1:%d", port ); snprintf( ok2, sizeof ok2, "localhost:%d", port );
   if( strcmp( host, ok1 ) && strcmp( host, ok2 ) ) { say( fd, 403, "wrong host\n" ); return; }
   for( size_t i = 0; i < sizeof FILES / sizeof *FILES; i++ ) if( ! strcmp( path, FILES[i].url ) ) { serve_file( fd, (int)i ); return; }
+  if( ! strcmp( path, "/api/cfg" ) ) { serve_cfg( fd ); return; }
   char cmd[100];
   if( ! command( path, cmd, sizeof cmd ) ) { say( fd, 404, "no such page\n" ); return; }
   int c = ctlc_connect( dir );
