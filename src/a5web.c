@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdarg.h>
+#include <sys/wait.h>
 #include <ctype.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -19,6 +21,15 @@
 #include "a5mixer.h"
 
 static const char *dir, *www;
+static int quiet;
+/* a little talk on stderr about what a5web does, unless --quiet; one write a line, so children do not interleave */
+static void chat( const char *form, ... )
+  {
+  if( quiet ) return;
+  char b[400]; va_list ap; int k = snprintf( b, sizeof b, "a5web: " );
+  va_start( ap, form ); vsnprintf( b + k, sizeof b - (size_t)k - 2, form, ap ); va_end( ap );
+  strcat( b, "\n" ); if( write( 2, b, strlen( b ) ) < 0 ) {}
+  }
 static int port = 5055;
 
 /* what is served: the published name, the file, its type */
@@ -189,7 +200,7 @@ static void post( int fd, const char *path )
     else if( ! strcmp( v, "mode_overlap" ) && num( q, "n", &n ) && n >= 1 && n <= 9 ) snprintf( cmd, sizeof cmd, "AUTOMIX OVERLAP %ld", n );
     else if( ! strcmp( v, "restore" ) && num( q, "seq", &n ) ) snprintf( cmd, sizeof cmd, "RESTORE %ld%s", n, qstr( q, "now", w, sizeof w ) && w[0] == '1' ? " NOW" : "" );
     else { say( fd, 400, "no such action\n" ); return; }
-    relay( fd, cmd ); return;
+    chat( "the page asks the space: %s", cmd ); relay( fd, cmd ); return;
     }
   if( ! strcmp( p, "/api/mix" ) )                          /* s: what was typed (a5mixer's language); t: iter.off,iter.off the takes it is for */
     {
@@ -211,6 +222,7 @@ static void post( int fd, const char *path )
         a5mix_line( l, sizeof l, it, off, &mc ); bad += ctlc_cmd( c, l, NULL, NULL ) != 0; done++;
         }
     close( c );
+    if( done ) chat( "mix %s on %d take(s)%s", s, done, bad ? ", some refused" : "" );
     if( ! done ) say( fd, 200, "NONE\n" );
     else { char o[60]; snprintf( o, sizeof o, bad ? "ERR %d of %d\n" : "OK %d\n", bad ? bad : done, done ); say( fd, 200, o ); }
     return;
@@ -255,19 +267,41 @@ static void handle( int fd )
   relay( fd, cmd );
   }
 
+/* make sure the space is running: if there is no control port, a5start DIR [--live|--safe] does it, as a5hell and a5control --start do */
+static void ensure_space( const char **extra, int nextra )
+  {
+  int c = ctlc_connect( dir );
+  if( c >= 0 ) { close( c ); chat( "the space %s is running", dir ); return; }
+  chat( "the space %s is not running: starting it with a5start%s", dir, nextra ? " (and your options)" : "" );
+  const char *av[8]; int n = 0;
+  av[n++] = "a5start"; av[n++] = dir;
+  for( int i = 0; i < nextra && n < 6; i++ ) av[n++] = extra[i];
+  av[n] = NULL;
+  pid_t p = fork();
+  if( p == 0 ) { if( quiet ) { if( ! freopen( "/dev/null", "w", stdout ) || ! freopen( "/dev/null", "w", stderr ) ) _exit( 127 ); } else dup2( 2, 1 ); execvp( "a5start", (char *const *)av ); _exit( 127 ); }
+  int status = 0;
+  if( p < 0 || waitpid( p, &status, 0 ) < 0 || ! WIFEXITED( status ) || WEXITSTATUS( status ) ) { chat( "a5start did not start it (is a5start installed? try it by hand): the page will say 'no space' until it runs" ); return; }
+  c = ctlc_connect( dir );
+  if( c >= 0 ) { close( c ); chat( "the space is up" ); } else chat( "a5start finished but there is no control port yet: the page will pick it up when there is" );
+  }
+
 int main( int argc, char **argv )
   {
-  char wbuf[1000] = "";
+  char wbuf[1000] = ""; const char *extra[4]; int nextra = 0, nostart = 0;
   for( int i = 1; i < argc; i++ )
     {
     if( ! strcmp( argv[i], "--port" ) && i + 1 < argc ) port = atoi( argv[++i] );
     else if( ! strcmp( argv[i], "--www" ) && i + 1 < argc ) www = argv[++i];
+    else if( ! strcmp( argv[i], "--quiet" ) ) quiet = 1;
+    else if( ! strcmp( argv[i], "--no-start" ) ) nostart = 1;
+    else if( ( ! strcmp( argv[i], "--live" ) || ! strcmp( argv[i], "--safe" ) ) && nextra < 4 ) extra[nextra++] = argv[i];
     else if( argv[i][0] != '-' && ! dir ) dir = argv[i];
     else { dir = NULL; break; }
     }
-  if( ! dir || port < 1 || port > 65535 ) { fprintf( stderr, "usage: a5web DIR [--port N] [--www DIR]\n" ); return 2; }
+  if( ! dir || port < 1 || port > 65535 ) { fprintf( stderr, "usage: a5web DIR [--live|--safe] [--no-start] [--quiet] [--port N] [--www DIR]\n" ); return 2; }
   if( ! www ) www = getenv( "A5WEB_DIR" );
   if( ! www ) { const char *h = getenv( "HOME" ); snprintf( wbuf, sizeof wbuf, "%s/.local/etc/a5web", h ? h : "." ); www = wbuf; }
+  if( nostart ) chat( "not starting the space (--no-start)" ); else ensure_space( extra, nextra );
   signal( SIGCHLD, SIG_IGN ); signal( SIGPIPE, SIG_IGN );
   int s = socket( AF_INET, SOCK_STREAM, 0 ), one = 1;
   struct sockaddr_in a;
@@ -275,7 +309,8 @@ int main( int argc, char **argv )
   memset( &a, 0, sizeof a );
   a.sin_family = AF_INET; a.sin_addr.s_addr = htonl( INADDR_LOOPBACK ); a.sin_port = htons( (unsigned short)port );
   if( bind( s, (struct sockaddr *)&a, sizeof a ) || listen( s, 16 ) ) { fprintf( stderr, "a5web: port %d: %s\n", port, strerror( errno ) ); return 1; }
-  fprintf( stderr, "a5web: http://127.0.0.1:%d/  (space %s, pages in %s)\n", port, dir, www );
+  chat( "open http://127.0.0.1:%d/ in the browser  (pages from %s; ctrl-c stops a5web, not the space)", port, www );
+  chat( "I will say here what the page does to the space; --quiet turns this off" );
   for( ;; )
     {
     int c = accept( s, NULL, NULL );

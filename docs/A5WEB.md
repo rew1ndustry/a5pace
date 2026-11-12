@@ -21,6 +21,7 @@ Install with `make install`: the program goes to `~/.local/bin`, the page to `~/
 - Not in the web shell yet: `x` export, `f` profile, quitting the space (use a5hell, a5export, a5control).
 
 ## How it works (developers)
+- `a5web DIR [--live|--safe] [--no-start] [--quiet]`: if the space is not running, a5web starts it with `a5start DIR` (a5start decides card or simulated, and passes `--live` / `--safe` on to a5pace); `--no-start` does not. It talks on stderr about what it does (starting the space, the address, every write the page makes); `--quiet` silences it, and a5start with it. Starting happens once, at launch: if the space dies later the page says "no space"; restart a5web.
 - `src/a5web.c`, one child process per connection, a fresh control connection (`ctlclient`) per request. No state.
 - Reads are GET: `/api/state|line|meter|takes|grid|history|map?from=&to=|maphigh?n=&above=|cfg` return the control port's lines as
   text. `/api/watch` is the log as server-sent events (`WATCH`); the page ignores the `top` and `wrap` ticks.

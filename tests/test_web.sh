@@ -38,6 +38,16 @@ chk "a mix reaches the take" "[ \"\$(curl -s -m 2 -X POST -H '$O' '$U/api/mix?s=
 wait_for "$c GRID | grep -q '^$it $off [0-9]* [01] 1 2 '"
 chk "and shows as its gain" "$c GRID | grep -q '^$it $off [0-9]* [01] 1 2 '"
 kill $wpid 2>/dev/null || true
+# a5web starts a space that is not running (through a5start, here on a simulated card), and --quiet says nothing
+d2=$t/auto
+$here/bin/a5pace new $d2 auto 6.25 > /dev/null
+PATH=$here/tools:$here/bin:$PATH A5START_EDGE=sim $here/bin/a5web $d2 --port $((port+1)) --www $here/web --quiet > $t/auto.out 2>&1 &
+apid=$!
+wait_for "$here/bin/a5control $d2 LINE 2>/dev/null | grep -q ."
+chk "a5web started the space" "$here/bin/a5control $d2 LINE | grep -q 'iter'"
+chk "and --quiet kept quiet" "[ ! -s $t/auto.out ]"
+$here/bin/a5control $d2 QUIT > /dev/null 2>&1 || true
+kill $apid 2>/dev/null || true
 $c QUIT > /dev/null
 wait $pid || true
 rm -rf $t
