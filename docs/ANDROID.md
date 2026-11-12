@@ -24,3 +24,12 @@ Probably yes, with caveats, none tested here:
 - **The loopback** for the sync hunt: on a5card the shell switches the UR22C's own loopback with a script (`ur22c loopback on|off`); the phone has no such tool, so the first
   version would use the acoustic or cable loopback, or the declared latency (`declared_latency`), as the edge contract allows.
 - **Samsung specifics**: some Samsung phones route USB audio only to the 'USB audio' output and need the input chosen explicitly; try it, then record what happened here.
+
+## Done 2026-11-12: first contact
+- Phone: Samsung Galaxy A14 5G (SM-A146W), Android 15, arm64-v8a, USB debugging authorised. Tools in `~/.local/android/` (platform-tools, NDK r27c).
+- `tools/a5droid-build.sh` cross-builds libaspace.a and `embed` with no source change. `adb push` to `/data/local/tmp` and run in `adb shell`: a tone recorded, the take
+  committed on close, and on a second run played back from the loop. So the core, the store (sqlite), flac and the tank all run on the phone as they are.
+- Audio the phone reports (`dumpsys media.audio_policy`): built-in mic (bottom), back mic, a "2 Mic" dual-mic input, USB device / USB headset in and out; the built-in
+  path is 16-bit PCM at up to 48 kHz (the HAL's format), USB in lists up to 192 kHz stereo. Built-in capture is also subject to Samsung's voice processing unless the host
+  asks for the "unprocessed" / "voice performance" input preset; mic quality has not been measured (needs a recording test).
+- Next: an audio host (AAudio, rings, worker thread) as a small NDK program, then try the UR22C (docs above), then AMidi for its loopback SysEx.
