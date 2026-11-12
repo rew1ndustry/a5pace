@@ -196,9 +196,9 @@ bin/a5tune: src/a5tune.c $(LIBOBJ) $(SQL_OBJ)
 bin/a5control: src/a5control.c src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5control.c src/ctlclient.c
-bin/a5web: src/a5web.c src/ctlclient.c src/ctlclient.h
+bin/a5web: src/a5web.c src/ctlclient.c src/ctlclient.h src/a5mixer.c src/a5mixer.h
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $(INC) -o $@ src/a5web.c src/ctlclient.c
+	$(CC) $(CFLAGS) $(INC) -o $@ src/a5web.c src/ctlclient.c src/a5mixer.c
 bin/a5hell: src/a5hell.c src/a5term.c src/a5term.h src/a5map.c src/a5map.h src/a5mixer.c src/a5mixer.h src/ctlclient.c
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(INC) -o $@ src/a5hell.c src/a5term.c src/a5map.c src/a5mixer.c src/ctlclient.c
@@ -222,6 +222,7 @@ test: all bin/test_chip bin/test_keeper bin/test_codec bin/test_takefile bin/tes
 	bin/test_gate
 	bin/test_mix
 	tests/test_runner.sh
+	tests/test_web.sh
 	tests/test_cal.sh
 	tests/test_click.sh
 	tests/test_export.sh

@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "ctlclient.h"
+#include "a5mixer.h"
 
 static const char *dir, *www;
 static int port = 5055;
@@ -68,6 +69,7 @@ static int command( const char *path, char *cmd, size_t n )
   else if( ! strcmp( p, "/api/meter" ) ) snprintf( cmd, n, "METER" );
   else if( ! strcmp( p, "/api/takes" ) ) snprintf( cmd, n, "TAKES" );
   else if( ! strcmp( p, "/api/grid" ) ) snprintf( cmd, n, "GRID" );
+  else if( ! strcmp( p, "/api/history" ) ) snprintf( cmd, n, "HISTORY 30" );
   else if( ! strcmp( p, "/api/map" ) )
     {
     if( q && num( q, "from", &a ) && num( q, "to", &b ) ) snprintf( cmd, n, "MAP %ld %ld", a, b );
@@ -110,6 +112,112 @@ static void serve_cfg( int fd )
   say( fd, 200, o );
   }
 
+/* one control command, relayed: its lines back as text/plain; a failure of the space is 500, no space 502 */
+static void relay( int fd, const char *cmd )
+  {
+  int c = ctlc_connect( dir );
+  if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return; }
+  Buf b = { 0 };
+  int rc = ctlc_cmd( c, cmd, add, &b );
+  close( c );
+  if( rc < 0 ) say( fd, 502, "the space did not answer\n" );
+  else out( fd, rc ? 500 : 200, "text/plain; charset=utf-8", b.b ? b.b : "", b.n );
+  free( b.b );
+  }
+
+/* the events of the space as server-sent events: the control port's WATCH, a line an event; a comment every 15 s finds a client that went */
+static void watch( int fd )
+  {
+  const char *h = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+  int c = ctlc_connect( dir );
+  if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return; }
+  if( ctlc_cmd( c, "WATCH", NULL, NULL ) ) { close( c ); say( fd, 502, "the space did not answer\n" ); return; }
+  alarm( 0 );
+  if( send( fd, h, strlen( h ), MSG_NOSIGNAL ) < 0 ) { close( c ); return; }
+  char b[1300], o[1400];
+  for( ;; )
+    {
+    int r = ctlc_readline( c, b, sizeof b, 15000 );
+    if( r < 0 ) break;
+    int k = r ? snprintf( o, sizeof o, "data: %s\n\n", b ) : snprintf( o, sizeof o, ": still here\n\n" );
+    if( send( fd, o, (size_t)k, MSG_NOSIGNAL ) < 0 ) break;
+    }
+  close( c );
+  }
+
+/* query values: percent-decoded into v, up to n-1 bytes; 0 if the key is absent */
+static int qstr( const char *q, const char *key, char *v, size_t n )
+  {
+  size_t kl = strlen( key );
+  for( const char *p = q; p && *p; p = strchr( p, '&' ) ? strchr( p, '&' ) + 1 : NULL )
+    if( ! strncmp( p, key, kl ) && p[kl] == '=' )
+      {
+      size_t i = 0;
+      for( p += kl + 1; *p && *p != '&' && i < n - 1; p++ )
+        {
+        if( *p == '%' && isxdigit( (unsigned char)p[1] ) && isxdigit( (unsigned char)p[2] ) ) { char h[3] = { p[1], p[2], 0 }; v[i++] = (char)strtol( h, NULL, 16 ); p += 2; }
+        else v[i++] = *p == '+' ? ' ' : *p;
+        }
+      v[i] = 0; return 1;
+      }
+  return 0;
+  }
+
+/* the writes. none passes a word of the request on: each is one of these and numbers. QUIT, REVERT, EDGE, EVENT, CLICK, SIM are not here */
+static void post( int fd, const char *path )
+  {
+  char p[400], v[100], w[100], cmd[100]; snprintf( p, sizeof p, "%s", path );
+  char *q = strchr( p, '?' ); if( q ) *q++ = 0; else q = p + strlen( p );
+  long n;
+  if( ! strcmp( p, "/api/do" ) )
+    {
+    if( ! qstr( q, "c", v, sizeof v ) ) { say( fd, 400, "no action\n" ); return; }
+    if( ! strcmp( v, "live" ) ) snprintf( cmd, sizeof cmd, "LIVE" );
+    else if( ! strcmp( v, "safe" ) ) snprintf( cmd, sizeof cmd, "SAFE" );
+    else if( ! strcmp( v, "sync" ) ) snprintf( cmd, sizeof cmd, "SYNC" );
+    else if( ! strcmp( v, "undotake" ) ) snprintf( cmd, sizeof cmd, "UNDO TAKE" );
+    else if( ! strcmp( v, "undoiter" ) ) snprintf( cmd, sizeof cmd, "UNDO ITER" );
+    else if( ! strcmp( v, "relearn" ) ) snprintf( cmd, sizeof cmd, "RELEARN" );
+    else if( ! strcmp( v, "gate_more" ) ) snprintf( cmd, sizeof cmd, "GATE -3" );
+    else if( ! strcmp( v, "gate_less" ) ) snprintf( cmd, sizeof cmd, "GATE +3" );
+    else if( ! strcmp( v, "wipe" ) ) snprintf( cmd, sizeof cmd, "WIPE" );
+    else if( ! strcmp( v, "wipeall" ) ) snprintf( cmd, sizeof cmd, "WIPE ALL" );
+    else if( ! strcmp( v, "mode_loop" ) ) snprintf( cmd, sizeof cmd, "AUTOMIX LOOP" );
+    else if( ! strcmp( v, "mode_keep" ) ) snprintf( cmd, sizeof cmd, "AUTOMIX KEEP" );
+    else if( ! strcmp( v, "mode_swap" ) ) snprintf( cmd, sizeof cmd, "AUTOMIX SWAP" );
+    else if( ! strcmp( v, "mode_swapeach" ) ) snprintf( cmd, sizeof cmd, "AUTOMIX SWAP EACH" );
+    else if( ! strcmp( v, "mode_overlap" ) && num( q, "n", &n ) && n >= 1 && n <= 9 ) snprintf( cmd, sizeof cmd, "AUTOMIX OVERLAP %ld", n );
+    else if( ! strcmp( v, "restore" ) && num( q, "seq", &n ) ) snprintf( cmd, sizeof cmd, "RESTORE %ld%s", n, qstr( q, "now", w, sizeof w ) && w[0] == '1' ? " NOW" : "" );
+    else { say( fd, 400, "no such action\n" ); return; }
+    relay( fd, cmd ); return;
+    }
+  if( ! strcmp( p, "/api/mix" ) )                          /* s: what was typed (a5mixer's language); t: iter.off,iter.off the takes it is for */
+    {
+    char s[48], t[700]; MixCmd mc;
+    if( ! qstr( q, "s", s, sizeof s ) || strspn( s, "0123456789+-/\\.!mMpP" ) != strlen( s ) ) { say( fd, 400, "bad entry\n" ); return; }
+    int r = a5mix_parse( s, &mc );
+    if( r == MP_WAIT ) { say( fd, 200, "WAIT\n" ); return; }
+    if( r == MP_BAD ) { say( fd, 200, "BAD\n" ); return; }
+    int c = ctlc_connect( dir );
+    if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return; }
+    int done = 0, bad = 0; char l[220];
+    if( mc.has_iter ) { a5mix_line( l, sizeof l, mc.iter, mc.has_take ? mc.take : -1, &mc ); bad += ctlc_cmd( c, l, NULL, NULL ) != 0; done++; }
+    else if( qstr( q, "t", t, sizeof t ) && strspn( t, "0123456789.," ) == strlen( t ) )
+      for( char *e, *k = t; *k && done < 64; k = e )
+        {
+        long it = strtol( k, &e, 10 ), off;
+        if( e == k || *e != '.' ) break;
+        off = strtol( e + 1, &e, 10 ); if( *e == ',' ) e++;
+        a5mix_line( l, sizeof l, it, off, &mc ); bad += ctlc_cmd( c, l, NULL, NULL ) != 0; done++;
+        }
+    close( c );
+    if( ! done ) say( fd, 200, "NONE\n" );
+    else { char o[60]; snprintf( o, sizeof o, bad ? "ERR %d of %d\n" : "OK %d\n", bad ? bad : done, done ); say( fd, 200, o ); }
+    return;
+    }
+  say( fd, 404, "no such action\n" );
+  }
+
 static void handle( int fd )
   {
   char r[4096]; size_t n = 0;
@@ -121,24 +229,30 @@ static void handle( int fd )
     n += (size_t)k; r[n] = 0;
     if( strstr( r, "\r\n\r\n" ) ) break;
     }
-  char path[400], host[100] = "";
-  if( sscanf( r, "GET %399s ", path ) != 1 ) { say( fd, 400, "only GET\n" ); return; }
+  char path[400], host[100] = "", origin[120] = "";
+  int is_post = 0;
+  if( sscanf( r, "GET %399s ", path ) == 1 ) {}
+  else if( sscanf( r, "POST %399s ", path ) == 1 ) is_post = 1;
+  else { say( fd, 400, "only GET and POST\n" ); return; }
   for( char *l = strstr( r, "\r\n" ); l; l = strstr( l + 2, "\r\n" ) )
-    if( ! strncasecmp( l + 2, "Host:", 5 ) ) { sscanf( l + 7, " %99[^\r\n]", host ); break; }
+    {
+    if( ! strncasecmp( l + 2, "Host:", 5 ) ) sscanf( l + 7, " %99[^\r\n]", host );
+    else if( ! strncasecmp( l + 2, "Origin:", 7 ) ) sscanf( l + 9, " %119[^\r\n]", origin );
+    }
   char ok1[40], ok2[40]; snprintf( ok1, sizeof ok1, "127.0.0.1:%d", port ); snprintf( ok2, sizeof ok2, "localhost:%d", port );
   if( strcmp( host, ok1 ) && strcmp( host, ok2 ) ) { say( fd, 403, "wrong host\n" ); return; }
+  if( is_post )                                            /* a write must come from our own page: the browser says where from */
+    {
+    char o1[60], o2[60]; snprintf( o1, sizeof o1, "http://%s", ok1 ); snprintf( o2, sizeof o2, "http://%s", ok2 );
+    if( strcmp( origin, o1 ) && strcmp( origin, o2 ) ) { say( fd, 403, "wrong origin\n" ); return; }
+    post( fd, path ); return;
+    }
   for( size_t i = 0; i < sizeof FILES / sizeof *FILES; i++ ) if( ! strcmp( path, FILES[i].url ) ) { serve_file( fd, (int)i ); return; }
   if( ! strcmp( path, "/api/cfg" ) ) { serve_cfg( fd ); return; }
+  if( ! strcmp( path, "/api/watch" ) ) { watch( fd ); return; }
   char cmd[100];
   if( ! command( path, cmd, sizeof cmd ) ) { say( fd, 404, "no such page\n" ); return; }
-  int c = ctlc_connect( dir );
-  if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return; }
-  Buf b = { 0 };
-  int rc = ctlc_cmd( c, cmd, add, &b );
-  close( c );
-  if( rc < 0 ) say( fd, 502, "the space did not answer\n" );
-  else out( fd, rc ? 500 : 200, "text/plain; charset=utf-8", b.b ? b.b : "", b.n );
-  free( b.b );
+  relay( fd, cmd );
   }
 
 int main( int argc, char **argv )
