@@ -22,13 +22,14 @@ Install with `make install`: the program goes to `~/.local/bin`, the page to `~/
   `/8` right). Letting go of a slider queues the move for the take's next start; hold shift for at once (the same for mute / play).
   With several takes selected it acts on all of them. Anywhere else: live / safe, loop / keep, the gate (learn, more, less),
   output gain (forget clips) and **Quit...**, which asks "are you sure" and then stops the space (it drains: moves under way
-  finish) and exits a5web. Esc or a click outside closes a menu.
+  finish) and exits a5web. Esc or a click outside closes a menu. The **Quit** button on the top row does the same as the menu's Quit… (it asks first).
+- **Window title.** The space's name, or the folder's name if the space has none, then ` - a5web`.
 - Not in the web shell yet: `x` export, `f` profile (use a5hell or a5export).
 
 ## How it works (developers)
 - `a5web DIR [--live|--safe] [--no-start] [--quiet]`: if the space is not running, a5web starts it with `a5start DIR` (a5start decides card or simulated, and passes `--live` / `--safe` on to a5pace); `--no-start` does not. It talks on stderr about what it does (starting the space, the address, every write the page makes); `--quiet` silences it, and a5start with it. Starting happens once, at launch: if the space dies later the page says "no space"; restart a5web.
 - `src/a5web.c`, one child process per connection, a fresh control connection (`ctlclient`) per request. No state.
-- Reads are GET: `/api/state|line|meter|takes|grid|history|map?from=&to=|maphigh?n=&above=|cfg` return the control port's lines as
+- Reads are GET: `/api/dir` (the folder's own name) and `/api/state|line|meter|takes|grid|history|map?from=&to=|maphigh?n=&above=|cfg` return the control port's lines as
   text. `/api/watch` is the log as server-sent events (`WATCH`); the page ignores the `top` and `wrap` ticks.
 - Writes are POST only, with an `Origin` equal to our own address, and are a closed list: `/api/do?c=NAME` (live, safe, sync, quit, gainreset,
   undotake, undoiter, relearn, gate_more, gate_less, wipe, wipeall, mode_*, restore) and `/api/mix?s=TYPED&t=iter.off,...`.

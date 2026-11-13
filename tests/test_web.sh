@@ -20,6 +20,7 @@ $here/bin/a5web $d --port $port --www $here/web 2> $t/web.err &
 wpid=$!
 wait_for "curl -s -m 2 $U/ | grep -q canvas"
 chk "the page is served" "curl -s -m 2 $U/ | grep -q canvas"
+chk "the folder name is served for the title" "curl -s -m 2 $U/api/dir | grep -q ^s\$"
 chk "state is relayed" "curl -s -m 2 $U/api/state | grep -q '\"phase\":\"play\"'"
 chk "the map is relayed" "curl -s -m 2 '$U/api/map?from=1&to=3' | grep -q ' in 0 '"
 chk "a wrong host is refused" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} -H 'Host: evil.com' $U/api/state)\" = 403 ]"

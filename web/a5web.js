@@ -47,6 +47,8 @@ const key = t => t.iter + "." + t.off;
 function loopTicks() { return S.state ? Math.max(1, Math.round(S.state.loop_frames / 9600)) : 40; }
 function curIter() { return S.state ? S.state.iter : 1; }
 
+async function pollDir() { try { S.dir = (await get("/api/dir"))[0] || ""; title(); } catch (e) {} }
+function title() { const n = (S.state && S.state.name) || S.dir || ""; const t = n ? n + " - a5web" : "a5web"; if (document.title !== t) document.title = t; }
 async function pollCfg() {
   try { for (const l of await get("/api/cfg")) { const [k, v] = l.split(" "); if (k === "green_below_db") S.cfg.green = +v; if (k === "red_above_db") S.cfg.red = +v; } } catch (e) {}
 }
@@ -55,7 +57,7 @@ async function pollSlow() {                          // state, map, grid: once a
   if (slowBusy) return;
   slowBusy = true; clearTimeout(slowTimer);
   try {
-    S.state = JSON.parse((await get("/api/state"))[0]);
+    S.state = JSON.parse((await get("/api/state"))[0]); title();
     const it = curIter(), lo = Math.max(1, (S.top ?? it - S.rows + 1));
     const [main, pins, grid] = await Promise.all([
       get(`/api/map?from=${lo}&to=${lo + S.rows + 2}`), get("/api/maphigh?n=8&above=89999"), get("/api/grid")]);
@@ -207,6 +209,7 @@ function drawButtons() {
   x = button(x, y, "wipe  w", "take the recorded takes out of the loop", () => openWipe());
   x = button(x, y, "takes  T", "every take as text", () => openTakes());
   x = button(x, y, "?", "the keys", () => openHelp());
+  x = button(x, y, "Quit", "stop the space and close a5web (asks first)", () => openQuit(Math.max(12, x - 120), y + 26));
 }
 
 function find(mx, my) {                               // the take under the pointer: its cell, the loudest in it, live over muted
@@ -533,4 +536,4 @@ addEventListener("mouseup", e => {
 
 function resize() { dpr = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; draw(); }
 addEventListener("resize", resize);
-resize(); pollCfg(); pollSlow(); pollMeter(); watch();
+resize(); pollDir(); pollCfg(); pollSlow(); pollMeter(); watch();

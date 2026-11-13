@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 #include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -107,6 +108,15 @@ static void serve_file( int fd, int i )
   }
 
 /* the thresholds a5hell uses ($A5HELL_CFG or ~/.local/etc/a5hell.cfg), as it has them: only the two numbers the page needs, else the defaults */
+/* the folder's own name, for the window title when the space has no name of its own */
+static void serve_dir( int fd )
+  {
+  char r[PATH_MAX], o[PATH_MAX + 2]; const char *b;
+  if( ! realpath( dir, r ) ) snprintf( r, sizeof r, "%s", dir );
+  b = strrchr( r, '/' ); b = b && b[1] ? b + 1 : r;
+  snprintf( o, sizeof o, "%s\n", b ); out( fd, 200, "text/plain; charset=utf-8", o, strlen( o ) );
+  }
+
 static void serve_cfg( int fd )
   {
   char p[1200], l[200], o[100]; double g = -24, r = -6;
@@ -265,6 +275,7 @@ static void handle( int fd )
     }
   for( size_t i = 0; i < sizeof FILES / sizeof *FILES; i++ ) if( ! strcmp( path, FILES[i].url ) ) { serve_file( fd, (int)i ); return; }
   if( ! strcmp( path, "/api/cfg" ) ) { serve_cfg( fd ); return; }
+  if( ! strcmp( path, "/api/dir" ) ) { serve_dir( fd ); return; }
   if( ! strcmp( path, "/api/watch" ) ) { watch( fd ); return; }
   char cmd[100];
   if( ! command( path, cmd, sizeof cmd ) ) { say( fd, 404, "no such page\n" ); return; }
