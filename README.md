@@ -20,6 +20,7 @@ plain C99 plus one servant thread, meant to build on Linux, macOS, Windows and A
 - `a5export` takes the audio out as flac: every take, the takes in the loop, or the loop itself (docs/EXPORT.md)
 - `tickbench` (in `tools/`, `make bin/tickbench`) times the parts of a tick on this machine
 - `a5cal` (in `tools/`) prepares a gate profile for a named setup, outside any session (docs/CALIBRATION.md)
+- `a5sdl` (`make bin/a5sdl`, needs SDL2) the portable audio edge for any card SDL opens; see docs/GUI.md
 - `a5card` (in `tools/`) aspace on an ALSA card: the loopback for the sync, dropout reporting
 - `a5doctor` (in `tools/`) gathers what is needed to find out what is wrong on a machine, into one file to send
 - a session is a directory: `session.db` (SQLite: the log and the facts), `takes.<artist>/` (the takes: a header, then the codec's bytes, FLAC by default; docs/STORE-DESIGN.md), `cache/` (the loop)

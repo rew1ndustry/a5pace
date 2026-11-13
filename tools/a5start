@@ -2,7 +2,7 @@
 # a5start DIR [a5pace run options, e.g. --live]: make sure the space DIR is running; start it if it is not. a5hell, a5control --start, the gui and
 # the backend all call this, so how a space is started is decided in one place.
 #
-# how, in order: the file DIR/start (lines "edge card|sim", "args ...", "release 1"), else the line "edge ..." in
+# how, in order: the file DIR/start (lines "edge card|sdl|sim", "args ...", "release 1"), else the line "edge ..." in
 # ~/.config/a5pace/defaults, else the sound card if there is one (a5card), else a simulated card. A5START_EDGE=sim|card
 # overrides all of them. the space runs detached, its words go to DIR/run.log; the card is only taken if it is free.
 set -u
@@ -35,9 +35,12 @@ case $edge in
         [ -n "$release" ] && export A5CARD_RELEASE=$release
         echo "a5start: starting $DIR on the sound card"
         setsid nohup "$A5CARD" "$DIR" $args > "$LOG" 2>&1 < /dev/null & ;;
+  sdl)  A5SDL=$(command -v a5sdl || echo "$HERE/bin/a5sdl"); [ -x "$A5SDL" ] || { echo "a5start: no a5sdl (make bin/a5sdl needs SDL2)" >&2; exit 1; }
+        echo "a5start: starting $DIR on SDL audio"
+        setsid nohup "$A5SDL" "$DIR" $args > "$LOG" 2>&1 < /dev/null & ;;
   sim)  echo "a5start: starting $DIR on a simulated card (no sound)"
         setsid nohup "$A5PACE" run -q -S ${A5START_SIM:-7001} $args "$DIR" > "$LOG" 2>&1 < /dev/null & ;;
-  *)    echo "a5start: edge \"$edge\" is not card or sim" >&2; exit 1 ;;
+  *)    echo "a5start: edge \"$edge\" is not card, sdl or sim" >&2; exit 1 ;;
 esac
 pid=$!
 n=0
