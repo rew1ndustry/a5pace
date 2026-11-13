@@ -4,14 +4,14 @@
    selects (shift adds); the mixing language is typed as in a5hell and parsed by a5web (a5mixer.c), not here. */
 "use strict";
 const TPS = 5;                                      // ticks a second
-const C = { bg: "#000", text: "#9a9a9a", dim: "#555", btn: "#111", green: "#3ddc6b", yellow: "#e0c040", red: "#ff4a3d" };
+const C = { bg: "#000", text: "#9a9a9a", dim: "#7a7a7a", btn: "#111", green: "#3ddc6b", yellow: "#e0c040", red: "#ff4a3d" };
 const FONT = "12px ui-monospace, Menlo, monospace";
 const cv = document.getElementById("c"), g = cv.getContext("2d");
 let W = 0, H = 0, dpr = 1;
 
 const S = { state: null, takes: [], pins: [], grid: new Map(), meter: [-200, -200, -200, -200, 0, 0], cfg: { green: -24, red: -6 },
             top: null, follow: true, hover: null, mx: -1, my: -1, err: "", rows: 20,
-            sel: new Set(), cur: null, entry: "", msg: "", menu: null, buttons: [], tip: null, chain: Promise.resolve() };
+            sel: new Set(), cur: null, entry: "", msg: "", menu: null, ctx: null, eat: false, gone: false, buttons: [], tip: null, chain: Promise.resolve() };
 const lay = { head: 62, foot: 52, left: 56, right: 12, rowh: 26 };
 
 // ---- the control port, by http ----
@@ -122,7 +122,7 @@ function draw() {
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
   g.font = FONT; g.textBaseline = "middle"; g.textAlign = "left";
   const B = S.built = build(), st = S.state;
-  S.hover = S.menu || S.mx < 0 ? null : find(S.mx, S.my);
+  S.hover = S.menu || S.ctx || S.mx < 0 ? null : find(S.mx, S.my);
   S.buttons = [];
   g.fillStyle = st && st.live ? C.red : C.green; g.fillText(st ? (st.live ? "LIVE" : "SAFE") : "…", 12, 17);
   g.fillStyle = C.text; g.fillText(st ? `${st.name}   ${st.automix}   iter ${st.iter}   takes ${st.loop_takes}   gate ${st.gate_db}dB   ${st.phase}` : "", 70, 17);
@@ -138,22 +138,24 @@ function draw() {
   // ribbons: out of the loop faint, then in, then the selected, then the one under the pointer
   const hv = S.hover && key(S.hover.t);
   for (const pass of [0, 1, 2, 3]) {
-    g.globalAlpha = pass === 0 ? 0.28 : 1;
+    g.globalAlpha = pass === 0 ? 0.5 : 1;
     const seg = new Map();
     for (const it of B.items) {
       const k = key(it.t), at = k === hv ? 3 : S.sel.has(k) ? 2 : it.t.st === 0 ? 0 : 1;
       if (at !== pass) continue;
       const sk = k + ":" + it.row; (seg.get(sk) || seg.set(sk, []).get(sk)).push(it);
     }
-    for (const s of seg.values()) ribbon(s, pass >= 2, pass === 3 ? 14 : 6);
+    for (const s of seg.values()) ribbon(s, pass >= 2, pass === 3 ? 8 : 3);
   }
   g.globalAlpha = 1;
   drawMeters(); drawFoot();
   if (S.menu) drawMenu();
+  if (S.ctx) drawCtx();
+  if (S.gone) drawGone();
 }
 function ribbon(seg, bright, blur) {                  // consecutive ticks of one take in one row: trapezoids between tick centres
   seg.sort((a, b) => a.col - b.col);
-  if (bright) { g.shadowColor = "#fff"; g.shadowBlur = blur; }
+  if (bright) { g.shadowColor = "rgba(255,255,255,.45)"; g.shadowBlur = blur; }
   for (let i = 0; i < seg.length; i++) {
     const a = seg[i], b = seg[i + 1] && seg[i + 1].col === a.col + 1 ? seg[i + 1] : null, cy = a.y + a.h / 2;
     const ha = a.d > -150 ? thick(a.d, a.h) / 2 : 0, hb = b ? (b.d > -150 ? thick(b.d, b.h) / 2 : 0) : ha;
@@ -165,7 +167,7 @@ function ribbon(seg, bright, blur) {                  // consecutive ticks of on
   }
   g.shadowBlur = 0;
 }
-function lighten(c) { return c === C.red ? "#ff9a90" : c === C.green ? "#9affb5" : "#fff0a0"; }
+function lighten(c) { return c === C.red ? "#ff7d72" : c === C.green ? "#69ee93" : "#efd35c"; }
 
 function drawMeters() {                               // in l/r, out l/r: four thin bars top right
   const m = S.meter, x = W - 150, y = 8;
@@ -348,8 +350,10 @@ function scrollTo(top) {
 // ---- events ----
 cv.addEventListener("mousemove", e => { S.mx = e.offsetX; S.my = e.offsetY; draw(); });
 cv.addEventListener("mouseleave", () => { S.mx = -1; draw(); });
-cv.addEventListener("wheel", e => { e.preventDefault(); if (S.menu) return; scrollTo(rowsShown().top + Math.sign(e.deltaY) * 3); }, { passive: false });
+cv.addEventListener("wheel", e => { e.preventDefault(); if (S.menu || S.ctx) return; scrollTo(rowsShown().top + Math.sign(e.deltaY) * 3); }, { passive: false });
 cv.addEventListener("click", e => {
+  if (S.eat) { S.eat = false; return; }
+  if (S.gone) return;
   const x = e.offsetX, y = e.offsetY;
   if (S.menu) {
     const m = S.menu, b = m.box, hit = (m.rects || []).find(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
@@ -366,6 +370,8 @@ cv.addEventListener("click", e => {
 addEventListener("keydown", e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key;
+  if (S.gone) return;
+  if (S.ctx) { if (k === "Escape") { closeCtx(); e.preventDefault(); } return; }
   if (S.menu) {                                           // a menu or panel has the keys
     const m = S.menu, runs = m.items.map((it, i) => i).filter(i => m.items[i].run);
     if (k === "Escape") { closeMenu(); e.preventDefault(); return; }
@@ -399,6 +405,132 @@ addEventListener("keydown", e => {
   }
   e.preventDefault();
 });
+
+// ---- right-click menus: on a take (mute / play, gain and pan sliders), elsewhere (the space) ----
+// rows: {t:"label",text} {t:"sep"} {t:"btn",text,on,red,run(shift)} {t:"slider",text(v),min,max,val,apply(v,shift)}
+const CW = 270, RH = { label: 22, sep: 10, btn: 26, slider: 44 };
+function openCtx(x, y, title, rows) { S.ctx = { x, y, title, rows, drag: null, press: -1, rects: [] }; draw(); }
+function closeCtx() { S.ctx = null; draw(); }
+function bitsText(v) { return v > 0 ? "+" + v : v < 0 ? "" + v : "0"; }
+function panText(v) { return v > 0 ? "/" + v + " right" : v < 0 ? "\\" + -v + " left" : "centre"; }
+async function sendMix(str, ks) {
+  const r = await post("/api/mix?s=" + encodeURIComponent(str) + "&t=" + encodeURIComponent(ks.join(",")));
+  if (r.ok && r.text.startsWith("OK")) say(`mix ${str}: ${r.text.slice(3)} take(s) ` + (/[!MP]$/.test(str) ? "changed at once" : "queued for their next start"));
+  else say("mix: " + (r.text === "NONE" ? "nothing selected" : r.text));
+  refreshSoon();
+}
+function openTakeMenu(x, y, h) {
+  const k = key(h.t);
+  if (!S.sel.has(k)) { S.sel.clear(); S.sel.add(k); }
+  S.cur = k;
+  const ks = [...S.sel], gr = S.grid.get(k), mixed = gr && gr.mixed;
+  const title = ks.length > 1 ? `${ks.length} takes` : `take ${k}`;
+  openCtx(x, y, title, [
+    { t: "label", text: h.t.st === 1 ? "in the loop" : h.t.st === 0 ? "out of the loop" : "recording" },
+    { t: "btn", text: "mute", run: sh => sendMix(sh ? "M" : "m", ks) },
+    { t: "btn", text: "play", run: sh => sendMix(sh ? "P" : "p", ks) },
+    { t: "sep" },
+    { t: "slider", text: v => "gain  " + bitsText(v) + " bit" + (Math.abs(v) === 1 ? "" : "s"), min: -8, max: 8, val: mixed ? gr.gsh : 0,
+      apply: (v, sh) => sendMix((v < 0 ? "-" + -v : "+" + v) + (sh ? "!" : "."), ks) },
+    { t: "slider", text: v => "pan  " + panText(v), min: -8, max: 8, val: mixed ? gr.pan : 0,
+      apply: (v, sh) => sendMix((v < 0 ? "\\" + -v : "/" + v) + (sh ? "!" : "."), ks) },
+    { t: "label", text: "release queues it; shift at once" }]);
+}
+function openSpaceMenu(x, y) {
+  const st = S.state || {}, mode = (st.automix || "").split(" ")[0];
+  const mark = on => (on ? "●  " : "○  ");
+  openCtx(x, y, "a5pace", [
+    { t: "label", text: st.name ? `${st.name}   iter ${st.iter}   gate ${st.gate_db} dB` : "no space" },
+    { t: "btn", text: mark(st.live) + "live: record takes", run: () => act("live") },
+    { t: "btn", text: mark(st.live === false) + "safe: play, do not record", run: () => act("safe") },
+    { t: "sep" },
+    { t: "btn", text: mark(mode === "loop") + "loop: takes go in the loop", run: () => act("mode_loop") },
+    { t: "btn", text: mark(mode === "keep") + "keep: takes are stored only", run: () => act("mode_keep") },
+    { t: "sep" },
+    { t: "btn", text: "gate: learn the floor", run: () => act("relearn") },
+    { t: "btn", text: "gate: more sensitive (3 dB)", run: () => act("gate_more") },
+    { t: "btn", text: "gate: less sensitive (3 dB)", run: () => act("gate_less") },
+    { t: "sep" },
+    { t: "btn", text: "output gain: forget clips, come back up", run: () => act("gainreset") },
+    { t: "sep" },
+    { t: "btn", text: "Quit…", red: true, run: () => openQuit(x, y) }]);
+}
+function openQuit(x, y) {
+  openCtx(x, y, "Quit?", [
+    { t: "label", text: "Stop aspace and close a5web?" },
+    { t: "label", text: "Moves under way finish first (drain)." },
+    { t: "sep" },
+    { t: "btn", text: "Yes, quit", red: true, run: async () => {
+        const r = await post("/api/do?c=quit");
+        if (r.ok) { S.gone = true; draw(); } else say("quit: " + r.text.split("\n").pop()); } },
+    { t: "btn", text: "No, carry on", run: () => {} }]);
+}
+function ctxLayout() {                                  // the box and the rect of each row, kept inside the window
+  const c = S.ctx; let h = 34;
+  for (const r of c.rows) h += RH[r.t];
+  h += 6;
+  c.box = { x: Math.max(4, Math.min(c.x, W - CW - 4)), y: Math.max(4, Math.min(c.y, H - h - 4)), w: CW, h };
+  let y = c.box.y + 30; c.rects = [];
+  for (const r of c.rows) { c.rects.push({ x: c.box.x, y, w: CW, h: RH[r.t] }); y += RH[r.t]; }
+}
+function sliderX(rc) { return { x0: rc.x + 16, x1: rc.x + rc.w - 16 }; }
+function sliderVal(r, rc, mx) { const { x0, x1 } = sliderX(rc); return Math.round(r.min + Math.max(0, Math.min(1, (mx - x0) / (x1 - x0))) * (r.max - r.min)); }
+function drawCtx() {
+  const c = S.ctx; ctxLayout(); const b = c.box;
+  g.shadowColor = "rgba(0,0,0,.8)"; g.shadowBlur = 12; g.fillStyle = "#0e0e0e"; g.fillRect(b.x, b.y, b.w, b.h); g.shadowBlur = 0;
+  g.strokeStyle = "#3a3a3a"; g.strokeRect(b.x + .5, b.y + .5, b.w, b.h);
+  g.textAlign = "left"; g.fillStyle = C.text; g.fillText(c.title, b.x + 12, b.y + 16);
+  g.fillStyle = "#222"; g.fillRect(b.x, b.y + 28, b.w, 1);
+  c.rows.forEach((r, i) => {
+    const rc = c.rects[i], over = S.mx >= rc.x && S.mx < rc.x + rc.w && S.my >= rc.y && S.my < rc.y + rc.h;
+    if (r.t === "sep") { g.fillStyle = "#222"; g.fillRect(rc.x + 8, rc.y + 5, rc.w - 16, 1); }
+    else if (r.t === "label") { g.fillStyle = C.dim; g.fillText(r.text, rc.x + 12, rc.y + rc.h / 2); }
+    else if (r.t === "btn") {
+      if (over) { g.fillStyle = "#262626"; g.fillRect(rc.x + 4, rc.y + 1, rc.w - 8, rc.h - 2); }
+      g.fillStyle = r.red ? C.red : over ? "#eee" : C.text; g.fillText(r.text, rc.x + 12, rc.y + rc.h / 2 + 1);
+    } else {
+      const v = r.val, { x0, x1 } = sliderX(rc), ty = rc.y + 31, f = (v - r.min) / (r.max - r.min);
+      g.fillStyle = C.text; g.fillText(r.text(v), rc.x + 12, rc.y + 12);
+      g.fillStyle = "#2a2a2a"; g.fillRect(x0, ty - 1, x1 - x0, 3);
+      g.fillStyle = "#555"; g.fillRect((x0 + x1) / 2 - 1, ty - 5, 2, 11);            // the zero
+      g.fillStyle = c.drag === i ? "#fff" : over ? "#ddd" : "#aaa";
+      g.beginPath(); g.arc(x0 + f * (x1 - x0), ty, 6, 0, 7); g.fill();
+    }
+  });
+}
+function drawGone() {
+  g.fillStyle = "rgba(0,0,0,.85)"; g.fillRect(0, 0, W, H);
+  g.fillStyle = C.text; g.textAlign = "center"; g.font = "16px ui-monospace, Menlo, monospace";
+  g.fillText("a5pace is draining and a5web has stopped.", W / 2, H / 2 - 10);
+  g.fillStyle = C.dim; g.font = FONT; g.fillText("You can close this tab.", W / 2, H / 2 + 16); g.textAlign = "left";
+}
+function ctxRowAt(x, y) { const c = S.ctx; return c.rects.findIndex(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h); }
+cv.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (S.menu || S.gone) return;
+  S.mx = e.offsetX; S.my = e.offsetY; S.ctx = null;
+  const h = find(S.mx, S.my);
+  if (h) openTakeMenu(S.mx, S.my, h); else openSpaceMenu(S.mx, S.my);
+});
+cv.addEventListener("mousedown", e => {
+  if (!S.ctx || e.button !== 0) return;
+  S.eat = true;
+  const c = S.ctx, i = ctxRowAt(e.offsetX, e.offsetY), b = c.box;
+  if (i < 0) { if (e.offsetX < b.x || e.offsetX > b.x + b.w || e.offsetY < b.y || e.offsetY > b.y + b.h) closeCtx(); return; }
+  const r = c.rows[i];
+  if (r.t === "slider") { c.drag = i; r.val = sliderVal(r, c.rects[i], e.offsetX); draw(); }
+  else if (r.t === "btn") c.press = i;
+});
+addEventListener("mousemove", e => {
+  const c = S.ctx; if (!c || c.drag === null) return;
+  const r = c.rows[c.drag]; r.val = sliderVal(r, c.rects[c.drag], e.clientX); draw();
+});
+addEventListener("mouseup", e => {
+  const c = S.ctx; if (!c || e.button !== 0) return;
+  if (c.drag !== null) { const r = c.rows[c.drag]; c.drag = null; draw(); r.apply(r.val, e.shiftKey); return; }
+  if (c.press >= 0) { const r = c.rows[c.press], i = c.press; c.press = -1; if (ctxRowAt(e.offsetX, e.offsetY) === i) { closeCtx(); r.run(e.shiftKey); } }
+});
+
 function resize() { dpr = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; draw(); }
 addEventListener("resize", resize);
 resize(); pollCfg(); pollSlow(); pollMeter(); watch();

@@ -27,7 +27,7 @@ chk "a file outside the whitelist is not served" "[ \"\$(curl -s -m 2 -o /dev/nu
 chk "a write needs our own origin" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} -X POST $U/api/do?c=safe)\" = 403 ]"
 chk "a foreign origin is refused" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} -X POST -H 'Origin: http://evil.com' $U/api/do?c=safe)\" = 403 ]"
 chk "a get cannot write" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} $U/api/do?c=safe)\" = 404 ]"
-chk "quit is not an action" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} -X POST -H '$O' $U/api/do?c=quit)\" = 400 ]"
+chk "gain reset is an action" "[ \"\$(curl -s -m 2 -o /dev/null -w %{http_code} -X POST -H '$O' $U/api/do?c=gainreset)\" = 200 ]"
 chk "safe, by the page's route" "curl -s -m 2 -X POST -H '$O' '$U/api/do?c=safe' >/dev/null; $c LINE | grep -q SAFE"
 chk "a half typed command waits" "[ \"\$(curl -s -m 2 -X POST -H '$O' '$U/api/mix?s=%2B2&t=1.0')\" = WAIT ]"
 chk "a bad one is said to be bad" "[ \"\$(curl -s -m 2 -X POST -H '$O' '$U/api/mix?s=%2B2m1&t=1.0')\" = BAD ]"
@@ -37,7 +37,12 @@ it=$($c GRID | head -1 | cut -d' ' -f1); off=$($c GRID | head -1 | cut -d' ' -f2
 chk "a mix reaches the take" "[ \"\$(curl -s -m 2 -X POST -H '$O' '$U/api/mix?s=%2B2!&t=$it.$off')\" = 'OK 1' ]"
 wait_for "$c GRID | grep -q '^$it $off [0-9]* [01] 1 2 '"
 chk "and shows as its gain" "$c GRID | grep -q '^$it $off [0-9]* [01] 1 2 '"
-kill $wpid 2>/dev/null || true
+# quit from the page: the space drains and stops, and a5web goes with it
+chk "quit is answered" "[ \"\$(curl -s -m 5 -o /dev/null -w %{http_code} -X POST -H '$O' $U/api/do?c=quit)\" = 200 ]"
+wait_for "! kill -0 $wpid 2>/dev/null"
+chk "and a5web has stopped" "! kill -0 $wpid 2>/dev/null"
+wait_for "! kill -0 $pid 2>/dev/null"
+chk "and so has the space" "! kill -0 $pid 2>/dev/null"
 # a5web starts a space that is not running (through a5start, here on a simulated card), and --quiet says nothing
 d2=$t/auto
 $here/bin/a5pace new $d2 auto 6.25 > /dev/null
@@ -49,7 +54,7 @@ chk "and --quiet kept quiet" "[ ! -s $t/auto.out ]"
 chk "a path that is not a space stops a5web with a message" "PATH=$here/tools:$here/bin:$PATH $here/bin/a5web $t/nosuch --port $((port+2)) --www $here/web 2>&1 | grep -q 'nothing to show'"
 $here/bin/a5control $d2 QUIT > /dev/null 2>&1 || true
 kill $apid 2>/dev/null || true
-$c QUIT > /dev/null
+$c QUIT > /dev/null 2>&1 || true
 wait $pid || true
 rm -rf $t
 [ $fail = 0 ] && echo "all web tests passed"
