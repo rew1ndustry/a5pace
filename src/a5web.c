@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 #include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -107,6 +108,15 @@ static void serve_file( int fd, int i )
   }
 
 /* the thresholds a5hell uses ($A5HELL_CFG or ~/.local/etc/a5hell.cfg), as it has them: only the two numbers the page needs, else the defaults */
+/* the folder's own name, for the window title when the space has no name of its own */
+static void serve_dir( int fd )
+  {
+  char r[PATH_MAX], o[PATH_MAX + 2]; const char *b;
+  if( ! realpath( dir, r ) ) snprintf( r, sizeof r, "%s", dir );
+  b = strrchr( r, '/' ); b = b && b[1] ? b + 1 : r;
+  snprintf( o, sizeof o, "%s\n", b ); out( fd, 200, "text/plain; charset=utf-8", o, strlen( o ) );
+  }
+
 static void serve_cfg( int fd )
   {
   char p[1200], l[200], o[100]; double g = -24, r = -6;
@@ -124,16 +134,17 @@ static void serve_cfg( int fd )
   }
 
 /* one control command, relayed: its lines back as text/plain; a failure of the space is 500, no space 502 */
-static void relay( int fd, const char *cmd )
+static int relay( int fd, const char *cmd )                /* 1 if the space answered ok */
   {
   int c = ctlc_connect( dir );
-  if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return; }
+  if( c < 0 ) { say( fd, 502, "the space is not running\n" ); return 0; }
   Buf b = { 0 };
   int rc = ctlc_cmd( c, cmd, add, &b );
   close( c );
   if( rc < 0 ) say( fd, 502, "the space did not answer\n" );
   else out( fd, rc ? 500 : 200, "text/plain; charset=utf-8", b.b ? b.b : "", b.n );
   free( b.b );
+  return rc == 0;
   }
 
 /* the events of the space as server-sent events: the control port's WATCH, a line an event; a comment every 15 s finds a client that went */
@@ -174,7 +185,7 @@ static int qstr( const char *q, const char *key, char *v, size_t n )
   return 0;
   }
 
-/* the writes. none passes a word of the request on: each is one of these and numbers. QUIT, REVERT, EDGE, EVENT, CLICK, SIM are not here */
+/* the writes. none passes a word of the request on: each is one of these and numbers. REVERT, EDGE, EVENT, CLICK, SIM are not here */
 static void post( int fd, const char *path )
   {
   char p[400], v[100], w[100], cmd[100]; snprintf( p, sizeof p, "%s", path );
@@ -191,6 +202,9 @@ static void post( int fd, const char *path )
     else if( ! strcmp( v, "relearn" ) ) snprintf( cmd, sizeof cmd, "RELEARN" );
     else if( ! strcmp( v, "gate_more" ) ) snprintf( cmd, sizeof cmd, "GATE -3" );
     else if( ! strcmp( v, "gate_less" ) ) snprintf( cmd, sizeof cmd, "GATE +3" );
+    else if( ! strcmp( v, "gainreset" ) ) snprintf( cmd, sizeof cmd, "GAINRESET" );
+    else if( ! strcmp( v, "quit" ) )                       /* the one way out: aspace drains and closes, then a5web (the accept loop, our parent) stops */
+      { chat( "the page asks the space to quit: it will drain, and a5web stops" ); if( relay( fd, "QUIT" ) ) kill( getppid(), SIGTERM ); return; }
     else if( ! strcmp( v, "wipe" ) ) snprintf( cmd, sizeof cmd, "WIPE" );
     else if( ! strcmp( v, "wipeall" ) ) snprintf( cmd, sizeof cmd, "WIPE ALL" );
     else if( ! strcmp( v, "mode_loop" ) ) snprintf( cmd, sizeof cmd, "AUTOMIX LOOP" );
@@ -261,6 +275,7 @@ static void handle( int fd )
     }
   for( size_t i = 0; i < sizeof FILES / sizeof *FILES; i++ ) if( ! strcmp( path, FILES[i].url ) ) { serve_file( fd, (int)i ); return; }
   if( ! strcmp( path, "/api/cfg" ) ) { serve_cfg( fd ); return; }
+  if( ! strcmp( path, "/api/dir" ) ) { serve_dir( fd ); return; }
   if( ! strcmp( path, "/api/watch" ) ) { watch( fd ); return; }
   char cmd[100];
   if( ! command( path, cmd, sizeof cmd ) ) { say( fd, 404, "no such page\n" ); return; }
